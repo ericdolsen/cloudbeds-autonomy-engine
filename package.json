@@ -1,0 +1,17 @@
+{
+  "name": "cloudbeds-checkout-agent",
+  "version": "2.0.0",
+  "description": "Vision-powered automated invoice emailer for Cloudbeds checkout events",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "@google/genai": "^1.49.0",
+    "axios": "^1.15.0",
+    "dotenv": "^16.4.0",
+    "express": "^5.2.1",
+    "node-cron": "^4.2.1"
+  }
+}
