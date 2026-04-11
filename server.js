@@ -24,21 +24,64 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Primary Webhook Ingress from Cloudbeds (For Guest chat, etc.)
+// Primary Webhook Ingress from Cloudbeds (System Events like reservation created)
 app.post('/api/webhooks/cloudbeds', async (req, res) => {
-  const payload = req.body; // Expects { text: "message", source: "guest_chat" }
-  logger.info(`[WEBHOOK] Incoming payload from Cloudbeds`);
+  const payload = req.body; 
+  logger.info(`[WEBHOOK] Incoming payload from Cloudbeds: ${payload.event}`);
   
+  // Cloudbeds requires an immediate 2XX response to prevent webhook retry loops
+  res.status(200).send("OK");
+
   if (!agent.isRunning) {
-    return res.status(503).json({ success: false, message: "Engine stopped" });
+    logger.warn(`[WEBHOOK] Engine stopped. Ignoring event.`);
+    return;
   }
 
   try {
-    const result = await agent.processIncomingMessage(payload);
-    res.json(result);
+    let promptText = "";
+    
+    // Translate raw JSON webhooks into human-readable prompts for the LLM
+    if (payload.event === "reservation/created") {
+      promptText = `A new reservation (ID: ${payload.reservationID || payload.reservationId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
+    } else if (payload.event === "reservation/dates_changed") {
+      promptText = `The dates for reservation ${payload.reservationId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+    } else {
+      promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${payload.reservationID || 'unknown'}. Review if necessary.`;
+    }
+
+    await agent.processIncomingMessage({ source: 'cloudbeds', text: promptText });
   } catch (err) {
     logger.error(`Webhook processing error: ${err.message}`);
-    res.status(500).json({ success: false });
+  }
+});
+
+// Primary Webhook Ingress from Whistle / Guest Experience (Text Messaging)
+app.post('/api/webhooks/whistle', async (req, res) => {
+  const payload = req.body; 
+  logger.info(`[WEBHOOK] Incoming SMS/Message from Whistle`);
+
+  // Acknowledge immediately to Whistle
+  res.status(200).send("OK");
+
+  if (!agent.isRunning) return;
+
+  try {
+    // Example mapping - will be adjusted when Whistle keys arrive
+    const guestPhone = payload.guest_phone || payload.phone || "Unknown";
+    const message = payload.message || payload.text || payload.body;
+    
+    const promptText = `Guest at phone number ${guestPhone} just sent a text message: "${message}". Please respond. Your response will automatically be sent back to them via text.`;
+    
+    const result = await agent.processIncomingMessage({ source: 'whistle', text: promptText });
+    
+    // Ideally here we send the result.agent_response back to the Whistle API endpoint
+    if (result && result.agent_response) {
+       logger.info(`[WHISTLE API OUT] Sending SMS back off-chain: ${result.agent_response.substring(0,40)}...`);
+       // await agent.api.sendWhistleMessage(guestPhone, result.agent_response); // coming soon
+    }
+    
+  } catch (err) {
+    logger.error(`Whistle Webhook processing error: ${err.message}`);
   }
 });
 
@@ -71,7 +114,8 @@ app.post('/api/kiosk/checkout', async (req, res) => {
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
     
     // The engine's text reply will be the message displayed on the Kiosk screen
-    res.json({ success: true, message: result.agent_response });
+    // If the engine didn't throw an error, we assume it successfully processed
+    res.json({ success: true, status: 'complete', message: result.agent_response });
   } catch (error) {
     logger.error(`[KIOSK] Backend Execution Failed: ${error.message}`);
     res.status(500).json({ success: false, message: "System error. Please visit the front desk." });

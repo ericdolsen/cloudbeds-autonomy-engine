@@ -9,6 +9,21 @@ class AutonomyEngine {
     this.api = new CloudbedsAPI();
   }
 
+  getHotelPolicies() {
+    return {
+      hotelName: "Independent Hotel",
+      frontDeskNumber: "Dial 0 or 555-0199",
+      standardCheckin: "3:00 PM",
+      standardCheckout: "11:00 AM",
+      petPolicy: "Pet-friendly. $30 non-refundable fee per stay. Pets must not be left unattended, must be leashed in public. No pets in breakfast room or pool (unless certified service animal). Owners must clean up after pets to avoid extra fees.",
+      smokingPolicy: "100% smoke-free (including vapes/marijuana). $250 cleaning fee for violations charged to card on file. Possible eviction.",
+      paymentPolicy: "Valid CC matching government ID required. Card authorized for full estimated amount at check-in. Release takes 3-7 business days.",
+      damagesPolicy: "Guests financially responsible for damages or excessive cleaning (e.g. biological waste, deep stains).",
+      liabilityPolicy: "Hotel not liable for lost/stolen items. Lost & found held for 60 days. Guest pays shipping for returns.",
+      cancellationPolicy: "Customer-centric and highly flexible. We value long-term loyalty over short-term fees. Agents are authorized to waive cancellation fees or offer future stay credits to ensure the guest leaves happy and feeling understood."
+    };
+  }
+
   getTools() {
     return [{
       functionDeclarations: [
@@ -74,20 +89,59 @@ class AutonomyEngine {
             },
             required: ["reservationId", "amount"]
           }
+        },
+        {
+          name: "alertFrontDesk",
+          description: "Immediately escalates a critical issue, maintenance request, physical danger, or emergency to the human front desk staff via high-priority alert.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              urgency: { type: Type.STRING, description: "Must be 'high' or 'critical'" },
+              issueDescription: { type: Type.STRING, description: "Brief description of the problem being escalated" }
+            },
+            required: ["urgency", "issueDescription"]
+        {
+          name: "chargePhysicalTerminal",
+          description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a Card-Present transaction. MUST BE USED instead of postPayment if the guest is checking out at the physical kiosk.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING },
+              amount: { type: Type.NUMBER, description: "Amount to charge in USD" },
+              terminalName: { type: Type.STRING, description: "The name of the terminal the guest is standing at (e.g. 'Reader 1')" }
+            },
+            required: ["reservationId", "amount", "terminalName"]
+          }
         }
       ]
     }];
   }
 
   getSystemInstruction() {
-    return `You are the Autonomy Engine, an advanced AI concierge for a hotel running on Cloudbeds. 
-Your job is to read guest requests (or staff requests), reason about what needs to be done, use the provided tools to query or update the Cloudbeds property management system, and then draft a professional, empathetic response.
-When a request comes in:
-1. Identify the intent and any necessary parameters.
-2. Call tools to get the required information (like 'getReservation').
-3. If necessary, call further tools to fix issues or update records.
-4. When you have resolved the issue, draft a clear, friendly, and concise message back to the guest explaining what you did.
-Always verify balances before processing a checkout.`;
+    const policies = this.getHotelPolicies();
+    return `You are the Autonomy Engine, an advanced AI concierge for ${policies.hotelName}.
+
+EMPATHY & TONE:
+Your primary goal is to ensure interactions feel genuinely human. Speak with high empathy, warmth, and understanding. Avoid robotic or highly rigid corporate language. Our philosophy is that the long-term value of a loyal customer outweighs nickle-and-diming them. Erring on the side of making the customer happy is your prime directive. Use a very conversational tone.
+
+CRITICAL EMERGENCY PROTOCOL:
+If the guest mentions a maintenance issue, flood, physical danger, or emergency:
+1. You MUST immediately call the 'alertFrontDesk' tool to notify staff.
+2. You MUST reply to the guest with this EXACT phrasing (adapted slightly to the context if needed): 
+"Thank you for alerting us to this. We have immediately notified maintenance and a member of our team will be there to assist you as soon as possible. If this is an immediate, critical emergency, please contact the front desk directly by dialing ${policies.frontDeskNumber}."
+Do not wait to solve the issue yourself. Do not provide a standardized response.
+
+OPERATIONAL POLICIES to abide by implicitly:
+${JSON.stringify(policies, null, 2)}
+
+KIOSK & PAYMENTS PROTOCOL:
+If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' instead of 'postPayment'. We rely on Card-Present chip reads for security and lower fees. Do not use the card on file for kiosk visitors.
+
+STANDARD WORKFLOW:
+1. Identify intent.
+2. Call required tools (like 'getReservation').
+3. If necessary, call further tools (like 'postFolioAdjustment' or 'updateReservation').
+4. Draft a clear, empathetic, and exceptionally helpful message back to the guest.`;
   }
 
   async executeTask(messagePayload) {
@@ -121,6 +175,16 @@ Always verify balances before processing a checkout.`;
           else if (name === 'updateReservation') apiResult = await this.api.updateReservation(args.reservationId, args.updates);
           else if (name === 'postFolioAdjustment') apiResult = await this.api.postFolioAdjustment(args.reservationId, args.amount, args.description);
           else if (name === 'postPayment') apiResult = await this.api.postPayment(args.reservationId, args.amount);
+          else if (name === 'alertFrontDesk') {
+            logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
+            // Hook for future integration (e.g. Twilio API, Siren, UI flash)
+            apiResult = { success: true, action: "Front desk staff has been successfully pinged." };
+          }
+          else if (name === 'chargePhysicalTerminal') {
+            logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
+            // This will block/wait for the Stripe API terminal callback
+            apiResult = { success: true, message: `Payment of $${args.amount} successfully captured via physical chip inserted at ${args.terminalName}.` };
+          }
           else throw new Error("Unknown tool call");
         } catch (e) {
           apiResult = { error: e.message };

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Hotel Kiosk Landing</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #0f172a; /* Slate 900 */
+            --glass-bg: rgba(30, 41, 59, 0.4);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --btn-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--primary-bg);
+            color: var(--text-main);
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        /* Abstract Animated Background Elements */
+        .bg-shape {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(100px);
+            z-index: 0;
+            animation: float 20s infinite ease-in-out alternate;
+        }
+
+        .shape1 { width: 800px; height: 800px; background: linear-gradient(135deg, rgba(79, 70, 229, 0.3), rgba(147, 51, 234, 0.3)); top: -200px; left: -100px; animation-delay: 0s; }
+        .shape2 { width: 700px; height: 700px; background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(56, 189, 248, 0.2)); bottom: -200px; right: -100px; animation-delay: -5s; }
+        .shape3 { width: 600px; height: 600px; background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(244, 63, 94, 0.15)); top: 30%; left: 50%; animation-delay: -10s; }
+
+        @keyframes float {
+            0% { transform: translate(0, 0) scale(1); }
+            50% { transform: translate(60px, 40px) scale(1.05); }
+            100% { transform: translate(-40px, -60px) scale(0.95); }
+        }
+
+        /* Main Container */
+        .kiosk-container {
+            width: 90%;
+            max-width: 1200px;
+            height: 85vh;
+            background: var(--glass-bg);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--glass-border);
+            border-radius: 40px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            padding: 60px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.5s ease;
+        }
+
+        .header { text-align: center; margin-bottom: 20px; }
+        .hotel-name { font-size: 3.5rem; font-weight: 700; background: linear-gradient(to bottom right, #ffffff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hotel-subtitle { font-size: 1.2rem; color: var(--text-muted); font-weight: 400; letter-spacing: 3px; text-transform: uppercase; }
+
+        .clock-widget { text-align: center; margin: auto 0; flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
+        .time { font-size: 9rem; font-weight: 600; line-height: 1; letter-spacing: -2px; }
+        .date { font-size: 1.6rem; color: var(--text-muted); margin-top: 15px; font-weight: 300; letter-spacing: 1px; }
+
+        /* Actions & Forms */
+        .main-actions, .checkout-form {
+            display: flex;
+            gap: 40px;
+            justify-content: center;
+            margin-top: auto;
+            transition: all 0.4s ease;
+        }
+        
+        .checkout-form {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        .kiosk-input {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            color: white;
+            font-size: 1.8rem;
+            padding: 25px;
+            font-family: 'Outfit';
+            outline: none;
+            text-align: center;
+        }
+        .kiosk-input:focus {
+            border-color: #38bdf8;
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+        }
+
+        .kiosk-btn {
+            background: var(--btn-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 28px;
+            color: var(--text-main);
+            padding: 40px 50px;
+            font-family: 'Outfit';
+            font-size: 1.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            width: 320px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s;
+        }
+
+        .kiosk-btn.form-btn {
+            width: auto;
+            padding: 25px 60px;
+            flex-direction: row;
+            border-radius: 20px;
+        }
+
+        .kiosk-btn.primary { background: linear-gradient(135deg, rgba(14, 165, 233, 0.8), rgba(56, 189, 248, 0.8)); border-color: rgba(255,255,255,0.3); }
+        .kiosk-btn.cancel { background: rgba(244, 63, 94, 0.2); }
+        .kiosk-btn:active { transform: scale(0.96); }
+
+        /* Loader Overlay */
+        .loader-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(15px);
+            z-index: 100;
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+        }
+
+        .spinner {
+            width: 70px; height: 70px; border: 4px solid rgba(255,255,255,0.1); border-left-color: #38bdf8;
+            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 25px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loader-text { font-size: 2rem; font-weight: 300; color: #e2e8f0; animation: pulse 1.5s infinite; text-align: center; padding: 0 40px;}
+        @keyframes pulse { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+
+        /* Notification Toast */
+        .toast {
+            position: absolute; top: 40px; right: 40px; background: #e11d48; color: white;
+            padding: 20px 40px; border-radius: 12px; font-size: 1.5rem; font-weight: 500;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none;
+        }
+
+        .footer { position: absolute; bottom: 30px; left: 0; width: 100%; text-align: center; color: var(--text-muted); opacity: 0.5; }
+    </style>
+</head>
+<body>
+
+    <div class="bg-shape shape1"></div>
+    <div class="bg-shape shape2"></div>
+    <div class="bg-shape shape3"></div>
+
+    <div class="toast" id="errorToast"></div>
+
+    <div class="kiosk-container">
+        
+        <div class="header">
+            <h1 class="hotel-name">Grand Horizon</h1>
+            <p class="hotel-subtitle">Self-Service Portal</p>
+        </div>
+
+        <div class="clock-widget">
+            <div class="time" id="time">--:--</div>
+            <div class="date" id="date">Updating date...</div>
+        </div>
+
+        <!-- Main Buttons -->
+        <div class="main-actions" id="mainActions">
+            <button class="kiosk-btn" onclick="showToast('Check-In is handled at the front desk.')">
+                <span class="icon">✨</span>
+                <span class="text">Guest Check-In</span>
+            </button>
+            <button class="kiosk-btn" onclick="showCheckoutForm()">
+                <span class="icon">🧾</span>
+                <span class="text">Express Check-Out</span>
+            </button>
+        </div>
+
+        <!-- Checkout Form -->
+        <div class="checkout-form" id="checkoutForm">
+            <div class="form-row">
+                <input type="text" id="resId" class="kiosk-input" placeholder="Reservation # (e.g. 12345)" autocomplete="off" autocorrect="off">
+                <input type="text" id="lastName" class="kiosk-input" placeholder="Last Name" autocomplete="off" autocorrect="off">
+            </div>
+            <div class="form-row" style="justify-content: center; margin-top: 10px;">
+                <button class="kiosk-btn form-btn cancel" onclick="hideCheckoutForm()">Cancel</button>
+                <button class="kiosk-btn form-btn primary" onclick="submitCheckout()">Find Reservation</button>
+            </div>
+        </div>
+
+        <div class="footer">SYSTEM ONLINE &bull; TERMINAL CONNECTED</div>
+
+        <div class="loader-overlay" id="loader">
+            <div class="spinner" id="spinnerIcon"></div>
+            <div class="loader-text" id="loaderText">Processing...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // Change this for each individual tablet deployed so the server knows which reader to trigger
+        const TERMINAL_NAME = "Reader 1"; 
+
+        function updateClock() {
+            const now = new Date();
+            let hours = now.getHours(); let minutes = now.getMinutes(); const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12; hours = hours ? hours : 12; minutes = minutes < 10 ? '0' + minutes : minutes;
+            document.getElementById('time').innerText = hours + ':' + minutes;
+            document.getElementById('date').innerText = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' • ' + ampm;
+        }
+        setInterval(updateClock, 1000); updateClock();
+
+        function showCheckoutForm() {
+            document.getElementById('mainActions').style.display = 'none';
+            document.getElementById('checkoutForm').style.display = 'flex';
+        }
+
+        function hideCheckoutForm() {
+            document.getElementById('checkoutForm').style.display = 'none';
+            document.getElementById('mainActions').style.display = 'flex';
+            document.getElementById('resId').value = '';
+            document.getElementById('lastName').value = '';
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('errorToast');
+            toast.innerText = message;
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 5000);
+        }
+
+        function setLoading(isActive, message = "Processing...", hideSpinner = false) {
+            const overlay = document.getElementById('loader');
+            document.getElementById('loaderText').innerText = message;
+            document.getElementById('spinnerIcon').style.display = hideSpinner ? 'none' : 'block';
+            overlay.style.display = isActive ? 'flex' : 'none';
+        }
+
+        async function submitCheckout() {
+            const resId = document.getElementById('resId').value.trim();
+            const lastName = document.getElementById('lastName').value.trim();
+
+            if (!resId || !lastName) {
+                showToast("Please enter both Reservation ID and Last Name.");
+                return;
+            }
+
+            setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
+
+            try {
+                // Point this to the local IP of the Windows PC running server.js
+                // Example: 'http://192.168.1.50:3000/api/kiosk/checkout'
+                const response = await fetch('/api/kiosk/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        reservationId: resId,
+                        lastName: lastName,
+                        terminalName: TERMINAL_NAME 
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'complete') {
+                    setLoading(true, "Checkout Complete! Printing receipt...", false);
+                    setTimeout(() => {
+                        setLoading(false);
+                        hideCheckoutForm();
+                    }, 4000);
+                } 
+                else {
+                    setLoading(false);
+                    showToast(data.message || "Checkout failed. Please see front desk.");
+                }
+
+            } catch (error) {
+                console.error(error);
+                setLoading(false);
+                showToast("Network Error. Cannot reach front desk server.");
+            }
+        }
+
+        // No polling needed, server execution blocks until terminal payment clears.
+    </script>
+</body>
+</html>
