@@ -164,6 +164,55 @@ class CloudbedsAPI {
     }
   }
 
+  /**
+   * Fetch reservations with highly nested financial details for custom reporting.
+   */
+  async getReservationsWithRateDetails(startDate, endDate) {
+    logger.info(`[API CALL] GET /getReservationsWithRateDetails | ${startDate} to ${endDate}`);
+    
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({
+        success: true,
+        data: [
+          { reservationId: "R_01", startDate: startDate, endDate: endDate, status: "checked_in", source: "OTA (Booking.com)", total: 350.00 },
+          { reservationId: "R_02", startDate: startDate, endDate: endDate, status: "no_show", source: "Direct", total: 150.00 },
+          { reservationId: "R_03", startDate: startDate, endDate: endDate, status: "checked_in", source: "OTA (Expedia)", total: 420.00 },
+          { reservationId: "R_04", startDate: startDate, endDate: endDate, status: "checked_in", source: "Direct", total: 80.00 }
+        ]
+      });
+    }
+
+    try {
+      const response = await this._getClient().get('/getReservationsWithRateDetails', {
+        params: { checkInFrom: startDate, checkInTo: endDate }
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`getReservationsWithRateDetails failed: ${error.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
+   * Fetch a multi-day forecast for projected occupancy and revenue.
+   */
+  async getForecast(daysForward = 14) {
+    logger.info(`[API CALL] GET /getForecast | +${daysForward} days`);
+    
+    // Cloudbeds has a GET /getDashboard or GET /getOccupancy endpoint, mocked here
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn([
+        { date: "Tomorrow", occupancy: "82%", onTheBooksRev: "$2,400" },
+        { date: "+2 Days", occupancy: "85%", onTheBooksRev: "$2,600" },
+        { date: "+3 Days", occupancy: "60%", onTheBooksRev: "$1,800" },
+        { date: "Next Weekend", occupancy: "95%", onTheBooksRev: "$4,200" }
+      ]);
+    }
+    
+    // REAL NETWORK CALL (Mapping to whichever endpoint client uses)
+    return { error: "Live forecast endpoint not mapped yet." };
+  }
+
   // ==========================================
   // WHISTLE (Guest Experience) MESSAGE SENDING
   // ==========================================

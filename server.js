@@ -2,6 +2,7 @@ const express = require('express');
 const cron = require('node-cron');
 const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
+const { NightAuditReport } = require('./src/nightAuditReport');
 const { logger } = require('./src/logger');
 
 require('dotenv').config();
@@ -135,6 +136,17 @@ cron.schedule('0 2 * * *', async () => {
     });
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled room assignment.');
+  }
+});
+
+// 2. Automated Daily Report with Google Sheets Data Warehouse (4:00 AM)
+cron.schedule('0 4 * * *', async () => {
+  logger.info('[CRON] 4:00 AM - Triggering Automated Night Audit Data Warehouse routine...');
+  if (agent.isRunning) {
+    const reportEngine = new NightAuditReport(agent.api);
+    await reportEngine.runDailyAudit();
+  } else {
+    logger.warn('[CRON] Agent is not running. Skipping reporting pipeline.');
   }
 });
 
