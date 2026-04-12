@@ -3,6 +3,7 @@ const cron = require('node-cron');
 const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
+const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
 const { logger } = require('./src/logger');
 
 require('dotenv').config();
@@ -147,6 +148,17 @@ cron.schedule('0 4 * * *', async () => {
     await reportEngine.runDailyAudit();
   } else {
     logger.warn('[CRON] Agent is not running. Skipping reporting pipeline.');
+  }
+});
+
+// 3. Automated Housekeeping Clustering & Scheduling (6:00 AM)
+cron.schedule('0 6 * * *', async () => {
+  logger.info('[CRON] 6:00 AM - Triggering Housekeeping Load-Balancer algorithm...');
+  if (agent.isRunning) {
+    const housekeepingEngine = new HousekeepingAssigner(agent.api);
+    await housekeepingEngine.run6AMAssignment();
+  } else {
+    logger.warn('[CRON] Agent is not running. Skipping Housekeeping pipeline.');
   }
 });
 

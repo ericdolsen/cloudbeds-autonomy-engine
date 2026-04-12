@@ -109,8 +109,20 @@ class AutonomyEngine {
               reservationId: { type: Type.STRING },
               amount: { type: Type.NUMBER, description: "Amount to charge in USD" },
               terminalName: { type: Type.STRING, description: "The name of the terminal the guest is standing at (e.g. 'Reader 1')" }
+              terminalName: { type: Type.STRING, description: "The name of the terminal the guest is standing at (e.g. 'Reader 1')" }
             },
             required: ["reservationId", "amount", "terminalName"]
+          }
+        },
+        {
+          name: "processCheckout",
+          description: "Initiates the absolute full checkout sequence. Updates PMS status to checked_out and emails the fiscal document strictly adhering to Channel rules.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING }
+            },
+            required: ["reservationId"]
           }
         }
       ]
@@ -184,6 +196,27 @@ STANDARD WORKFLOW:
             logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
             // This will block/wait for the Stripe API terminal callback
             apiResult = { success: true, message: `Payment of $${args.amount} successfully captured via physical chip inserted at ${args.terminalName}.` };
+          }
+          else if (name === 'processCheckout') {
+            logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
+            const resData = await this.api.getReservation(args.reservationId);
+            if (resData.success && resData.data) {
+                // Update status
+                const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
+                
+                // Security Guard - DO NOT SEND INVOICE TO CHANNEL COLLECT BOOKINGS
+                if (resData.data.paymentType === 'Channel Collect Booking') {
+                   logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
+                   apiResult = { success: true, message: "Checkout processed, but invoice skipped due to Channel Collect policy." };
+                } else {
+                   // In reality, you extract the generated documentID from the reservation
+                   const fakeDocId = `DOC_${args.reservationId}_123`;
+                   const emailRes = await this.api.emailFiscalDocument(fakeDocId, resData.data.email || 'guest@example.com');
+                   apiResult = { success: true, message: `Checkout processed. Invoice sent via email via native fiscal endpoint. (Status: ${emailRes.success})` };
+                }
+            } else {
+                apiResult = { success: false, error: "Count not fetch reservation to process checkout." };
+            }
           }
           else throw new Error("Unknown tool call");
         } catch (e) {

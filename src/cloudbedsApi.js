@@ -213,6 +213,79 @@ class CloudbedsAPI {
     return { error: "Live forecast endpoint not mapped yet." };
   }
 
+  /**
+   * Native Endpoint to email the fiscal document / invoice generated at checkout.
+   */
+  async emailFiscalDocument(documentId, emailAddress) {
+    logger.info(`[API CALL] POST /emailFiscalDocument | DocID: ${documentId} to ${emailAddress}`);
+    
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, message: "Email sent successfully." });
+    }
+
+    try {
+      const response = await this._getClient().post('/emailFiscalDocument', { documentID: documentId, email: emailAddress });
+      return response.data;
+    } catch (error) {
+      logger.error(`emailFiscalDocument failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // ==========================================
+  // HOUSEKEEPING API
+  // ==========================================
+
+  /**
+   * Pull all housekeeping inspections (used to find Dirty rooms globally)
+   */
+  async getHousekeepingStatus() {
+    logger.info(`[API CALL] GET /housekeeping/v1/inspections`);
+    
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({
+        success: true,
+        data: [
+          { roomID: "113", roomCondition: "dirty", reservationCondition: "checkout" },
+          { roomID: "116", roomCondition: "dirty", reservationCondition: "stay_over" },
+          { roomID: "204", roomCondition: "dirty", reservationCondition: "checkout" },
+          { roomID: "207", roomCondition: "clean", reservationCondition: "stay_over" },
+          { roomID: "305", roomCondition: "dirty", reservationCondition: "checkin" },
+          { roomID: "312", roomCondition: "dirty", reservationCondition: "checkout" }
+        ]
+      });
+    }
+
+    try {
+      // Typically v1 or v2 depending on Cloudbeds PMS
+      const response = await this._getClient().get(`/housekeeping/v1/inspections/${process.env.CLOUDBEDS_PROPERTY_ID}`);
+      return response.data;
+    } catch (error) {
+      logger.error(`getHousekeepingStatus failed: ${error.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
+   * Push assigned housekeeper mapping directly to the Cloudbeds dashboard.
+   */
+  async postHousekeepingAssignment(assignments) {
+    logger.info(`[API CALL] POST /postHousekeepingAssignment | count: ${assignments.length}`);
+    
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, message: "Housekeeping assignments posted to dashboard." });
+    }
+
+    try {
+      // assignments format: [ { roomID: "101", housekeeperID: "HK_123" } ]
+      const response = await this._getClient().post('/postHousekeepingAssignment', { assignments });
+      return response.data;
+    } catch (error) {
+      logger.error(`postHousekeepingAssignment failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
   // ==========================================
   // WHISTLE (Guest Experience) MESSAGE SENDING
   // ==========================================
