@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Cloudbeds Kiosk Pusher",
+  "version": "1.0",
+  "description": "Natively injects a 'Push to Tablet' button on reservations to bypass Cloudbeds API limits.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.cloudbeds.com/*",
+    "http://127.0.0.1:3000/*",
+    "http://localhost:3000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.cloudbeds.com/connect/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

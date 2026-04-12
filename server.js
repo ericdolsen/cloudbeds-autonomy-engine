@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cron = require('node-cron');
 const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
@@ -9,6 +11,8 @@ const { logger } = require('./src/logger');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
 const port = process.env.PORT || 3000;
 
 // Setup static files and APIs
@@ -17,6 +21,11 @@ app.use(express.json());
 
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
+
+// WebSockets (Tablet Connectivity)
+io.on('connection', (socket) => {
+  logger.info(`[WEBSOCKET] Kiosk Tablet Connected: ${socket.id}`);
+});
 
 // Dashboard API Routes
 app.get('/api/status', (req, res) => {
@@ -124,6 +133,22 @@ app.post('/api/kiosk/checkout', async (req, res) => {
   }
 });
 
+// "Push to Tablet" Chrome Extension Relay Endpoint
+app.post('/api/kiosk/push', (req, res) => {
+  const { reservationId } = req.body;
+  
+  if (!reservationId) {
+    return res.status(400).json({ success: false, error: 'reservationId is required' });
+  }
+  
+  logger.info(`[KIOSK PUSH] Received Chrome Extension push for Reservation: ${reservationId}. Pinging tablet via WebSockets.`);
+  
+  // Emits the Cloudbeds push event directly to the tablet's browser
+  io.emit('pushToTablet', { reservationId });
+  
+  res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
+});
+
 // CRON SCHEDULER
 // =====================================
 
@@ -166,7 +191,7 @@ cron.schedule('0 6 * * *', async () => {
 // =====================================
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
-  app.listen(port, () => {
+  server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });
 

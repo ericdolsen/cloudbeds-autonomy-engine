@@ -235,6 +235,9 @@
         </div>
     </div>
 
+    <!-- Socket.io for Real-Time Chrome Extension "Push to Tablet" feature -->
+    <script src="/socket.io/socket.io.js"></script>
+
     <script>
         // --- CONFIGURATION ---
         // Change this for each individual tablet deployed so the server knows which reader to trigger
@@ -248,6 +251,21 @@
             document.getElementById('date').innerText = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' • ' + ampm;
         }
         setInterval(updateClock, 1000); updateClock();
+
+        // --- WEBSOCKET LISTENER FOR FRONT DESK PUSH ---
+        const socket = io(); // Connects to the local server.js
+        socket.on('pushToTablet', (data) => {
+            if(data.reservationId) {
+                setLoading(true, `Incoming Check-In for Reservation ${data.reservationId}. Redirecting to Guest Portal...`, false);
+                
+                // Allow the user to see the transition message
+                setTimeout(() => {
+                    // Redirect tablet directly to the Cloudbeds native Guest Portal checkin form
+                    // Property ID mapped from server env is 10074733072513
+                    window.location.href = `https://hotels.cloudbeds.com/guest_portal/10074733072513/reservation/${data.reservationId}`;
+                }, 1500);
+            }
+        });
 
         function showCheckoutForm() {
             document.getElementById('mainActions').style.display = 'none';
