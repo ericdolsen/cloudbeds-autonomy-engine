@@ -239,25 +239,26 @@
 
         <!-- Main Buttons -->
         <div class="main-actions" id="mainActions">
-            <button class="kiosk-btn" onclick="showToast('Check-In is handled at the front desk.')">
+            <button class="kiosk-btn" onclick="showForm('checkin')">
                 <span class="icon">✨</span>
                 <span class="text">Guest Check-In</span>
             </button>
-            <button class="kiosk-btn" onclick="showCheckoutForm()">
+            <button class="kiosk-btn" onclick="showForm('checkout')">
                 <span class="icon">🧾</span>
                 <span class="text">Express Check-Out</span>
             </button>
         </div>
 
-        <!-- Checkout Form -->
-        <div class="checkout-form" id="checkoutForm">
+        <!-- Dynamic Form -->
+        <div class="checkout-form" id="kioskForm">
             <div class="form-row">
+                <input type="hidden" id="formMode" value="checkout">
                 <input type="text" id="resId" class="kiosk-input" placeholder="Reservation # (e.g. 12345)" autocomplete="off" autocorrect="off">
                 <input type="text" id="lastName" class="kiosk-input" placeholder="Last Name" autocomplete="off" autocorrect="off">
             </div>
             <div class="form-row" style="justify-content: center; margin-top: 10px;">
-                <button class="kiosk-btn form-btn cancel" onclick="hideCheckoutForm()">Cancel</button>
-                <button class="kiosk-btn form-btn primary" onclick="submitCheckout()">Find Reservation</button>
+                <button class="kiosk-btn form-btn cancel" onclick="hideForm()">Cancel</button>
+                <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()">Process Check-Out</button>
             </div>
         </div>
 
@@ -306,13 +307,21 @@
             }
         });
 
-        function showCheckoutForm() {
+        function showForm(mode) {
             document.getElementById('mainActions').style.display = 'none';
-            document.getElementById('checkoutForm').style.display = 'flex';
+            document.getElementById('kioskForm').style.display = 'flex';
+            document.getElementById('formMode').value = mode;
+            
+            const btn = document.getElementById('submitActionBtn');
+            if (mode === 'checkin') {
+               btn.innerText = 'Go to Digital Check-In';
+            } else {
+               btn.innerText = 'Process Check-Out';
+            }
         }
 
-        function hideCheckoutForm() {
-            document.getElementById('checkoutForm').style.display = 'none';
+        function hideForm() {
+            document.getElementById('kioskForm').style.display = 'none';
             document.getElementById('mainActions').style.display = 'flex';
             document.getElementById('resId').value = '';
             document.getElementById('lastName').value = '';
@@ -332,7 +341,8 @@
             overlay.style.display = isActive ? 'flex' : 'none';
         }
 
-        async function submitCheckout() {
+        async function submitForm() {
+            const mode = document.getElementById('formMode').value;
             const resId = document.getElementById('resId').value.trim();
             const lastName = document.getElementById('lastName').value.trim();
 
@@ -341,6 +351,16 @@
                 return;
             }
 
+            if (mode === 'checkin') {
+                setLoading(true, "Launching Secure Check-in Portal...", true);
+                setTimeout(() => {
+                    // Redirect tablet directly to the Cloudbeds native Guest Portal checkin form
+                    window.location.href = `https://hotels.cloudbeds.com/guest_portal/10074733072513/reservation/${resId}`;
+                }, 1000);
+                return;
+            }
+
+            // Checkout Logic
             setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
 
             try {
@@ -362,7 +382,7 @@
                     setLoading(true, "Checkout Complete! Printing receipt...", false);
                     setTimeout(() => {
                         setLoading(false);
-                        hideCheckoutForm();
+                        hideForm();
                     }, 4000);
                 } 
                 else {
