@@ -35,12 +35,27 @@ class CloudbedsAPI {
     logger.info(`[API CALL] GET /getReservation | query: ${query}`);
     
     if (this.apiKey === 'MOCK_KEY') {
+      // Mocking different behaviors for Last Name vs ID searches
+      if (query && query.toLowerCase() === 'smith') {
+         return this._mockReturn({
+           success: true,
+           data: {
+             reservationId: "RD98273410",
+             guestName: "Amanda Smith",
+             status: "confirmed",
+             phone: "555-827-8492"
+           }
+         });
+      }
+
+      // Default fallback mock
       return this._mockReturn({
         success: true,
         data: {
           reservationId: "JD10029384",
           status: "in_house",
           guestName: "John Doe",
+          phone: "555-221-9988",
           balanceDue: 45.00,
           currency: "USD",
           roomType: "Standard Queen",

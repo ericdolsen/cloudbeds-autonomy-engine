@@ -149,6 +149,49 @@ app.post('/api/kiosk/push', (req, res) => {
   res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
 });
 
+// Identity verification for Kiosk (Search by Last Name)
+app.post('/api/kiosk/identify', async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
+  const result = await agent.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.length >= 4) {
+         const last4 = phoneStr.slice(-4);
+         return res.json({ 
+           success: true, 
+           requiresVerification: true, 
+           maskedPhone: `***-***-${last4}`
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Could not locate a reservation with that information." });
+});
+
+app.post('/api/kiosk/verify', async (req, res) => {
+  const { query, pin } = req.body;
+  if (!query || !pin) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK VERIFY] Verifying PIN for guest: ${query}`);
+  const result = await agent.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.slice(-4) === pin) {
+         return res.json({ 
+           success: true, 
+           reservationId: result.data.reservationId 
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Verification failed. Incorrect PIN." });
+});
+
 // CRON SCHEDULER
 // =====================================
 

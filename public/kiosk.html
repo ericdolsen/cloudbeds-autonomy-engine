@@ -251,14 +251,17 @@
 
         <!-- Dynamic Form -->
         <div class="checkout-form" id="kioskForm">
-            <div class="form-row">
-                <input type="hidden" id="formMode" value="checkout">
-                <input type="text" id="resId" class="kiosk-input" placeholder="Reservation # (e.g. 12345)" autocomplete="off" autocorrect="off">
-                <input type="text" id="lastName" class="kiosk-input" placeholder="Last Name" autocomplete="off" autocorrect="off">
+            <input type="hidden" id="formMode" value="checkout">
+            <p id="verifyPrompt" style="display:none; font-size: 1.4rem; font-weight: 500; text-align: center; color: #38bdf8; letter-spacing: 0.5px;"></p>
+            <div class="form-row" id="step1Row">
+                <input type="text" id="queryInput" class="kiosk-input" placeholder="Last Name OR Reservation #" autocomplete="off" autocorrect="off">
+            </div>
+            <div class="form-row" id="step2Row" style="display:none;">
+                <input type="text" id="pinInput" class="kiosk-input" placeholder="Enter last 4 digits of phone" maxlength="4" autocomplete="off" autocorrect="off">
             </div>
             <div class="form-row" style="justify-content: center; margin-top: 10px;">
                 <button class="kiosk-btn form-btn cancel" onclick="hideForm()">Cancel</button>
-                <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()">Process Check-Out</button>
+                <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()">Verify Identity</button>
             </div>
         </div>
 
@@ -307,24 +310,27 @@
             }
         });
 
+        let currentStep = 1;
+
         function showForm(mode) {
             document.getElementById('mainActions').style.display = 'none';
             document.getElementById('kioskForm').style.display = 'flex';
             document.getElementById('formMode').value = mode;
             
+            currentStep = 1;
+            document.getElementById('step1Row').style.display = 'flex';
+            document.getElementById('step2Row').style.display = 'none';
+            document.getElementById('verifyPrompt').style.display = 'none';
+            document.getElementById('queryInput').value = '';
+            document.getElementById('pinInput').value = '';
+
             const btn = document.getElementById('submitActionBtn');
-            if (mode === 'checkin') {
-               btn.innerText = 'Go to Digital Check-In';
-            } else {
-               btn.innerText = 'Process Check-Out';
-            }
+            btn.innerText = (mode === 'checkin') ? 'Find Check-In' : 'Find Check-Out';
         }
 
         function hideForm() {
             document.getElementById('kioskForm').style.display = 'none';
             document.getElementById('mainActions').style.display = 'flex';
-            document.getElementById('resId').value = '';
-            document.getElementById('lastName').value = '';
         }
 
         function showToast(message) {
@@ -343,18 +349,65 @@
 
         async function submitForm() {
             const mode = document.getElementById('formMode').value;
-            const resId = document.getElementById('resId').value.trim();
-            const lastName = document.getElementById('lastName').value.trim();
+            const query = document.getElementById('queryInput').value.trim();
 
-            if (!resId || !lastName) {
-                showToast("Please enter both Reservation ID and Last Name.");
-                return;
+            if (currentStep === 1) {
+                if (!query) { showToast("Please enter an ID or Last Name"); return; }
+                
+                // If it's a number OR alphanumeric pattern that looks like an ID, jump straight there
+                // Let's assume lengths under 8 that are all letters are Last Names
+                if (/^[a-zA-Z]+$/.test(query) || query.length > 1) {
+                    setLoading(true, "Searching for reservation...", false);
+                    try {
+                        const res = await fetch('/api/kiosk/identify', {
+                           method: 'POST', headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({ query })
+                        });
+                        const data = await res.json();
+                        setLoading(false);
+                        
+                        if (data.success && data.requiresVerification) {
+                            currentStep = 2;
+                            document.getElementById('step1Row').style.display = 'none';
+                            document.getElementById('step2Row').style.display = 'flex';
+                            document.getElementById('verifyPrompt').style.display = 'block';
+                            document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number (ending in ${data.maskedPhone.split('-').pop()}) to verify.`;
+                            document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
+                        } else {
+                            // Automatically assume it was actually an ID if identify failed
+                            proceedWithValidatedId(query, mode);
+                        }
+                    } catch(e) { 
+                        setLoading(false); 
+                        // Automatically assume it was actually an ID if identify failed
+                        proceedWithValidatedId(query, mode); 
+                    }
+                } else {
+                    proceedWithValidatedId(query, mode);
+                }
+            } else if (currentStep === 2) {
+                const pin = document.getElementById('pinInput').value.trim();
+                setLoading(true, "Verifying identity...", false);
+                try {
+                    const res = await fetch('/api/kiosk/verify', {
+                       method: 'POST', headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ query, pin })
+                    });
+                    const data = await res.json();
+                    setLoading(false);
+                    if (data.success && data.reservationId) {
+                        proceedWithValidatedId(data.reservationId, mode);
+                    } else {
+                        showToast(data.message || "Incorrect PIN. Please try again.");
+                    }
+                } catch(e) { setLoading(false); showToast("Network Error."); }
             }
+        }
 
+        async function proceedWithValidatedId(resId, mode) {
             if (mode === 'checkin') {
                 setLoading(true, "Launching Secure Check-in Portal...", true);
                 setTimeout(() => {
-                    // Redirect tablet directly to the Cloudbeds native Guest Portal checkin form
                     window.location.href = `https://hotels.cloudbeds.com/guest_portal/10074733072513/reservation/${resId}`;
                 }, 1000);
                 return;
@@ -364,14 +417,12 @@
             setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
 
             try {
-                // Point this to the local IP of the Windows PC running server.js
-                // Example: 'http://192.168.1.50:3000/api/kiosk/checkout'
                 const response = await fetch('/api/kiosk/checkout', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         reservationId: resId,
-                        lastName: lastName,
+                        lastName: document.getElementById('queryInput').value, // Used as context
                         terminalName: TERMINAL_NAME 
                     })
                 });
