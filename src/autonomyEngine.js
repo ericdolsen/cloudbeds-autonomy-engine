@@ -100,6 +100,8 @@ class AutonomyEngine {
               issueDescription: { type: Type.STRING, description: "Brief description of the problem being escalated" }
             },
             required: ["urgency", "issueDescription"]
+          }
+        },
         {
           name: "chargePhysicalTerminal",
           description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a Card-Present transaction. MUST BE USED instead of postPayment if the guest is checking out at the physical kiosk.",
@@ -108,7 +110,6 @@ class AutonomyEngine {
             properties: {
               reservationId: { type: Type.STRING },
               amount: { type: Type.NUMBER, description: "Amount to charge in USD" },
-              terminalName: { type: Type.STRING, description: "The name of the terminal the guest is standing at (e.g. 'Reader 1')" }
               terminalName: { type: Type.STRING, description: "The name of the terminal the guest is standing at (e.g. 'Reader 1')" }
             },
             required: ["reservationId", "amount", "terminalName"]
@@ -215,7 +216,7 @@ STANDARD WORKFLOW:
                    apiResult = { success: true, message: `Checkout processed. Invoice sent via email via native fiscal endpoint. (Status: ${emailRes.success})` };
                 }
             } else {
-                apiResult = { success: false, error: "Count not fetch reservation to process checkout." };
+                apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
             }
           }
           else throw new Error("Unknown tool call");
