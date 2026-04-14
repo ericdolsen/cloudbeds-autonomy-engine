@@ -19,6 +19,11 @@ const port = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// Serve the Kiosk UI on the root directory
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
+});
+
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
 
