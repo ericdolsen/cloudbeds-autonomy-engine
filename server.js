@@ -155,7 +155,7 @@ app.post('/api/kiosk/identify', async (req, res) => {
   if (!query) return res.status(400).json({ success: false });
 
   logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
-  const result = await agent.api.getReservation(query);
+  const result = await agent.engine.api.getReservation(query);
 
   if (result.success && result.data && result.data.phone) {
      const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
@@ -177,7 +177,7 @@ app.post('/api/kiosk/verify', async (req, res) => {
   if (!query || !pin) return res.status(400).json({ success: false });
 
   logger.info(`[KIOSK VERIFY] Verifying PIN for guest: ${query}`);
-  const result = await agent.api.getReservation(query);
+  const result = await agent.engine.api.getReservation(query);
 
   if (result.success && result.data && result.data.phone) {
      const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
