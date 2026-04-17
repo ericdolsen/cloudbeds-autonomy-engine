@@ -37,7 +37,7 @@ class HousekeepingAssigner {
     let dirtyRooms = [];
     if (query.success && query.data) {
       // Filter only dirty rooms
-      dirtyRooms = query.data.filter(r => Math.abs(r.roomCondition.indexOf('dirty')) !== -1);
+      dirtyRooms = query.data.filter(r => r.roomCondition.includes('dirty'));
     } else {
       logger.error('[HOUSEKEEPING] Failed to fetch Cloudbeds housekeeping data.');
       return;

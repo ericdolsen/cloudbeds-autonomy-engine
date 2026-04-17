@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cron = require('node-cron');
 const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
@@ -9,14 +11,26 @@ const { logger } = require('./src/logger');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
 const port = process.env.PORT || 3000;
 
 // Setup static files and APIs
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// Serve the Kiosk UI on the root directory
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
+});
+
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
+
+// WebSockets (Tablet Connectivity)
+io.on('connection', (socket) => {
+  logger.info(`[WEBSOCKET] Kiosk Tablet Connected: ${socket.id}`);
+});
 
 // Dashboard API Routes
 app.get('/api/status', (req, res) => {
@@ -40,15 +54,44 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
   }
 
   try {
+    const resId = payload.reservationID || payload.reservationId || 'unknown';
     let promptText = "";
-    
-    // Translate raw JSON webhooks into human-readable prompts for the LLM
-    if (payload.event === "reservation/created") {
-      promptText = `A new reservation (ID: ${payload.reservationID || payload.reservationId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
-    } else if (payload.event === "reservation/dates_changed") {
-      promptText = `The dates for reservation ${payload.reservationId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
-    } else {
-      promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${payload.reservationID || 'unknown'}. Review if necessary.`;
+
+    switch (payload.event) {
+      case "reservation/created":
+        promptText = `A new reservation (ID: ${resId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
+        break;
+      case "reservation/status_changed":
+        promptText = `Reservation ${resId} status changed to "${payload.status || 'unknown'}". If this is a check-in, make sure the room is ready; if cancelled, review refund and cancellation fee policy.`;
+        break;
+      case "reservation/dates_changed":
+        promptText = `The dates for reservation ${resId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+        break;
+      case "reservation/accommodation_status_changed":
+      case "reservation/accommodation_changed":
+        promptText = `Room assignment for reservation ${resId} changed. Confirm housekeeping state for the new room and update the guest if they have arrived.`;
+        break;
+      case "reservation/deleted":
+        promptText = `Reservation ${resId} was deleted. Verify no outstanding folio balance or pending payment needs to be reconciled.`;
+        break;
+      case "guest/created":
+      case "guest/details_changed":
+        promptText = `Guest record updated on reservation ${resId} (event: ${payload.event}). No action usually required, but flag if phone or email changed so comms go to the right place.`;
+        break;
+      case "housekeeping/room_condition_changed": {
+        // Real-time trigger: rebalance housekeeping assignments as rooms flip dirty/clean.
+        const housekeepingEngine = new HousekeepingAssigner(agent.api);
+        housekeepingEngine.run6AMAssignment().catch(e => logger.error(`Housekeeping rebalance failed: ${e.message}`));
+        return;
+      }
+      case "night_audit/completed": {
+        // Fire the same pipeline as the 4am cron, but driven by the real audit completion.
+        const reportEngine = new NightAuditReport(agent.api);
+        reportEngine.runDailyAudit().catch(e => logger.error(`Night audit report failed: ${e.message}`));
+        return;
+      }
+      default:
+        promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${resId}. Review if necessary.`;
     }
 
     await agent.processIncomingMessage({ source: 'cloudbeds', text: promptText });
@@ -124,6 +167,65 @@ app.post('/api/kiosk/checkout', async (req, res) => {
   }
 });
 
+// "Push to Tablet" Chrome Extension Relay Endpoint
+app.post('/api/kiosk/push', (req, res) => {
+  const { reservationId } = req.body;
+  
+  if (!reservationId) {
+    return res.status(400).json({ success: false, error: 'reservationId is required' });
+  }
+  
+  logger.info(`[KIOSK PUSH] Received Chrome Extension push for Reservation: ${reservationId}. Pinging tablet via WebSockets.`);
+  
+  // Emits the Cloudbeds push event directly to the tablet's browser
+  io.emit('pushToTablet', { reservationId });
+  
+  res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
+});
+
+// Identity verification for Kiosk (Search by Last Name)
+app.post('/api/kiosk/identify', async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
+  const result = await agent.engine.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.length >= 4) {
+         const last4 = phoneStr.slice(-4);
+         return res.json({ 
+           success: true, 
+           requiresVerification: true, 
+           maskedPhone: `***-***-${last4}`
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Could not locate a reservation with that information." });
+});
+
+app.post('/api/kiosk/verify', async (req, res) => {
+  const { query, pin } = req.body;
+  if (!query || !pin) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK VERIFY] Verifying PIN for guest: ${query}`);
+  const result = await agent.engine.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.slice(-4) === pin) {
+         return res.json({ 
+           success: true, 
+           reservationId: result.data.reservationId 
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Verification failed. Incorrect PIN." });
+});
+
 // CRON SCHEDULER
 // =====================================
 
@@ -166,7 +268,7 @@ cron.schedule('0 6 * * *', async () => {
 // =====================================
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
-  app.listen(port, () => {
+  server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });
 
