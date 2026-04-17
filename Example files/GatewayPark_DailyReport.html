@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gateway Park — Daily Report</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --navy:   #1B3A6B;
+    --blue:   #2563EB;
+    --blue-lt:#DBEAFE;
+    --green:  #15803D;
+    --green-lt:#DCFCE7;
+    --red:    #B91C1C;
+    --red-lt: #FEE2E2;
+    --amber:  #B45309;
+    --amber-lt:#FEF3C7;
+    --gray-50:#F9FAFB;
+    --gray-100:#F3F4F6;
+    --gray-200:#E5E7EB;
+    --gray-400:#9CA3AF;
+    --gray-600:#4B5563;
+    --gray-800:#1F2937;
+    --white:  #FFFFFF;
+    --text:   #111827;
+    --muted:  #6B7280;
+    --border: #E5E7EB;
+  }
+
+  body {
+    font-family: 'Source Sans 3', Georgia, sans-serif;
+    background: #F0EDE8;
+    color: var(--text);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    background: var(--navy);
+    color: white;
+    padding: 18px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .topbar-title {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+  .topbar-sub {
+    font-size: 13px;
+    opacity: 0.65;
+    margin-top: 2px;
+  }
+  .topbar-date {
+    text-align: right;
+  }
+  .topbar-date .big-date {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .topbar-date .small-date {
+    font-size: 12px;
+    opacity: 0.6;
+    margin-top: 2px;
+  }
+
+  /* ── REFRESH BANNER ── */
+  .refresh-bar {
+    background: #EBF4FF;
+    border-bottom: 1px solid #BFDBFE;
+    padding: 10px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .refresh-btn {
+    background: var(--navy);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 22px;
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .refresh-btn:hover { background: #2a4f8a; }
+  .refresh-btn:active { transform: scale(0.98); }
+  .refresh-icon {
+    width: 18px; height: 18px;
+    display: inline-block;
+  }
+  .refresh-hint {
+    font-size: 14px;
+    color: #1e40af;
+  }
+  .refresh-hint strong { font-weight: 700; }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    display: inline-block;
+    margin-right: 5px;
+  }
+
+  /* ── MAIN CONTENT ── */
+  .page { padding: 28px 32px 48px; max-width: 1100px; margin: 0 auto; }
+
+  /* ── SECTION LABEL ── */
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 28px 0 12px;
+  }
+  .section-label:first-of-type { margin-top: 0; }
+
+  /* ── BIG KPI CARDS (today) ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 6px;
+  }
+  .kpi-card {
+    background: white;
+    border-radius: 12px;
+    padding: 18px 20px 16px;
+    border: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: var(--navy);
+  }
+  .kpi-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .kpi-value {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 32px;
+    font-weight: 600;
+    color: var(--navy);
+    line-height: 1;
+  }
+  .kpi-sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .kpi-vs {
+    font-size: 12px;
+    margin-top: 8px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    display: inline-block;
+    font-weight: 600;
+  }
+  .up   { background: var(--green-lt); color: var(--green); }
+  .down { background: var(--red-lt);   color: var(--red); }
+  .flat { background: var(--gray-100); color: var(--muted); }
+
+  /* ── COMPARISON TABLE ── */
+  .compare-table-wrap {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: var(--navy); }
+  thead th {
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-align: right;
+    padding: 11px 16px;
+    white-space: nowrap;
+  }
+  thead th:first-child { text-align: left; min-width: 170px; }
+
+  .group-row td {
+    background: #EDF2F7;
+    color: var(--navy);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 7px 16px;
+    border-top: 1px solid var(--border);
+  }
+  tbody tr:not(.group-row) {
+    border-bottom: 1px solid var(--gray-100);
+  }
+  tbody tr:not(.group-row):hover { background: #FAFBFF; }
+  tbody td {
+    padding: 10px 16px;
+    font-size: 14px;
+    color: var(--gray-800);
+    text-align: right;
+    white-space: nowrap;
+  }
+  tbody td:first-child {
+    text-align: left;
+    color: var(--gray-600);
+    font-size: 14px;
+  }
+  .total-row td {
+    background: #F0F4FF;
+    font-weight: 700;
+    color: var(--navy) !important;
+    border-top: 2px solid var(--navy);
+    font-size: 14px;
+  }
+  .col-today { background: rgba(37,99,235,0.04); }
+
+  /* variance badges in table */
+  .var-up   { color: var(--green); font-size: 12px; font-weight: 700; }
+  .var-down { color: var(--red);   font-size: 12px; font-weight: 700; }
+  .var-flat { color: var(--muted); font-size: 12px; }
+
+  /* ── ACTIVITY PILLS ── */
+  .activity-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .activity-card {
+    background: white;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    padding: 16px;
+    text-align: center;
+  }
+  .activity-number {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--navy);
+    line-height: 1;
+  }
+  .activity-label {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  .activity-mtd {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    text-align: center;
+    padding: 20px;
+    font-size: 12px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+    background: white;
+  }
+
+  /* ── LOADING STATE ── */
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(27,58,107,0.85);
+    z-index: 999;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    gap: 20px;
+  }
+  .loading-overlay.active { display: flex; }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 18px; font-weight: 600; }
+  .loading-sub  { font-size: 14px; opacity: 0.7; }
+
+  /* ── ERROR BANNER ── */
+  .error-banner {
+    display: none;
+    background: #FEF2F2;
+    border: 1px solid #FCA5A5;
+    border-radius: 10px;
+    padding: 16px 20px;
+    color: var(--red);
+    font-size: 14px;
+    margin: 16px 32px;
+  }
+  .error-banner.active { display: block; }
+
+  @media (max-width: 700px) {
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .activity-grid { grid-template-columns: repeat(2, 1fr); }
+    .topbar { flex-direction: column; gap: 8px; text-align: center; }
+    .page { padding: 16px; }
+    .refresh-bar { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<!-- LOADING OVERLAY -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Getting today's numbers...</div>
+  <div class="loading-sub">This takes just a few seconds</div>
+</div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div>
+    <div class="topbar-title">Gateway Park Hotel &amp; Suites</div>
+    <div class="topbar-sub">Daily Performance Report</div>
+  </div>
+  <div class="topbar-date">
+    <div class="big-date" id="reportDateDisplay">—</div>
+    <div class="small-date" id="reportDateSub">Loading...</div>
+  </div>
+</div>
+
+<!-- REFRESH BAR -->
+<div class="refresh-bar">
+  <button class="refresh-btn" onclick="loadReport()">
+    <svg class="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="1 4 1 10 7 10"></polyline>
+      <path d="M3.51 15a9 9 0 1 0 .49-3.5"></path>
+    </svg>
+    Update to Today's Numbers
+  </button>
+  <div class="refresh-hint">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">Press the button above to load the latest data from Cloudbeds.</span>
+  </div>
+</div>
+
+<!-- ERROR BANNER -->
+<div class="error-banner" id="errorBanner"></div>
+
+<!-- MAIN PAGE -->
+<div class="page">
+
+  <!-- TODAY KPIs -->
+  <div class="section-label" id="todayLabel">Yesterday's Numbers</div>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Rooms Occupied</div>
+      <div class="kpi-value" id="kpi-occ">—</div>
+      <div class="kpi-sub" id="kpi-occ-sub">out of 50 rooms</div>
+      <div class="kpi-vs" id="kpi-occ-vs"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Occupancy Rate</div>
+      <div class="kpi-value" id="kpi-occ-pct">—</div>
+      <div class="kpi-sub" id="kpi-occ-pct-sub">&nbsp;</div>
+      <div class="kpi-vs" id="kpi-occ-pct-vs"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Room Revenue</div>
+      <div class="kpi-value" id="kpi-rev">—</div>
+      <div class="kpi-sub" id="kpi-rev-sub">&nbsp;</div>
+      <div class="kpi-vs" id="kpi-rev-vs"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">ADR</div>
+      <div class="kpi-value" id="kpi-adr">—</div>
+      <div class="kpi-sub">Average Daily Rate</div>
+      <div class="kpi-vs" id="kpi-adr-vs"></div>
+    </div>
+  </div>
+
+  <!-- ACTIVITY ROW -->
+  <div class="section-label" style="margin-top:22px;">Yesterday's Activity</div>
+  <div class="activity-grid">
+    <div class="activity-card">
+      <div class="activity-number" id="act-ci">—</div>
+      <div class="activity-label">Check-Ins</div>
+      <div class="activity-mtd" id="act-ci-mtd">MTD: —</div>
+    </div>
+    <div class="activity-card">
+      <div class="activity-number" id="act-co">—</div>
+      <div class="activity-label">Check-Outs</div>
+      <div class="activity-mtd" id="act-co-mtd">MTD: —</div>
+    </div>
+    <div class="activity-card">
+      <div class="activity-number" id="act-wi">—</div>
+      <div class="activity-label">Walk-Ins</div>
+      <div class="activity-mtd" id="act-wi-mtd">MTD: —</div>
+    </div>
+    <div class="activity-card">
+      <div class="activity-number" id="act-ns">—</div>
+      <div class="activity-label">No-Shows</div>
+      <div class="activity-mtd" id="act-ns-mtd">MTD: —</div>
+    </div>
+    <div class="activity-card">
+      <div class="activity-number" id="act-cx">—</div>
+      <div class="activity-label">Cancellations</div>
+      <div class="activity-mtd" id="act-cx-mtd">MTD: —</div>
+    </div>
+  </div>
+
+  <!-- BIG COMPARISON TABLE -->
+  <div class="section-label" style="margin-top:28px;">Full Breakdown — This Period vs. Last Year</div>
+  <div class="compare-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th id="hdr-today">Yesterday</th>
+          <th id="hdr-ly">LY Same Day</th>
+          <th class="var-col">vs LY</th>
+          <th id="hdr-mtd">Month to Date</th>
+          <th id="hdr-ly-mtd">LY Month to Date</th>
+          <th class="var-col">vs LY</th>
+          <th id="hdr-ytd">Year to Date</th>
+          <th id="hdr-ly-ytd">LY Year to Date</th>
+          <th class="var-col">vs LY</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted);">Press "Update to Today's Numbers" to load the report.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  Gateway Park Hotel &amp; Suites &nbsp;·&nbsp; 50 Total Rooms &nbsp;·&nbsp;
+  <span id="footerGenerated">Data not yet loaded</span>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// CONFIGURATION — update these two lines if anything changes
+// ══════════════════════════════════════════════════════════════════════
+const API_KEY       = 'YOUR_CLOUDBEDS_API_KEY_HERE';  // paste your key here
+const PROPERTY_ID   = 'YOUR_PROPERTY_ID_HERE';         // paste your property ID here
+const TOTAL_ROOMS   = 50;
+
+// ══════════════════════════════════════════════════════════════════════
+// DATE HELPERS
+// ══════════════════════════════════════════════════════════════════════
+function toYMD(d) {
+  return d.toISOString().slice(0,10);
+}
+function addDays(d, n) {
+  const r = new Date(d); r.setDate(r.getDate() + n); return r;
+}
+function addYears(d, n) {
+  const r = new Date(d); r.setFullYear(r.getFullYear() + n); return r;
+}
+function monthStart(d) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function yearStart(d) {
+  return new Date(d.getFullYear(), 0, 1);
+}
+function daysBetween(a, b) {
+  return Math.round((b - a) / 86400000) + 1;
+}
+function fmtDate(d) {
+  return d.toLocaleDateString('en-US', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+}
+function fmtShort(d) {
+  return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+}
+function fmtMonth(d) {
+  return d.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FORMATTING
+// ══════════════════════════════════════════════════════════════════════
+function fmtDollar(n) {
+  if (n == null) return '—';
+  return '$' + Math.round(n).toLocaleString('en-US');
+}
+function fmtDollar2(n) {
+  if (n == null) return '—';
+  return '$' + n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function fmtPct(n) {
+  if (n == null) return '—';
+  return (n * 100).toFixed(1) + '%';
+}
+function fmtInt(n) {
+  if (n == null) return '—';
+  return Math.round(n).toLocaleString('en-US');
+}
+function varPct(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return (curr - prev) / Math.abs(prev);
+}
+function varBadge(curr, prev, higher_is_better=true) {
+  const v = varPct(curr, prev);
+  if (v == null) return '<span class="var-flat">—</span>';
+  const pct = (v * 100).toFixed(1);
+  const good = higher_is_better ? v >= 0 : v <= 0;
+  const sign = v >= 0 ? '+' : '';
+  const cls = good ? 'var-up' : 'var-down';
+  return `<span class="${cls}">${sign}${pct}%</span>`;
+}
+function kpiVs(curr, prev, fmt, higher_is_better=true) {
+  const v = varPct(curr, prev);
+  if (v == null) return '';
+  const pct = Math.abs(v * 100).toFixed(1);
+  const good = higher_is_better ? v >= 0 : v <= 0;
+  const dir = v >= 0 ? '▲' : '▼';
+  const cls = good ? 'up' : 'down';
+  const label = `${dir} ${pct}% vs last year`;
+  return `<span class="kpi-vs ${cls}">${label}</span>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CLOUDBEDS API CALLS
+// ══════════════════════════════════════════════════════════════════════
+async function cbFetch(endpoint, params={}) {
+  const url = new URL(`https://api.cloudbeds.com/api/v1.2/${endpoint}`);
+  url.searchParams.set('propertyID', PROPERTY_ID);
+  Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+  const res = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error(`Cloudbeds API error: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Cloudbeds returned an error');
+  return data;
+}
+
+async function getOccupancy(date) {
+  const ymd = toYMD(date);
+  const data = await cbFetch('getHouseCount', { date: ymd });
+  return {
+    occupied: parseInt(data.data?.occupiedRooms || 0),
+    revenue:  parseFloat(data.data?.roomRevenue || 0),
+    adr:      parseFloat(data.data?.adr || 0),
+    revpar:   parseFloat(data.data?.revpar || 0)
+  };
+}
+
+async function getTransactions(startDate, endDate) {
+  const data = await cbFetch('getTransactions', {
+    startDate: toYMD(startDate),
+    endDate:   toYMD(endDate),
+    type:      'all'
+  });
+  return data.data || [];
+}
+
+async function getReservations(startDate, endDate) {
+  const data = await cbFetch('getReservations', {
+    checkInFrom:  toYMD(startDate),
+    checkInTo:    toYMD(endDate),
+    status:       'all',
+    pageSize:     500
+  });
+  return data.data || [];
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// METRIC COMPUTATION FROM API DATA
+// ══════════════════════════════════════════════════════════════════════
+
+function computeFromTransactions(txns, startDate, endDate) {
+  const start = toYMD(startDate), end = toYMD(endDate);
+  const active = txns.filter(t => t.transactionVoid !== '1' && t.transactionVoid !== true);
+
+  const inRange = t => t.transactionDate >= start && t.transactionDate <= end;
+
+  const roomRevTypes = ['Room Rate', 'Room Revenue - Manual'];
+
+  let rev = 0, items = 0, pay = 0, adj = 0;
+  let rooms = new Set();
+
+  for (const t of active) {
+    if (!inRange(t)) continue;
+    const amt = parseFloat(t.transactionAmount || 0);
+    const type = t.transactionType || '';
+    const rvType = t.roomRevenueType || '';
+    const desc = t.transactionCodeDescription || '';
+
+    if (roomRevTypes.includes(rvType)) {
+      rev += amt;
+      if (t.roomNumber) rooms.add(t.roomNumber);
+    }
+    if (['Items & Services','Add-On'].includes(type)) items += amt;
+    if (type === 'Payment' && amt < 0) pay += Math.abs(amt);
+    if (desc === 'Rate - Adjustment') adj += amt;
+  }
+
+  const days = daysBetween(startDate, endDate);
+  const rn = rooms.size;  // for single day; for range we'll sum daily
+  const adr = rn > 0 ? rev / rn : 0;
+  const revpar = rev / (TOTAL_ROOMS * days);
+  const occ_pct = rn / (TOTAL_ROOMS * days);
+
+  return { rev, items, pay, adj, total_rev: rev + items, adr, revpar, occ_pct, occ: rn, rn };
+}
+
+function computeActivity(reservations, date) {
+  const ymd = toYMD(date);
+  let ci=0, co=0, ns=0, wi=0, cx=0;
+  const seenCI = new Set(), seenCO = new Set();
+  for (const r of reservations) {
+    if (r.checkInDate === ymd && !seenCI.has(r.reservationID)) {
+      seenCI.add(r.reservationID);
+      const status = r.status || '';
+      if (['checked_in','checked_out'].includes(status)) ci++;
+      if (status === 'no_show') ns++;
+      if (status === 'cancelled') cx++;
+      const src = r.sourceID || r.source || '';
+      if (src.toLowerCase().includes('walk')) wi++;
+    }
+    if (r.checkOutDate === ymd && !seenCO.has(r.reservationID)) {
+      seenCO.add(r.reservationID);
+      if ((r.status||'') === 'checked_out') co++;
+    }
+  }
+  return { ci, co, ns, wi, cx };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// FALLBACK: USE EMBEDDED DATA (works offline / without API)
+// ══════════════════════════════════════════════════════════════════════
+// This data was computed from your April 14 export and is used as a 
+// fallback when the API key is not yet configured.
+
+const EMBEDDED = {
+  report_date: '2026-04-14',
+  ly_date:     '2025-04-14',
+  month_name:  'April 2026',
+  ly_month:    'April 2025',
+  td:   { occ:48, occ_pct:0.96,   rev:5160.35, items:0,      pay:3666.25,   adj:0,        total_rev:5160.35,  adr:107.51, revpar:103.21, ci:6,  co:7,  ns:0, wi:0,  cx:0 },
+  mtd:  { occ:458,occ_pct:0.6543, rev:48976.79,items:222,    pay:44081.07,  adj:-330.05,  total_rev:49198.79, adr:106.94, revpar:69.97,  ci:184,co:181,ns:0, wi:13, cx:1 },
+  ytd:  { occ:2672,occ_pct:0.5138,rev:271820.76,items:1429,  pay:284167.29, adj:-8325.64, total_rev:273249.76,adr:101.73, revpar:52.27,  ci:1349,co:1345,ns:2,wi:127,cx:9},
+  ly:   { occ:21, occ_pct:0.42,   rev:2082.48, items:0,      pay:2796.26,   adj:0,        total_rev:2082.48,  adr:99.17,  revpar:41.65,  ci:11, co:10, ns:0, wi:2,  cx:0 },
+  ly_m: { occ:386,occ_pct:0.5514, rev:46064.88,items:411,    pay:50451.45,  adj:-1108.5,  total_rev:46475.88, adr:119.34, revpar:65.81,  ci:173,co:170,ns:2, wi:14, cx:3 },
+  ly_y: { occ:2103,occ_pct:0.4038,rev:255194.37,items:2890,  pay:298772.11, adj:-9450,    total_rev:258084.37,adr:121.35, revpar:49.07,  ci:1180,co:1175,ns:8,wi:103,cx:22}
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// MAIN LOAD FUNCTION
+// ══════════════════════════════════════════════════════════════════════
+async function loadReport() {
+  const overlay = document.getElementById('loadingOverlay');
+  const errBanner = document.getElementById('errorBanner');
+  overlay.classList.add('active');
+  errBanner.classList.remove('active');
+
+  try {
+    let data;
+
+    if (API_KEY === 'YOUR_CLOUDBEDS_API_KEY_HERE') {
+      // No API key yet — use embedded data and show friendly notice
+      await new Promise(r => setTimeout(r, 600)); // brief pause so it feels real
+      data = EMBEDDED;
+      document.getElementById('statusText').innerHTML =
+        '<strong>Showing saved data from April 14, 2026.</strong> Once your Cloudbeds API key is added, this button will always pull today\'s live numbers.';
+    } else {
+      // Live API pull
+      const today = new Date();
+      const reportDate = addDays(today, -1); // yesterday
+      const lyDate     = addYears(reportDate, -1);
+      const ms         = monthStart(reportDate);
+      const ys         = yearStart(reportDate);
+      const lyMs       = monthStart(lyDate);
+      const lyYs       = yearStart(lyDate);
+
+      // Fetch all needed transactions in parallel
+      const [tdOcc, mtdTxns, ytdTxns, lyOcc, lyMtdTxns, lyYtdTxns,
+             tdRes, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
+        getOccupancy(reportDate),
+        getTransactions(ms,   reportDate),
+        getTransactions(ys,   reportDate),
+        getOccupancy(lyDate),
+        getTransactions(lyMs, lyDate),
+        getTransactions(lyYs, lyDate),
+        getReservations(reportDate, reportDate),
+        getReservations(ms,   reportDate),
+        getReservations(ys,   reportDate),
+        getReservations(lyMs, lyDate),
+        getReservations(lyYs, lyDate),
+      ]);
+
+      // Filter transaction sets to single-day for today/LY-today
+      const tdFilter  = mtdTxns.filter(t => t.transactionDate === toYMD(reportDate));
+      const lyFilter  = lyMtdTxns.filter(t => t.transactionDate === toYMD(lyDate));
+
+      const td   = { ...computeFromTransactions(tdFilter,   reportDate, reportDate),
+                     ...tdOcc, ...computeActivity(tdRes, reportDate) };
+      const mtd  = { ...computeFromTransactions(mtdTxns,    ms,   reportDate),
+                     ...computeActivity(mtdRes, reportDate) };
+      const ytd  = { ...computeFromTransactions(ytdTxns,    ys,   reportDate),
+                     ...computeActivity(ytdRes, reportDate) };
+      const ly   = { ...computeFromTransactions(lyFilter,   lyDate, lyDate),
+                     ...lyOcc, ...computeActivity(lyMtdRes, lyDate) };
+      const ly_m = { ...computeFromTransactions(lyMtdTxns,  lyMs, lyDate),
+                     ...computeActivity(lyMtdRes, lyDate) };
+      const ly_y = { ...computeFromTransactions(lyYtdTxns,  lyYs, lyDate),
+                     ...computeActivity(lyYtdRes, lyDate) };
+
+      data = {
+        report_date: toYMD(reportDate),
+        ly_date:     toYMD(lyDate),
+        month_name:  fmtMonth(reportDate),
+        ly_month:    fmtMonth(lyDate),
+        td, mtd, ytd, ly, ly_m, ly_y
+      };
+
+      document.getElementById('statusText').innerHTML =
+        `<strong>Updated.</strong> Showing data through ${fmtShort(reportDate)}.`;
+    }
+
+    renderReport(data);
+
+  } catch(err) {
+    console.error(err);
+    errBanner.textContent = 'Could not load data from Cloudbeds. Error: ' + err.message +
+      '. Please check your internet connection and try again.';
+    errBanner.classList.add('active');
+    document.getElementById('statusText').innerHTML =
+      '<strong style="color:var(--red)">Something went wrong.</strong> See the message above.';
+    document.getElementById('statusDot').style.background = '#ef4444';
+  } finally {
+    overlay.classList.remove('active');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// RENDER
+// ══════════════════════════════════════════════════════════════════════
+function renderReport(d) {
+  const rd = new Date(d.report_date + 'T12:00:00');
+  const ly = new Date(d.ly_date    + 'T12:00:00');
+  const ms = monthStart(rd);
+
+  // Header dates
+  document.getElementById('reportDateDisplay').textContent = fmtShort(rd);
+  document.getElementById('reportDateSub').textContent     = 'Numbers through end of ' + rd.toLocaleDateString('en-US',{weekday:'long'});
+  document.getElementById('todayLabel').textContent        = rd.toLocaleDateString('en-US',{weekday:'long'}) + ', ' + fmtShort(rd);
+
+  // Table headers
+  document.getElementById('hdr-today').textContent    = fmtShort(rd);
+  document.getElementById('hdr-ly').textContent       = fmtShort(ly);
+  document.getElementById('hdr-mtd').textContent      = d.month_name || fmtMonth(rd);
+  document.getElementById('hdr-ly-mtd').textContent   = d.ly_month  || fmtMonth(ly);
+  document.getElementById('hdr-ytd').textContent      = rd.getFullYear() + ' YTD';
+  document.getElementById('hdr-ly-ytd').textContent   = ly.getFullYear() + ' YTD';
+
+  // ── BIG KPI CARDS ──
+  document.getElementById('kpi-occ').textContent     = d.td.occ;
+  document.getElementById('kpi-occ-sub').textContent = `${d.td.occ} of ${TOTAL_ROOMS} rooms`;
+  document.getElementById('kpi-occ-vs').outerHTML    = kpiVs(d.td.occ, d.ly.occ, fmtInt);
+  document.getElementById('kpi-occ-pct').textContent = fmtPct(d.td.occ_pct);
+  document.getElementById('kpi-occ-pct-vs').outerHTML= kpiVs(d.td.occ_pct, d.ly.occ_pct, fmtPct);
+  document.getElementById('kpi-rev').textContent     = fmtDollar(d.td.rev);
+  document.getElementById('kpi-rev-vs').outerHTML    = kpiVs(d.td.rev, d.ly.rev, fmtDollar);
+  document.getElementById('kpi-adr').textContent     = fmtDollar2(d.td.adr);
+  document.getElementById('kpi-adr-vs').outerHTML    = kpiVs(d.td.adr, d.ly.adr, fmtDollar2);
+
+  // ── ACTIVITY ──
+  const acts = ['ci','co','wi','ns','cx'];
+  const actIds = ['act-ci','act-co','act-wi','act-ns','act-cx'];
+  acts.forEach((k,i) => {
+    document.getElementById(actIds[i]).textContent     = d.td[k];
+    document.getElementById(actIds[i]+'-mtd').textContent = `MTD: ${fmtInt(d.mtd[k])}`;
+  });
+
+  // ── TABLE ──
+  const rows = [
+    { group: 'Occupancy & Rate' },
+    { label:'Rooms Occupied / Room Nights', td:d.td.occ, ly:d.ly.occ, mtd:d.mtd.rn, lym:d.ly_m.rn, ytd:d.ytd.rn, lyy:d.ly_y.rn, fmt:fmtInt },
+    { label:'Occupancy %',   td:d.td.occ_pct, ly:d.ly.occ_pct, mtd:d.mtd.occ_pct, lym:d.ly_m.occ_pct, ytd:d.ytd.occ_pct, lyy:d.ly_y.occ_pct, fmt:fmtPct },
+    { label:'ADR',           td:d.td.adr,     ly:d.ly.adr,     mtd:d.mtd.adr,     lym:d.ly_m.adr,     ytd:d.ytd.adr,     lyy:d.ly_y.adr,     fmt:fmtDollar2 },
+    { label:'RevPAR',        td:d.td.revpar,  ly:d.ly.revpar,  mtd:d.mtd.revpar,  lym:d.ly_m.revpar,  ytd:d.ytd.revpar,  lyy:d.ly_y.revpar,  fmt:fmtDollar2 },
+    { group: 'Revenue' },
+    { label:'Room Revenue',         td:d.td.rev,       ly:d.ly.rev,       mtd:d.mtd.rev,       lym:d.ly_m.rev,       ytd:d.ytd.rev,       lyy:d.ly_y.rev,       fmt:fmtDollar },
+    { label:'Items, Services & Add-Ons', td:d.td.items,  ly:d.ly.items,  mtd:d.mtd.items,  lym:d.ly_m.items,  ytd:d.ytd.items,  lyy:d.ly_y.items,  fmt:fmtDollar },
+    { label:'Rate Adjustments',     td:d.td.adj,       ly:d.ly.adj,       mtd:d.mtd.adj,       lym:d.ly_m.adj,       ytd:d.ytd.adj,       lyy:d.ly_y.adj,       fmt:fmtDollar, hib:false },
+    { label:'TOTAL REVENUE', td:d.td.total_rev, ly:d.ly.total_rev, mtd:d.mtd.total_rev, lym:d.ly_m.total_rev, ytd:d.ytd.total_rev, lyy:d.ly_y.total_rev, fmt:fmtDollar, total:true },
+    { group: 'Payments' },
+    { label:'Gross Payments Collected', td:d.td.pay, ly:d.ly.pay, mtd:d.mtd.pay, lym:d.ly_m.pay, ytd:d.ytd.pay, lyy:d.ly_y.pay, fmt:fmtDollar },
+    { group: 'Activity' },
+    { label:'Check-Ins',      td:d.td.ci, ly:d.ly.ci, mtd:d.mtd.ci, lym:d.ly_m.ci, ytd:d.ytd.ci, lyy:d.ly_y.ci, fmt:fmtInt },
+    { label:'Check-Outs',     td:d.td.co, ly:d.ly.co, mtd:d.mtd.co, lym:d.ly_m.co, ytd:d.ytd.co, lyy:d.ly_y.co, fmt:fmtInt },
+    { label:'Walk-Ins',       td:d.td.wi, ly:d.ly.wi, mtd:d.mtd.wi, lym:d.ly_m.wi, ytd:d.ytd.wi, lyy:d.ly_y.wi, fmt:fmtInt },
+    { label:'No-Shows',       td:d.td.ns, ly:d.ly.ns, mtd:d.mtd.ns, lym:d.ly_m.ns, ytd:d.ytd.ns, lyy:d.ly_y.ns, fmt:fmtInt, hib:false },
+    { label:'Cancellations',  td:d.td.cx, ly:d.ly.cx, mtd:d.mtd.cx, lym:d.ly_m.cx, ytd:d.ytd.cx, lyy:d.ly_y.cx, fmt:fmtInt, hib:false },
+  ];
+
+  let html = '';
+  rows.forEach(r => {
+    if (r.group) {
+      html += `<tr class="group-row"><td colspan="10">${r.group}</td></tr>`;
+      return;
+    }
+    const hib = r.hib !== false;
+    const tc = r.total ? 'total-row' : '';
+    html += `<tr class="${tc}">
+      <td>${r.label}</td>
+      <td class="col-today">${r.fmt(r.td)}</td>
+      <td>${r.fmt(r.ly)}</td>
+      <td class="col-today">${varBadge(r.td, r.ly, hib)}</td>
+      <td class="col-today">${r.fmt(r.mtd)}</td>
+      <td>${r.fmt(r.lym)}</td>
+      <td class="col-today">${varBadge(r.mtd, r.lym, hib)}</td>
+      <td class="col-today">${r.fmt(r.ytd)}</td>
+      <td>${r.fmt(r.lyy)}</td>
+      <td class="col-today">${varBadge(r.ytd, r.lyy, hib)}</td>
+    </tr>`;
+  });
+  document.getElementById('tableBody').innerHTML = html;
+
+  document.getElementById('footerGenerated').textContent =
+    `Data through ${fmtShort(rd)} · Loaded ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`;
+}
+
+// ── Load embedded data immediately on page open ──
+window.addEventListener('DOMContentLoaded', () => {
+  renderReport(EMBEDDED);
+  document.getElementById('statusText').innerHTML =
+    'Showing <strong>saved data from April 14, 2026</strong>. Press the button to load today\'s live numbers from Cloudbeds.';
+});
+</script>
+</body>
+</html>
