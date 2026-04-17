@@ -54,15 +54,44 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
   }
 
   try {
+    const resId = payload.reservationID || payload.reservationId || 'unknown';
     let promptText = "";
-    
-    // Translate raw JSON webhooks into human-readable prompts for the LLM
-    if (payload.event === "reservation/created") {
-      promptText = `A new reservation (ID: ${payload.reservationID || payload.reservationId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
-    } else if (payload.event === "reservation/dates_changed") {
-      promptText = `The dates for reservation ${payload.reservationId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
-    } else {
-      promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${payload.reservationID || 'unknown'}. Review if necessary.`;
+
+    switch (payload.event) {
+      case "reservation/created":
+        promptText = `A new reservation (ID: ${resId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
+        break;
+      case "reservation/status_changed":
+        promptText = `Reservation ${resId} status changed to "${payload.status || 'unknown'}". If this is a check-in, make sure the room is ready; if cancelled, review refund and cancellation fee policy.`;
+        break;
+      case "reservation/dates_changed":
+        promptText = `The dates for reservation ${resId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+        break;
+      case "reservation/accommodation_status_changed":
+      case "reservation/accommodation_changed":
+        promptText = `Room assignment for reservation ${resId} changed. Confirm housekeeping state for the new room and update the guest if they have arrived.`;
+        break;
+      case "reservation/deleted":
+        promptText = `Reservation ${resId} was deleted. Verify no outstanding folio balance or pending payment needs to be reconciled.`;
+        break;
+      case "guest/created":
+      case "guest/details_changed":
+        promptText = `Guest record updated on reservation ${resId} (event: ${payload.event}). No action usually required, but flag if phone or email changed so comms go to the right place.`;
+        break;
+      case "housekeeping/room_condition_changed": {
+        // Real-time trigger: rebalance housekeeping assignments as rooms flip dirty/clean.
+        const housekeepingEngine = new HousekeepingAssigner(agent.api);
+        housekeepingEngine.run6AMAssignment().catch(e => logger.error(`Housekeeping rebalance failed: ${e.message}`));
+        return;
+      }
+      case "night_audit/completed": {
+        // Fire the same pipeline as the 4am cron, but driven by the real audit completion.
+        const reportEngine = new NightAuditReport(agent.api);
+        reportEngine.runDailyAudit().catch(e => logger.error(`Night audit report failed: ${e.message}`));
+        return;
+      }
+      default:
+        promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${resId}. Review if necessary.`;
     }
 
     await agent.processIncomingMessage({ source: 'cloudbeds', text: promptText });
