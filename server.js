@@ -49,11 +49,11 @@ app.get('/employee', checkLocalNetwork, (req, res) => {
 
 // Employee Portal API Routes
 app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
-  res.json({
-    status: agent.isRunning ? 'running' : 'stopped',
-    uptime: process.uptime(),
-    cloudbedsApiKeySet: !!process.env.CLOUDBEDS_API_KEY,
-    googleSheetsKeySet: !!process.env.GOOGLE_SHEET_ID
+    res.json({
+      status: agent.isRunning ? 'running' : 'stopped',
+      uptime: process.uptime(),
+      feed: logger.getFeed()
+    });
   });
 });
 
@@ -161,8 +161,12 @@ app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) 
   try {
      const taxEngine = new SalesTaxEngine(agent.api);
      const result = await taxEngine.generateReport(month, parseInt(year), parseFloat(useTax || 0));
+     logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
+     logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
      res.json(result);
   } catch (err) {
+     logger.action('System', `Failed to generate Tax Report: ${err.message}`, 'error');
+     logger.action('System', `Failed to generate Tax Report: ${err.message}`, 'error');
      logger.error(`[SALES TAX] Failed to process tax generation: ${err.message}`);
      res.status(500).json({ success: false, error: err.message });
   }
@@ -183,10 +187,13 @@ app.post('/api/kiosk/checkout', async (req, res) => {
     
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
     
+    logger.action('Checkout', `Processed self-checkout for guest ${lastName} (Res: ${reservationId})`, 'ok');
+    
     // The engine's text reply will be the message displayed on the Kiosk screen
     // If the engine didn't throw an error, we assume it successfully processed
     res.json({ success: true, status: 'complete', message: result.agent_response });
   } catch (error) {
+    logger.action('Checkout', `Checkout failed for Res: ${reservationId} (${error.message})`, 'error');
     logger.error(`[KIOSK] Backend Execution Failed: ${error.message}`);
     res.status(500).json({ success: false, message: "System error. Please visit the front desk." });
   }

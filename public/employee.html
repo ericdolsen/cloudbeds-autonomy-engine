@@ -204,22 +204,15 @@
                 </div>
                 
                 <div class="card" style="grid-column: span 2;">
-                    <h3>API Security & Connections</h3>
-                    <div class="diag-list">
+                    <h3>Live Activity Feed</h3>
+                    <div class="diag-list" id="activityFeed">
                         <div class="diag-item">
-                            <span class="diag-label">Cloudbeds Webhook Engine Router</span>
-                            <span class="badge ok" id="bdgEngine">LISTENING</span>
-                        </div>
-                        <div class="diag-item">
-                            <span class="diag-label">Cloudbeds System API Keys Loaded</span>
-                            <span class="badge err" id="bdgApi">MISSING</span>
-                        </div>
-                        <div class="diag-item">
-                            <span class="diag-label">Google Sheets Service Account Active</span>
-                            <span class="badge err" id="bdgSheets">MISSING</span>
+                            <span class="diag-label">Listening for events...</span>
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
             </div>
         </div>
 
@@ -307,15 +300,23 @@
                     text.innerText = "Engine Stopped";
                 }
 
+                
                 document.getElementById('valUptime').innerText = formatUptime(data.uptime);
                 
-                const apiBdg = document.getElementById('bdgApi');
-                if(data.cloudbedsApiKeySet) { apiBdg.className = "badge ok"; apiBdg.innerText = "CONNECTED"; }
-                else { apiBdg.className = "badge err"; apiBdg.innerText = "MISSING"; }
-
-                const sheetsBdg = document.getElementById('bdgSheets');
-                if(data.googleSheetsKeySet) { sheetsBdg.className = "badge ok"; sheetsBdg.innerText = "CONNECTED"; }
-                else { sheetsBdg.className = "badge err"; sheetsBdg.innerText = "MISSING"; }
+                const feedBox = document.getElementById('activityFeed');
+                if (data.feed && data.feed.length > 0) {
+                    feedBox.innerHTML = data.feed.map(f => `
+                        <div class="diag-item">
+                            <div>
+                               <span class="badge ${f.status === 'error' ? 'err' : 'ok'}" style="margin-right:10px;">${f.category}</span>
+                               <span class="diag-label">${f.summary}</span>
+                            </div>
+                            <span style="font-size:0.75rem; color: var(--text-muted);">${new Date(f.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                    `).join('');
+                } else {
+                    feedBox.innerHTML = '<div class="diag-item"><span class="diag-label">No activity recorded yet for this session.</span></div>';
+                }
 
             } catch (e) {
                 document.getElementById('globalDot').classList.remove('online');
