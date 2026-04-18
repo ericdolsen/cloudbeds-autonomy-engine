@@ -1,160 +1,223 @@
 const { google } = require('googleapis');
 const nodemailer = require('nodemailer');
-const { GoogleGenAI } = require('@google/genai');
+const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
 const { logger } = require('./logger');
+
+const TOTAL_ROOMS = 50;
 
 class NightAuditReport {
   constructor(cloudbedsApi) {
     this.api = cloudbedsApi;
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    
-    // Auth for Google Sheets & Gmail will be built on these ENV vars
     this.sheetId = process.env.GOOGLE_SHEET_ID;
     this.serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     this.serviceAccountKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
   }
 
+  toYMD(d) { return d.toISOString().slice(0,10); }
+  addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+  addYears(d, n) { const r = new Date(d); r.setFullYear(r.getFullYear() + n); return r; }
+  monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+  yearStart(d) { return new Date(d.getFullYear(), 0, 1); }
+  daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000) + 1; }
+  fmtMonth(d) { return d.toLocaleDateString('en-US', {month:'long', year:'numeric'}); }
+
   getGoogleAuth() {
     if (!this.serviceAccountEmail || !this.serviceAccountKey) return null;
-    const auth = new google.auth.JWT(
-      this.serviceAccountEmail,
-      null,
-      this.serviceAccountKey,
+    return new google.auth.JWT(
+      this.serviceAccountEmail, null, this.serviceAccountKey,
       ['https://www.googleapis.com/auth/spreadsheets']
     );
-    return auth;
+  }
+
+  async generatePdfBuffer(reportDate) {
+    logger.info(`[NIGHT AUDIT] Gathering data to generate PDF for ${this.toYMD(reportDate)}...`);
+    const lyDate = this.addYears(reportDate, -1);
+    const ms = this.monthStart(reportDate);
+    const ys = this.yearStart(reportDate);
+    const lyMs = this.monthStart(lyDate);
+    const lyYs = this.yearStart(lyDate);
+
+    // 1. Fetch live data
+    const [tdOcc, mtdTxns, ytdTxns, lyOcc, lyMtdTxns, lyYtdTxns, tdRes, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
+        this.api.getHouseCount(this.toYMD(reportDate)),
+        this.api.getTransactions(this.toYMD(ms),   this.toYMD(reportDate)),
+        this.api.getTransactions(this.toYMD(ys),   this.toYMD(reportDate)),
+        this.api.getHouseCount(this.toYMD(lyDate)),
+        this.api.getTransactions(this.toYMD(lyMs), this.toYMD(lyDate)),
+        this.api.getTransactions(this.toYMD(lyYs), this.toYMD(lyDate)),
+        this.api.getReservations(this.toYMD(reportDate), this.toYMD(reportDate)),
+        this.api.getReservations(this.toYMD(ms),   this.toYMD(reportDate)),
+        this.api.getReservations(this.toYMD(ys),   this.toYMD(reportDate)),
+        this.api.getReservations(this.toYMD(lyMs), this.toYMD(lyDate)),
+        this.api.getReservations(this.toYMD(lyYs), this.toYMD(lyDate))
+    ]);
+
+    const tdFilter = (mtdTxns.data || []).filter(t => t.transactionDate === this.toYMD(reportDate));
+    const lyFilter = (lyMtdTxns.data || []).filter(t => t.transactionDate === this.toYMD(lyDate));
+
+    // 2. Build the exact EMBEDDED json object
+    const td   = { ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...(tdOcc.data || {}), ...this.computeActivity(tdRes.data || [], reportDate) };
+    const mtd  = { ...this.computeFromTransactions(mtdTxns.data || [], ms, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate) };
+    const ytd  = { ...this.computeFromTransactions(ytdTxns.data || [], ys, reportDate), ...this.computeActivity(ytdRes.data || [], reportDate) };
+    const ly   = { ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...(lyOcc.data || {}), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
+    const ly_m = { ...this.computeFromTransactions(lyMtdTxns.data || [], lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
+    const ly_y = { ...this.computeFromTransactions(lyYtdTxns.data || [], lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyDate) };
+
+    const dataObj = {
+      report_date: this.toYMD(reportDate), ly_date: this.toYMD(lyDate),
+      month_name: this.fmtMonth(reportDate), ly_month: this.fmtMonth(lyDate),
+      td, mtd, ytd, ly, ly_m, ly_y
+    };
+
+    // 3. Inject into HTML
+    const templatePath = path.join(__dirname, '..', 'Example files', 'GatewayPark_DailyReport.html');
+    let htmlContent = '';
+    try {
+      htmlContent = fs.readFileSync(templatePath, 'utf8');
+      const injectionStr = `const EMBEDDED = ${JSON.stringify(dataObj)};`;
+      htmlContent = htmlContent.replace(/const EMBEDDED = \{[\s\S]*?\};/, injectionStr);
+    } catch (e) {
+      logger.error(`[NIGHT AUDIT] Error loading or parsing HTML file: ${e.message}`);
+      return null;
+    }
+
+    // 4. Generate PDF via Playwright
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    try {
+      await page.setContent(htmlContent, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(500); 
+    } catch (err) {
+      logger.warn(`Page rendering issue (often safe to ignore if network timeouts): ${err.message}`);
+    }
+    const pdfBuffer = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+    await browser.close();
+    
+    return { pdfBuffer, tdFilter };
   }
 
   async runDailyAudit() {
-    logger.info('[NIGHT AUDIT] Starting 4:00 AM Automated Report Flow...');
+    logger.info('[NIGHT AUDIT] Starting Headless PDF Engine Flow...');
+    const today = new Date();
+    const reportDate = this.addDays(today, -1);
 
-    // 1. Fetch Yesterday's Delta
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0];
-
-    logger.info(`[NIGHT AUDIT] Pulling Cloudbeds reservations for ${dateStr}...`);
+    const result = await this.generatePdfBuffer(reportDate);
+    if (!result) return;
     
-    let rawDailyData;
-    try {
-      // In cloudbedsApi.js, we will add getReservationsWithRateDetails
-      rawDailyData = await this.api.getReservationsWithRateDetails(dateStr, dateStr); 
-    } catch (e) {
-      logger.error(`[NIGHT AUDIT] Cloudbeds API Fetch Failed: ${e.message}`);
-      rawDailyData = { data: [] }; // fallback
+    const { pdfBuffer, tdFilter } = result;
+
+    // 5. Append transactions to Google Sheets ensuring independent database construction
+    await this.appendTransactionsToSheets(tdFilter, this.toYMD(reportDate));
+
+    // 6. Send the PDF email
+    await this.sendPdfEmail(pdfBuffer, this.toYMD(reportDate));
+  }
+
+
+  // --- TRANSLATED MATH LOGIC REPLICAS ---
+  computeFromTransactions(txns, startDate, endDate) {
+    const start = this.toYMD(startDate), end = this.toYMD(endDate);
+    const active = txns.filter(t => t.transactionVoid !== '1' && t.transactionVoid !== true);
+    const roomRevTypes = ['Room Rate', 'Room Revenue - Manual'];
+    let rev = 0, items = 0, pay = 0, adj = 0;
+    let rooms = new Set();
+
+    for (const t of active) {
+      if (t.transactionDate < start || t.transactionDate > end) continue;
+      const amt = parseFloat(t.transactionAmount || 0);
+      const type = t.transactionType || '';
+      const rvType = t.roomRevenueType || '';
+      const desc = t.transactionCodeDescription || '';
+
+      if (roomRevTypes.includes(rvType)) {
+        rev += amt;
+        if (t.roomNumber) rooms.add(t.roomNumber);
+      }
+      if (['Items & Services','Add-On'].includes(type)) items += amt;
+      if (type === 'Payment' && amt < 0) pay += Math.abs(amt);
+      if (desc === 'Rate - Adjustment') adj += amt;
     }
 
-    // Process OTA vs Direct, No Shows, etc.
-    const processedMetrics = this.processDailyMetrics(rawDailyData.data || []);
-    
-    // 2. Append to Google Sheets & Retrieve Historical 
-    let historicalData = this.getMockHistoricalData(); // Fallback if no sheets keys
+    const days = this.daysBetween(startDate, endDate);
+    const rn = rooms.size; 
+    const adr = rn > 0 ? rev / rn : 0;
+    const revpar = rev / (TOTAL_ROOMS * days);
+    const occ_pct = rn / (TOTAL_ROOMS * days);
+
+    return { rev, items, pay, adj, total_rev: rev + items, adr, revpar, occ_pct, occ: rn, rn };
+  }
+
+  computeActivity(reservations, date) {
+    const ymd = this.toYMD(date);
+    let ci=0, co=0, ns=0, wi=0, cx=0;
+    const seenCI = new Set(), seenCO = new Set();
+    for (const r of reservations) {
+      if (r.checkInDate === ymd && !seenCI.has(r.reservationID)) {
+        seenCI.add(r.reservationID);
+        const status = r.status || '';
+        if (['checked_in','checked_out'].includes(status)) ci++;
+        if (status === 'no_show') ns++;
+        if (status === 'cancelled') cx++;
+        const src = r.sourceID || r.source || '';
+        if (src.toLowerCase().includes('walk')) wi++;
+      }
+      if (r.checkOutDate === ymd && !seenCO.has(r.reservationID)) {
+        seenCO.add(r.reservationID);
+        if ((r.status||'') === 'checked_out') co++;
+      }
+    }
+    return { ci, co, ns, wi, cx };
+  }
+
+
+  // --- GOOGLE SHEETS APPENDER ---
+  async appendTransactionsToSheets(transactions, dateStr) {
     const auth = this.getGoogleAuth();
-    
-    if (auth && this.sheetId) {
-      logger.info(`[NIGHT AUDIT] Appending yesterday's metrics to Google Sheets Data Warehouse...`);
-      try {
-        const sheets = google.sheets({ version: 'v4', auth });
-        // Example append:
-        await sheets.spreadsheets.values.append({
-           spreadsheetId: this.sheetId,
-           range: 'Warehouse!A:Z',
-           valueInputOption: 'USER_ENTERED',
-           resource: { values: [[ dateStr, processedMetrics.totalBookings, processedMetrics.otaBookings, processedMetrics.directBookings, processedMetrics.totalRevenue, processedMetrics.adr ]] }
-        });
-        
-        logger.info(`[NIGHT AUDIT] Reading YTD and LYTD historical stats from Google Sheets...`);
-        // We assume your Google Sheet has a dashboard tab calculating LYTD and YTD natively from the appends
-        const response = await sheets.spreadsheets.values.get({
-           spreadsheetId: this.sheetId,
-           range: 'DashboardStats!A2:E2' 
-        });
-        historicalData = response.data.values ? response.data.values[0] : historicalData;
-      } catch (err) {
-        logger.warn(`[NIGHT AUDIT] Sheets API Error: ${err.message}. Defaulting to mock historical data.`);
-      }
-    } else {
-      logger.warn(`[NIGHT AUDIT] No Google Workspace keys found. Skipping Sheets Append and using Mock Historical Data.`);
+    if (!auth || !this.sheetId) {
+      logger.warn('[NIGHT AUDIT] Google Keys not established. Skipping permanent Google Sheet Database inject.');
+      return;
     }
+    try {
+      logger.info(`[NIGHT AUDIT] Appending ${transactions.length} native raw transaction records to Google Sheets...`);
+      const sheets = google.sheets({ version: 'v4', auth });
+      
+      const values = transactions.map(t => [
+        dateStr, 
+        t.transactionDate || '-', 
+        t.transactionAmount || '0', 
+        t.transactionType || '-', 
+        t.roomRevenueType || '-', 
+        t.transactionCodeDescription || '-', 
+        t.roomNumber || '-', 
+        t.reservationID || '-', 
+        t.transactionVoid ? 'Yes' : 'No'
+      ]);
 
-    // 3. Get 14 Day Forecast
-    logger.info(`[NIGHT AUDIT] Pulling 14-Day Forward Forecast...`);
-    const forecast = await this.api.getForecast(14);
-
-    // 4. Generate AI Email Report
-    logger.info(`[NIGHT AUDIT] Sending data matrix to Gemini 3.1 Pro for synthesis...`);
-    const reportHtml = await this.generateReportHtml(processedMetrics, historicalData, forecast);
-
-    // 5. Dispatch Email
-    await this.sendEmail(reportHtml, dateStr);
-  }
-
-  processDailyMetrics(reservations) {
-    let noShows = [];
-    let otaBookings = 0;
-    let directBookings = 0;
-    let totalRevenue = 0;
-
-    for (const res of reservations) {
-      if (res.status === 'no_show') noShows.push(res.reservationId);
-      if (res.source && res.source.toLowerCase().includes('ota')) {
-        otaBookings++;
-      } else {
-        directBookings++;
+      if (values.length === 0) {
+        values.push([dateStr, "NO_TRANSACTIONS_FOUND"]);
       }
-      totalRevenue += (res.total || 0);
+
+      await sheets.spreadsheets.values.append({
+         spreadsheetId: this.sheetId,
+         range: 'Sheet1!A:Z',
+         valueInputOption: 'USER_ENTERED',
+         resource: { values }
+      });
+      logger.info('[NIGHT AUDIT] Successfully populated Google Sheets active ledger.');
+    } catch(e) {
+      logger.error(`[NIGHT AUDIT] Automated raw append failed: ${e.message}`);
     }
-
-    const adr = reservations.length ? (totalRevenue / reservations.length).toFixed(2) : 0;
-    return { totalBookings: reservations.length, otaBookings, directBookings, noShows, totalRevenue, adr: `$${adr}` };
   }
 
-  getMockHistoricalData() {
-    return {
-      note: "MOCK DATA - Insert your Google Sheets API keys into .env to fetch live metrics.",
-      metrics: {
-        LD_OCC: "78%", PTD_OCC: "80%", YTD_OCC: "65%", LYP_OCC: "76%", LYTD_OCC: "62%",
-        LD_ADR: "$145", PTD_ADR: "$140", YTD_ADR: "$135", LYP_ADR: "$138", LYTD_ADR: "$130"
-      }
-    };
-  }
 
-  async generateReportHtml(metrics, history, forecast) {
-    const prompt = `You are a Master Hotel Data Analyst. Convert the following JSON matrix into a beautiful HTML email representing our Daily Night Audit Report.
-    Use highly professional CSS styling inline (e.g. dark slate headers, clean grid tables with subtle borders). Make it look exactly like a high-end corporate executive summary. 
-    
-    REQUIREMENTS:
-    1. Include a robust visual grid for Operational Stats (Occupancy, ADR, RevPAR comparing LD, PTD, YTD, LYP, LYTD).
-    2. Include a highly visible section explicitly calling out the "No-Show Auditors" (flagging reservation IDs if any) so staff knows who didn't show up.
-    3. Include a 14-Day Forecast graphical table.
-    4. Include the OTA vs Direct Source breakdown pace.
-    
-    DATA MATRIX:
-    Yesterday's Processed Metrics: ${JSON.stringify(metrics, null, 2)}
-    Database Historical Stats: ${JSON.stringify(history, null, 2)}
-    14-Day Forecast: ${JSON.stringify(forecast, null, 2)}
-    
-    Output ONLY valid HTML markup. Do not wrap the response with markdown backticks (like \`\`\`html).`;
-
-    const chat = this.ai.chats.create({
-        model: process.env.GEMINI_MODEL || 'gemini-3.1-pro',
-        config: { temperature: 0.1 }
-    });
-    
-    const response = await chat.sendMessage({ message: prompt });
-    let html = response.text.trim();
-    if (html.startsWith('\`\`\`html')) html = html.substring(7, html.length - 3).trim();
-    return html;
-  }
-
-  async sendEmail(htmlContent, dateStr) {
-    logger.info(`[NIGHT AUDIT] Dispatching email to stakeholders...`);
-    
+  // --- EMAIL DISPATCH COMPONENT ---
+  async sendPdfEmail(pdfBuffer, dateStr) {
+    logger.info(`[NIGHT AUDIT] Packaging generated PDF and securely sending to Management List...`);
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-      logger.warn(`[NIGHT AUDIT] SMTP Transport credentials not set in .env. Dumping HTML Report to console instead of emailing.`);
-      console.log("\n=================== NIGHT AUDIT REPORT HTML PREVIEW ===================\n");
-      console.log(htmlContent);
-      console.log("\n=======================================================================\n");
+      logger.warn(`[NIGHT AUDIT] SMTP credentials missing. Writing resulting PDF locally to directory for debug viewing...`);
+      fs.writeFileSync(`Test_Report_${dateStr}.pdf`, pdfBuffer);
       return;
     }
 
@@ -165,14 +228,17 @@ class NightAuditReport {
 
     try {
       await transporter.sendMail({
-        from: `"Autonomy Engine" <${process.env.SMTP_USER}>`,
+        from: `"Cloudbeds Autonomy Module" <${process.env.SMTP_USER}>`,
         to: process.env.REPORT_EMAILS || 'management@hotel.com',
-        subject: `Night Audit Executive Report - ${dateStr}`,
-        html: htmlContent
+        subject: `[Audit] Daily Dashboard Report - ${dateStr}`,
+        text: `The automated Cloudbeds Daily Report for ${dateStr} has been successfully rendered into a PDF document.\n\nPlease find the attached file matching the format configured by Gateway Park management.`,
+        attachments: [
+          { filename: `Daily_Report_${dateStr}.pdf`, content: pdfBuffer }
+        ]
       });
-      logger.info(`[NIGHT AUDIT] Successfully dispatched 4:00 AM Report securely via Google Workspace!`);
-    } catch (e) {
-      logger.error(`[NIGHT AUDIT] Email dispatch failed: ${e.message}`);
+      logger.info(`[NIGHT AUDIT] Daily report dispatched to executive mailboxes smoothly!`);
+    } catch(e) {
+      logger.error(`[NIGHT AUDIT] SMTP failure during transmission: ${e.message}`);
     }
   }
 }

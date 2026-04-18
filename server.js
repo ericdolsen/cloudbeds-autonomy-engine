@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cron = require('node-cron');
 const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
@@ -9,21 +11,69 @@ const { logger } = require('./src/logger');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
 const port = process.env.PORT || 3000;
 
 // Setup static files and APIs
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// Serve the Kiosk UI on the root directory
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
+});
+
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
 
-// Dashboard API Routes
-app.get('/api/status', (req, res) => {
+// WebSockets (Tablet Connectivity)
+io.on('connection', (socket) => {
+  logger.info(`[WEBSOCKET] Kiosk Tablet Connected: ${socket.id}`);
+});
+
+// Employee Dashboard Security Middleware
+const checkLocalNetwork = (req, res, next) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  if (/^::1|^127\.0\.0\.1|^::ffff:127\.0\.0\.1|^10\.|^192\.168\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^::ffff:10\.|^::ffff:192\.168\./.test(ip)) {
+    next();
+  } else {
+    logger.warn(`[SECURITY] Blocked external access attempt to staff portal from IP: ${ip}`);
+    res.status(403).send('Forbidden: Local Network Access Only');
+  }
+};
+
+app.get('/employee', checkLocalNetwork, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'employee.html'));
+});
+
+// Employee Portal API Routes
+app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
   res.json({
     status: agent.isRunning ? 'running' : 'stopped',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    cloudbedsApiKeySet: !!process.env.CLOUDBEDS_API_KEY,
+    googleSheetsKeySet: !!process.env.GOOGLE_SHEET_ID
   });
+});
+
+app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  try {
+     const reportEngine = new NightAuditReport(agent.api);
+     logger.info('[EMPLOYEE] Night Audit report manually requested via Dashboard');
+     const reportDt = reportEngine.addDays(new Date(), -1);
+     const result = await reportEngine.generatePdfBuffer(reportDt);
+     if (!result || !result.pdfBuffer) throw new Error("PDF Generation Failed");
+     
+     res.setHeader('Content-Length', result.pdfBuffer.length);
+     res.setHeader('Content-Type', 'application/pdf');
+     res.setHeader('Content-Disposition', 'inline; filename="GatewayPark_DailyReport.pdf"');
+     res.send(result.pdfBuffer);
+  } catch (err) {
+     logger.error(`[EMPLOYEE] Manual report error: ${err.message}`);
+     res.status(500).json({ error: err.message });
+  }
 });
 
 // Primary Webhook Ingress from Cloudbeds (System Events like reservation created)
@@ -100,6 +150,24 @@ app.post('/api/test', async (req, res) => {
   }
 });
 
+const { SalesTaxEngine } = require('./src/salesTaxEngine');
+
+// Sales Tax Report Endpoint
+app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ success: false, error: 'Engine stopped' });
+  const { month, year, useTax } = req.body;
+  if (!month || !year) return res.status(400).json({ success: false, error: 'Month and year required.' });
+  
+  try {
+     const taxEngine = new SalesTaxEngine(agent.api);
+     const result = await taxEngine.generateReport(month, parseInt(year), parseFloat(useTax || 0));
+     res.json(result);
+  } catch (err) {
+     logger.error(`[SALES TAX] Failed to process tax generation: ${err.message}`);
+     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Kiosk REST API Endpoint
 app.post('/api/kiosk/checkout', async (req, res) => {
   const { reservationId, lastName, terminalName } = req.body;
@@ -122,6 +190,65 @@ app.post('/api/kiosk/checkout', async (req, res) => {
     logger.error(`[KIOSK] Backend Execution Failed: ${error.message}`);
     res.status(500).json({ success: false, message: "System error. Please visit the front desk." });
   }
+});
+
+// "Push to Tablet" Chrome Extension Relay Endpoint
+app.post('/api/kiosk/push', (req, res) => {
+  const { reservationId } = req.body;
+  
+  if (!reservationId) {
+    return res.status(400).json({ success: false, error: 'reservationId is required' });
+  }
+  
+  logger.info(`[KIOSK PUSH] Received Chrome Extension push for Reservation: ${reservationId}. Pinging tablet via WebSockets.`);
+  
+  // Emits the Cloudbeds push event directly to the tablet's browser
+  io.emit('pushToTablet', { reservationId });
+  
+  res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
+});
+
+// Identity verification for Kiosk (Search by Last Name)
+app.post('/api/kiosk/identify', async (req, res) => {
+  const { query } = req.body;
+  if (!query) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
+  const result = await agent.engine.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.length >= 4) {
+         const last4 = phoneStr.slice(-4);
+         return res.json({ 
+           success: true, 
+           requiresVerification: true, 
+           maskedPhone: `***-***-${last4}`
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Could not locate a reservation with that information." });
+});
+
+app.post('/api/kiosk/verify', async (req, res) => {
+  const { query, pin } = req.body;
+  if (!query || !pin) return res.status(400).json({ success: false });
+
+  logger.info(`[KIOSK VERIFY] Verifying PIN for guest: ${query}`);
+  const result = await agent.engine.api.getReservation(query);
+
+  if (result.success && result.data && result.data.phone) {
+     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
+     if (phoneStr.slice(-4) === pin) {
+         return res.json({ 
+           success: true, 
+           reservationId: result.data.reservationId 
+         });
+     }
+  }
+  
+  res.json({ success: false, message: "Verification failed. Incorrect PIN." });
 });
 
 // CRON SCHEDULER
@@ -166,7 +293,7 @@ cron.schedule('0 6 * * *', async () => {
 // =====================================
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
-  app.listen(port, () => {
+  server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });
 

@@ -35,12 +35,27 @@ class CloudbedsAPI {
     logger.info(`[API CALL] GET /getReservation | query: ${query}`);
     
     if (this.apiKey === 'MOCK_KEY') {
+      // Mocking different behaviors for Last Name vs ID searches
+      if (query && query.toLowerCase() === 'smith') {
+         return this._mockReturn({
+           success: true,
+           data: {
+             reservationId: "RD98273410",
+             guestName: "Amanda Smith",
+             status: "confirmed",
+             phone: "555-827-8492"
+           }
+         });
+      }
+
+      // Default fallback mock
       return this._mockReturn({
         success: true,
         data: {
           reservationId: "JD10029384",
           status: "in_house",
           guestName: "John Doe",
+          phone: "555-221-9988",
           balanceDue: 45.00,
           currency: "USD",
           roomType: "Standard Queen",
@@ -189,6 +204,57 @@ class CloudbedsAPI {
       return response.data;
     } catch (error) {
       logger.error(`getReservationsWithRateDetails failed: ${error.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
+   * Fetch House Count (Occupancy, Revenue) for a specific date
+   */
+  async getHouseCount(date) {
+    logger.info(`[API CALL] GET /getHouseCount | ${date}`);
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, data: { occupiedRooms: 40, roomRevenue: 4200.50, adr: 105.01, revpar: 84.01 } });
+    }
+    try {
+      const response = await this._getClient().get('/getHouseCount', { params: { date, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      return response.data;
+    } catch (e) {
+      logger.error(`getHouseCount failed: ${e.message}`);
+      return { success: false, data: {} };
+    }
+  }
+
+  /**
+   * Fetch raw transaction ledger within a date range
+   */
+  async getTransactions(startDate, endDate) {
+    logger.info(`[API CALL] GET /getTransactions | ${startDate} to ${endDate}`);
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, data: [] });
+    }
+    try {
+      const response = await this._getClient().get('/getTransactions', { params: { startDate, endDate, type: 'all', propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      return response.data;
+    } catch (e) {
+      logger.error(`getTransactions failed: ${e.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
+   * Fetch standard reservations for activity tracking (Check-ins, Check-outs)
+   */
+  async getReservations(checkInFrom, checkInTo) {
+    logger.info(`[API CALL] GET /getReservations | ${checkInFrom} to ${checkInTo}`);
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, data: [] });
+    }
+    try {
+      const response = await this._getClient().get('/getReservations', { params: { checkInFrom, checkInTo, status: 'all', pageSize: 500, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      return response.data;
+    } catch (e) {
+      logger.error(`getReservations failed: ${e.message}`);
       return { success: false, data: [] };
     }
   }

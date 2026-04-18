@@ -11,6 +11,10 @@ class HousekeepingAssigner {
     // Weight constants (minutes roughly)
     this.WEIGHT_CHECKOUT = 45;
     this.WEIGHT_STAYOVER = 10;
+
+    // In-memory assignment state for intraday webhook pinning
+    this.pinnedAssignments = new Map(); // roomID -> housekeeperID
+    this.lastAssignmentDate = null;
   }
 
   getGoogleAuth() {
@@ -37,7 +41,7 @@ class HousekeepingAssigner {
     let dirtyRooms = [];
     if (query.success && query.data) {
       // Filter only dirty rooms
-      dirtyRooms = query.data.filter(r => Math.abs(r.roomCondition.indexOf('dirty')) !== -1);
+      dirtyRooms = query.data.filter(r => r.roomCondition && r.roomCondition.toLowerCase().includes('dirty'));
     } else {
       logger.error('[HOUSEKEEPING] Failed to fetch Cloudbeds housekeeping data.');
       return;
@@ -73,26 +77,67 @@ class HousekeepingAssigner {
       const sheets = google.sheets({ version: 'v4', auth });
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: this.sheetId,
-        range: 'Roster!A:B' // Assumes Date, Name format
+        range: 'WeeklySchedule!A:Z' 
       });
       
       const rows = response.data.values || [];
       const today = new Date().toISOString().split('T')[0];
       
-      const todayStaff = rows.filter(r => r[0] === today).map((r, idx) => ({ id: `HK_${idx}`, name: r[1] }));
+      let dateColIndex = -1;
+      let dateRowIndex = -1;
+
+      // Scan entirely from bottom to top so that if they paste a new week under the old week, we always hit the latest one!
+      for (let r = rows.length - 1; r >= 0; r--) {
+         const cIdx = rows[r].indexOf(today);
+         if (cIdx !== -1) {
+             dateColIndex = cIdx;
+             dateRowIndex = r;
+             break;
+         }
+      }
+
+      if (dateColIndex === -1) {
+         logger.warn(`[HOUSEKEEPING] Could not find today's date (${today}) in WeeklySchedule.`);
+         return [];
+      }
+
+      const todayStaff = [];
+
+      // Scan rows beneath the date headers
+      for (let r = dateRowIndex + 1; r < rows.length; r++) {
+         const row = rows[r];
+         const name = row[0];
+         const shiftText = row[dateColIndex];
+
+         // Pull valid names and shift fields.
+         if (name && shiftText && typeof shiftText === 'string') {
+             // If any cell under today's column contains the word 'Housekeeping', they are on duty!
+             if (shiftText.toLowerCase().includes('housekeeping')) {
+                 todayStaff.push({ id: `HK_${todayStaff.length + 1}`, name: name.trim() });
+             }
+         }
+      }
+      
       return todayStaff.length > 0 ? todayStaff : [ { id: "HK_1", name: "Mock Staff 1" } ];
     } catch (e) {
-      logger.warn(`[HOUSEKEEPING] Failed to read roster from Sheets: ${e.message}`);
+      logger.warn(`[HOUSEKEEPING] Failed to read WeeklySchedule from Sheets: ${e.message}`);
       return [ { id: "HK_1", name: "Maria" }, { id: "HK_2", name: "Rosa" } ];
     }
   }
 
   clusterRooms(rooms, housekeepers) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (this.lastAssignmentDate !== todayStr) {
+      this.pinnedAssignments.clear();
+      this.lastAssignmentDate = todayStr;
+      logger.info('[HOUSEKEEPING] New calendar day detected. Wiping pinned assignments for fresh routing.');
+    }
+
     // Determine weights for all rooms
     rooms.forEach(r => {
       r.weight = r.reservationCondition === 'checkout' ? this.WEIGHT_CHECKOUT : this.WEIGHT_STAYOVER;
       // Rooms start with their floor. 113 -> Floor 1, 204 -> Floor 2, 312 -> Floor 3
-      r.floor = parseInt(r.roomID.charAt(0)); 
+      r.floor = parseInt(r.roomID.charAt(0)) || 1; 
     });
 
     // Sort rooms by floor, then weight (heaviest first)
@@ -103,9 +148,26 @@ class HousekeepingAssigner {
 
     // Initialize buckets
     const buckets = housekeepers.map(hk => ({ id: hk.id, name: hk.name, totalWeight: 0, assignedRooms: [], activeFloor: null }));
+    const bucketMap = new Map(buckets.map(b => [b.id, b]));
 
-    // Greedy load-balancer taking floor affinity into account
+    // Step 1: Pre-fill buckets with already PINNED assignments
+    const unpinnedRooms = [];
     for (const room of rooms) {
+      const pinnedHkId = this.pinnedAssignments.get(room.roomID);
+      const targetBucket = pinnedHkId ? bucketMap.get(pinnedHkId) : null;
+      
+      if (targetBucket) {
+        // Room was assigned previously today! Pin it so it doesn't shuffle.
+        targetBucket.assignedRooms.push(room);
+        targetBucket.totalWeight += room.weight;
+        targetBucket.activeFloor = room.floor;
+      } else {
+        unpinnedRooms.push(room);
+      }
+    }
+
+    // Step 2: Greedy load-balancer taking floor affinity into account for UNPINNED rooms
+    for (const room of unpinnedRooms) {
       // Find eligible buckets (buckets that already have rooms on this floor)
       let eligibleBuckets = buckets.filter(b => b.activeFloor === room.floor);
       
@@ -121,6 +183,9 @@ class HousekeepingAssigner {
       targetBucket.assignedRooms.push(room);
       targetBucket.totalWeight += room.weight;
       targetBucket.activeFloor = room.floor;
+
+      // Lock it in for the rest of the day so future webhooks don't steal it
+      this.pinnedAssignments.set(room.roomID, targetBucket.id);
     }
 
     // Logging balance

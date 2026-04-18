@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gateway Park - Engine Control Panel</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-bg: #0f172a; 
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--primary-bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            overflow: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.08), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(147, 51, 234, 0.08), transparent 25%);
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 280px;
+            background: rgba(15, 23, 42, 0.9);
+            border-right: 1px solid var(--glass-border);
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        .brand {
+            margin-bottom: 50px;
+        }
+        .brand h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 1px; }
+        .brand span { color: var(--accent); font-weight: 300; font-size: 0.9rem; letter-spacing: 2px; text-transform: uppercase; }
+
+        .nav-items { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+        .nav-item {
+            padding: 15px 20px;
+            border-radius: 12px;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
+        .nav-item.active { background: rgba(56, 189, 248, 0.1); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.2); }
+
+        .server-status {
+            margin-top: auto;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            border: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .status-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: var(--warning); 
+            box-shadow: 0 0 10px var(--warning);
+            animation: pulse-warn 2s infinite;
+        }
+        .status-dot.online { background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse-ok 2s infinite; }
+        @keyframes pulse-ok { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+        
+        .status-text h4 { font-size: 0.9rem; font-weight: 500; }
+        .status-text p { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+
+        /* Main Content wrapper */
+        .content { flex: 1; padding: 50px 60px; overflow-y: auto; }
+        
+        .view-section { display: none; animation: fadeIn 0.4s ease forwards; }
+        .view-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .page-header { margin-bottom: 40px; }
+        .page-header h2 { font-size: 2.2rem; font-weight: 600; margin-bottom: 8px; }
+        .page-header p { color: var(--text-muted); font-size: 1.1rem; font-weight: 300; }
+
+        /* Dashboard Grid */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 25px; }
+        
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(12px);
+        }
+        
+        .card h3 { font-size: 1.1rem; color: var(--text-muted); margin-bottom: 20px; font-weight: 500;}
+        .metric-value { font-size: 2.5rem; font-weight: 700; margin-bottom: 5px; }
+
+        /* Diagnostic List */
+        .diag-list { display: flex; flex-direction: column; gap: 15px; }
+        .diag-item { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .diag-item:last-child { border-bottom: none; padding-bottom: 0; }
+        .diag-label { font-weight: 300; color: var(--text-muted); }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; }
+        .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+        .badge.err { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+
+        /* Report Generator */
+        .report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; }
+        .report-card { 
+            background: linear-gradient(145deg, rgba(30,41,59,0.8), rgba(15,23,42,0.9));
+            border: 1px solid var(--glass-border); border-radius: 20px; padding: 35px;
+            display: flex; flex-direction: column; gap: 15px;
+        }
+        .report-card h3 { font-size: 1.4rem; font-weight: 500; color: white;}
+        .report-card p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; flex: 1;}
+        .btn {
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.8), rgba(56, 189, 248, 0.8));
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+            color: white; padding: 12px 20px; font-family: 'Outfit'; font-size: 1rem; font-weight: 500;
+            cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn:active { transform: translateY(1px); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 30px; right: 40px; background: rgba(15,23,42,0.9); border: 1px solid var(--accent);
+            color: white; padding: 15px 25px; border-radius: 8px; font-size: 1rem; font-weight: 400;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none;
+        }
+
+        /* Modal & Tables */
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; backdrop-filter: blur(5px); justify-content: center; align-items: center; }
+        .modal-content { background: var(--primary-bg); border: 1px solid var(--glass-border); border-radius: 12px; width: 90%; max-width: 1000px; max-height: 90vh; overflow-y: auto; padding: 30px; position: relative; }
+        .close-btn { position: absolute; top: 15px; right: 20px; cursor: pointer; color: white; border: none; background: transparent; font-size: 1.5rem; }
+        .tax-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9rem;}
+        .tax-table th, .tax-table td { border: 1px solid var(--glass-border); padding: 10px; text-align: left; }
+        .tax-table th { background: rgba(255,255,255,0.05); font-weight: 600; color: var(--accent); }
+        .tax-table td { color: var(--text-main); }
+        .tax-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="brand">
+            <h1>Gateway Park</h1>
+            <span>Autonomy Hub</span>
+        </div>
+
+        <div class="nav-items">
+            <div class="nav-item active" onclick="switchTab('dashboard')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                System Health
+            </div>
+            <div class="nav-item" onclick="switchTab('reports')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Reporting Center
+            </div>
+        </div>
+
+        <div class="server-status">
+            <div class="status-dot" id="globalDot"></div>
+            <div class="status-text">
+                <h4 id="globalText">Connecting...</h4>
+                <p id="globalSub">LAN Endpoint securely locked</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="content">
+        <!-- DASHBOARD TAB -->
+        <div id="view-dashboard" class="view-section active">
+            <div class="page-header">
+                <h2>System Health Monitor</h2>
+                <p>Live diagnostics of the background Cloudbeds API Engine.</p>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <h3>Engine Uptime</h3>
+                    <div class="metric-value" style="color: var(--accent)" id="valUptime">--:--</div>
+                    <p style="color: var(--text-muted); font-size: 0.85rem;">Continuous process life</p>
+                </div>
+                
+                <div class="card" style="grid-column: span 2;">
+                    <h3>API Security & Connections</h3>
+                    <div class="diag-list">
+                        <div class="diag-item">
+                            <span class="diag-label">Cloudbeds Webhook Engine Router</span>
+                            <span class="badge ok" id="bdgEngine">LISTENING</span>
+                        </div>
+                        <div class="diag-item">
+                            <span class="diag-label">Cloudbeds System API Keys Loaded</span>
+                            <span class="badge err" id="bdgApi">MISSING</span>
+                        </div>
+                        <div class="diag-item">
+                            <span class="diag-label">Google Sheets Service Account Active</span>
+                            <span class="badge err" id="bdgSheets">MISSING</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPORTS TAB -->
+        <div id="view-reports" class="view-section">
+            <div class="page-header">
+                <h2>Reporting Center</h2>
+                <p>Generate on-demand analytical reports from live transactional data.</p>
+            </div>
+
+            <div class="report-grid">
+                <!-- Night Audit PDF Generation -->
+                <div class="report-card">
+                    <h3>Executive Night Audit</h3>
+                    <p>Generate yesterday's full transaction ledger dynamically injected into the Management PDF format. This replicates the 4:00 AM automated email.</p>
+                    <button class="btn" id="btnAudit" onclick="generateAudit()">
+                        Generate PDF Snapshot
+                    </button>
+                </div>
+
+                <!-- South Dakota Tax Generation -->
+                <div class="report-card">
+                    <h3>South Dakota Sales Tax Filings</h3>
+                    <p>Calculates state, municipal, BBB, and tourism taxes using the raw 28-day retroactive engine. Outputs the formatted State Filing entries.</p>
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                        <input type="month" id="taxMonthFilter" value="2026-03" style="flex:1; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: white; padding: 8px; border-radius: 6px; color-scheme: dark;">
+                        <input type="number" id="taxUseTax" placeholder="Use Tax Base $" style="width: 130px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: white; padding: 8px; border-radius: 6px;">
+                    </div>
+                    <button class="btn" id="btnTax" onclick="generateSalesTax()">
+                        Build Filing Report
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toastBox">Notification Event</div>
+
+    <!-- Overlay Modal for dynamic reports -->
+    <div id="taxModal" class="modal">
+        <div class="modal-content">
+            <button class="close-btn" onclick="document.getElementById('taxModal').style.display='none'">&times;</button>
+            <div id="taxRenderHost"></div>
+        </div>
+    </div>
+
+    <script>
+        function showToast(msg) {
+            const tb = document.getElementById('toastBox');
+            tb.innerText = msg;
+            tb.style.opacity = '1';
+            setTimeout(() => tb.style.opacity = '0', 4000);
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            
+            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+            document.getElementById('view-' + tabId).classList.add('active');
+        }
+
+        function formatUptime(seconds) {
+            if (!seconds) return '--:--';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            return `${h}h ${m}m`;
+        }
+
+        // Live Auto-Polling for Health Stats
+        async function fetchHealth() {
+            try {
+                const res = await fetch('/api/employee/status');
+                if (!res.ok) throw new Error("Blocked");
+                const data = await res.json();
+                
+                const dot = document.getElementById('globalDot');
+                const text = document.getElementById('globalText');
+                
+                if (data.status === 'running') {
+                    dot.classList.add('online');
+                    text.innerText = "Systems Operational";
+                } else {
+                    dot.classList.remove('online');
+                    text.innerText = "Engine Stopped";
+                }
+
+                document.getElementById('valUptime').innerText = formatUptime(data.uptime);
+                
+                const apiBdg = document.getElementById('bdgApi');
+                if(data.cloudbedsApiKeySet) { apiBdg.className = "badge ok"; apiBdg.innerText = "CONNECTED"; }
+                else { apiBdg.className = "badge err"; apiBdg.innerText = "MISSING"; }
+
+                const sheetsBdg = document.getElementById('bdgSheets');
+                if(data.googleSheetsKeySet) { sheetsBdg.className = "badge ok"; sheetsBdg.innerText = "CONNECTED"; }
+                else { sheetsBdg.className = "badge err"; sheetsBdg.innerText = "MISSING"; }
+
+            } catch (e) {
+                document.getElementById('globalDot').classList.remove('online');
+                document.getElementById('globalText').innerText = "Disconnected";
+                document.getElementById('valUptime').innerText = "0h 0m";
+            }
+        }
+        
+        setInterval(fetchHealth, 5000);
+        fetchHealth();
+
+        // Download Report Logic
+        async function generateAudit() {
+            const btn = document.getElementById('btnAudit');
+            btn.innerHTML = `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg> Generating...`;
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/employee/reports/night-audit', { method: 'POST' });
+                
+                if (!response.ok) {
+                    throw new Error("Report generation failed.");
+                }
+                
+                // Stream the PDF directly into a blob in the browser
+                const blob = await response.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                
+                // Programmatically trigger a hidden anchor tag to download the file
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `GatewayPark_Audit_${new Date().toISOString().split('T')[0]}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                showToast("✅ Night Audit PDF generated and downloaded successfully.");
+            } catch (error) {
+                showToast(`❌ Error: ${error.message}`);
+            } finally {
+                btn.innerHTML = `Generate PDF Snapshot`;
+                btn.disabled = false;
+            }
+        }
+
+        async function generateSalesTax() {
+            const btn = document.getElementById('btnTax');
+            const monthVal = document.getElementById('taxMonthFilter').value;
+            const useTaxVal = document.getElementById('taxUseTax').value;
+            
+            if (!monthVal) return showToast("Please select a valid month/year.");
+            
+            const dp = new Date(monthVal + '-02');
+            const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+            
+            btn.innerHTML = `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg> Generating...`;
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/employee/reports/sales-tax', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ month: monthNames[dp.getMonth()], year: dp.getFullYear(), useTax: useTaxVal })
+                });
+
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error);
+
+                document.getElementById('taxRenderHost').innerHTML = data.filingHtml + '<br><br>' + data.summaryHtml;
+                document.getElementById('taxModal').style.display = 'flex';
+                
+                showToast("✅ Sales Tax synced with Spreadsheet backend!");
+            } catch (err) {
+                showToast(`❌ Error: ${err.message}`);
+            } finally {
+                btn.innerHTML = "Build Filing Report";
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
