@@ -7,8 +7,7 @@ const { logger } = require('./logger');
  */
 class CloudbedsAPI {
   constructor() {
-    // We strictly use v1.2 as v1.1 is deprecated
-    this.host = process.env.CLOUDBEDS_HOST || 'https://hotels.cloudbeds.com/api/v1.2';
+    this.host = process.env.CLOUDBEDS_HOST || 'https://hotels.cloudbeds.com/api/v1.3';
     this.apiKey = process.env.CLOUDBEDS_API_KEY || 'MOCK_KEY';
   }
 
@@ -350,6 +349,61 @@ class CloudbedsAPI {
       logger.error(`postHousekeepingAssignment failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  // ==========================================
+  // WEBHOOK SUBSCRIPTIONS
+  // ==========================================
+
+  /**
+   * Register a webhook subscription with Cloudbeds.
+   * object: e.g. 'reservation', 'guest', 'housekeeping', 'night_audit'
+   * action: e.g. 'created', 'status_changed', 'room_condition_changed', 'completed'
+   * endpointUrl: public URL Cloudbeds will POST to
+   */
+  async postWebhook(object, action, endpointUrl) {
+    logger.info(`[API CALL] POST /postWebhook | ${object}/${action} -> ${endpointUrl}`);
+
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true, subscriptionID: `mock_sub_${object}_${action}` });
+    }
+
+    try {
+      const response = await this._getClient().post('/postWebhook', {
+        object,
+        action,
+        endpointUrl
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`postWebhook failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Subscribe to the full set of events the Autonomy Engine reacts to.
+   * Idempotent on the Cloudbeds side (duplicate subscriptions return the existing one).
+   */
+  async registerAllWebhooks(endpointUrl) {
+    const events = [
+      ['reservation', 'created'],
+      ['reservation', 'status_changed'],
+      ['reservation', 'dates_changed'],
+      ['reservation', 'accommodation_status_changed'],
+      ['reservation', 'accommodation_changed'],
+      ['reservation', 'deleted'],
+      ['guest', 'created'],
+      ['guest', 'details_changed'],
+      ['housekeeping', 'room_condition_changed'],
+      ['night_audit', 'completed']
+    ];
+
+    const results = [];
+    for (const [object, action] of events) {
+      results.push({ event: `${object}/${action}`, result: await this.postWebhook(object, action, endpointUrl) });
+    }
+    return results;
   }
 
   // ==========================================
