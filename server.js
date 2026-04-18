@@ -59,7 +59,7 @@ app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
 app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res) => {
   if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
   try {
-     const reportEngine = new NightAuditReport(agent.api);
+     const reportEngine = new NightAuditReport(agent.engine.api);
      logger.info('[EMPLOYEE] Night Audit report manually requested via Dashboard');
      const reportDt = reportEngine.addDays(new Date(), -1);
      const result = await reportEngine.generatePdfBuffer(reportDt);
@@ -158,7 +158,7 @@ app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) 
   if (!month || !year) return res.status(400).json({ success: false, error: 'Month and year required.' });
   
   try {
-     const taxEngine = new SalesTaxEngine(agent.api);
+     const taxEngine = new SalesTaxEngine(agent.engine.api);
      const result = await taxEngine.generateReport(month, parseInt(year), parseFloat(useTax || 0));
      logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
      logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
@@ -277,7 +277,7 @@ cron.schedule('0 2 * * *', async () => {
 cron.schedule('0 4 * * *', async () => {
   logger.info('[CRON] 4:00 AM - Triggering Automated Night Audit Data Warehouse routine...');
   if (agent.isRunning) {
-    const reportEngine = new NightAuditReport(agent.api);
+    const reportEngine = new NightAuditReport(agent.engine.api);
     await reportEngine.runDailyAudit();
   } else {
     logger.warn('[CRON] Agent is not running. Skipping reporting pipeline.');
