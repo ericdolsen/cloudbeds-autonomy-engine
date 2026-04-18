@@ -11,10 +11,10 @@ class SalesTaxEngine {
 
   getGoogleAuth() {
     if (!this.serviceAccountEmail || !this.serviceAccountKey) return null;
-    return new google.auth.JWT(
-      this.serviceAccountEmail, null, this.serviceAccountKey,
-      ['https://www.googleapis.com/auth/spreadsheets']
-    );
+    return new google.auth.GoogleAuth({
+      credentials: { client_email: this.serviceAccountEmail, private_key: this.serviceAccountKey },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
   }
 
   toYMD(d) { return d.toISOString().slice(0,10); }

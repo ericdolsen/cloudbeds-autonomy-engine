@@ -6,3 +6,4 @@
 [2026-04-18T20:29:53.099Z] [INFO] Starting Cloudbeds Agent (Autonomy Engine Mode)...
 [2026-04-18T20:29:53.099Z] [INFO] Agent is running. Ready to receive incoming webhook events from Cloudbeds.
 [2026-04-18T20:29:53.099Z] [INFO] Dashboard accessible locally at http://localhost:3000
+[2026-04-18T22:28:53.558Z] [INFO] [SALES TAX] Generating report for March 2026 with $0 use tax.
