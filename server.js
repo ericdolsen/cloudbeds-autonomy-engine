@@ -55,7 +55,6 @@ app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
       feed: logger.getFeed()
     });
   });
-});
 
 app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res) => {
   if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
