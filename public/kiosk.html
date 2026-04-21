@@ -365,7 +365,6 @@
                         });
                         const data = await res.json();
                         setLoading(false);
-                        
                         if (data.success && data.requiresVerification) {
                             currentStep = 2;
                             document.getElementById('step1Row').style.display = 'none';
@@ -374,13 +373,11 @@
                             document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number (ending in ${data.maskedPhone.split('-').pop()}) to verify.`;
                             document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
                         } else {
-                            // Automatically assume it was actually an ID if identify failed
-                            proceedWithValidatedId(query, mode);
+                            showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
                         }
                     } catch(e) { 
                         setLoading(false); 
-                        // Automatically assume it was actually an ID if identify failed
-                        proceedWithValidatedId(query, mode); 
+                        showToast("Network Error connecting to the desk.");
                     }
                 } else {
                     proceedWithValidatedId(query, mode);

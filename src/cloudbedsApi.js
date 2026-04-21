@@ -275,7 +275,7 @@ class CloudbedsAPI {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
-      const response = await this._getClient().get('/getReservations', { params: { checkInFrom, checkInTo, status: 'all', pageSize: 500, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      const response = await this._getClient().get('/getReservations', { params: { checkInFrom, checkInTo, pageSize: 500, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
       return response.data;
     } catch (e) {
       logger.error(`getReservations failed: ${e.message}`);
