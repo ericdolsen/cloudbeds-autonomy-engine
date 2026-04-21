@@ -171,7 +171,7 @@ app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) 
   }
 });
 
-// Kiosk REST API Endpoint
+// Kiosk REST API Endpoint (Checkout)
 app.post('/api/kiosk/checkout', async (req, res) => {
   const { reservationId, lastName, terminalName } = req.body;
   logger.info(`[KIOSK] Request received - Res: ${reservationId}, Name: ${lastName}, Terminal: ${terminalName}`);
@@ -193,6 +193,29 @@ app.post('/api/kiosk/checkout', async (req, res) => {
     res.json({ success: true, status: 'complete', message: result.agent_response });
   } catch (error) {
     logger.action('Checkout', `Checkout failed for Res: ${reservationId} (${error.message})`, 'error');
+    logger.error(`[KIOSK] Backend Execution Failed: ${error.message}`);
+    res.status(500).json({ success: false, message: "System error. Please visit the front desk." });
+  }
+});
+
+// Kiosk REST API Endpoint (Checkin)
+app.post('/api/kiosk/checkin', async (req, res) => {
+  const { reservationId, lastName, terminalName } = req.body;
+  logger.info(`[KIOSK] Checkin Request received - Res: ${reservationId}, Name: ${lastName}, Terminal: ${terminalName}`);
+  
+  if (!agent.isRunning) {
+    return res.status(503).json({ success: false, message: "Front desk system is currently initializing." });
+  }
+
+  try {
+    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely by checking for an outstanding balance, prompting them to swipe/insert a card on the terminal if money is owed, and then finally executing the cloudbeds check-in status update and communicating success back.`;
+    
+    const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
+    
+    logger.action('Checkin', `Processed self-checkin for guest ${lastName} (Res: ${reservationId})`, 'ok');
+    res.json({ success: true, status: 'complete', message: result.agent_response });
+  } catch (error) {
+    logger.action('Checkin', `Checkin failed for Res: ${reservationId} (${error.message})`, 'error');
     logger.error(`[KIOSK] Backend Execution Failed: ${error.message}`);
     res.status(500).json({ success: false, message: "System error. Please visit the front desk." });
   }

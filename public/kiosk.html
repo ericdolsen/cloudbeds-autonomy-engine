@@ -413,19 +413,11 @@
         }
 
         async function proceedWithValidatedId(resId, mode) {
-            if (mode === 'checkin') {
-                setLoading(true, "Launching Secure Check-in Portal...", true);
-                setTimeout(() => {
-                    window.location.href = `https://hotels.cloudbeds.com/guest_portal/10074733072513/reservation/${resId}`;
-                }, 1000);
-                return;
-            }
-
-            // Checkout Logic
             setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
 
             try {
-                const response = await fetch('/api/kiosk/checkout', {
+                const endpoint = (mode === 'checkin') ? '/api/kiosk/checkin' : '/api/kiosk/checkout';
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -438,7 +430,7 @@
                 const data = await response.json();
 
                 if (data.status === 'complete') {
-                    setLoading(true, "Checkout Complete! Printing receipt...", false);
+                    setLoading(true, (mode === 'checkin') ? "Check-in Complete! Here are your keys..." : "Checkout Complete! Printing receipt...", false);
                     setTimeout(() => {
                         setLoading(false);
                         hideForm();
@@ -446,7 +438,7 @@
                 } 
                 else {
                     setLoading(false);
-                    showToast(data.message || "Checkout failed. Please see front desk.");
+                    showToast(data.message || ((mode === 'checkin') ? "Check-in failed. Please see front desk." : "Checkout failed. Please see front desk."));
                 }
 
             } catch (error) {
