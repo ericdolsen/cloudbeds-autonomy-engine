@@ -222,15 +222,40 @@ app.post('/api/kiosk/identify', async (req, res) => {
   logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
   const result = await agent.engine.api.getReservation(query);
 
-  if (result.success && result.data && result.data.phone) {
-     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
-     if (phoneStr.length >= 4) {
+  if (result.success && result.data) {
+     // Normalize phone and email deeply embedded in Cloudbeds guestList
+     let phoneStr = '';
+     let actEmail = result.data.guestEmail || '';
+     
+     if (result.data.guestList) {
+         const guests = Object.values(result.data.guestList);
+         const mg = guests.find(g => g.isMainGuest) || guests[0];
+         if (mg) {
+             phoneStr = (mg.guestCellPhone || mg.guestPhone || '').replace(/[^0-9]/g, '');
+             if (!actEmail) actEmail = mg.guestEmail;
+         }
+     }
+
+     if (phoneStr && phoneStr.length >= 4) {
          const last4 = phoneStr.slice(-4);
          return res.json({ 
            success: true, 
            requiresVerification: true, 
+           verifyType: 'phone',
            maskedPhone: `***-***-${last4}`
          });
+     } else if (actEmail) {
+         const parts = actEmail.split('@');
+         const maskedEmail = parts.length === 2 ? `${parts[0].charAt(0)}***@${parts[1]}` : 'your email address';
+         return res.json({
+           success: true,
+           requiresVerification: true,
+           verifyType: 'email',
+           maskedEmail: maskedEmail
+         });
+     } else {
+         // Extreme Fallback
+         return res.json({ success: false, message: "We found your reservation, but it lacks contact details for secure verification. Please see the front desk." });
      }
   }
   
@@ -241,20 +266,30 @@ app.post('/api/kiosk/verify', async (req, res) => {
   const { query, pin } = req.body;
   if (!query || !pin) return res.status(400).json({ success: false });
 
-  logger.info(`[KIOSK VERIFY] Verifying PIN for guest: ${query}`);
+  logger.info(`[KIOSK VERIFY] Verifying Security PIN for guest: ${query}`);
   const result = await agent.engine.api.getReservation(query);
 
-  if (result.success && result.data && result.data.phone) {
-     const phoneStr = result.data.phone.replace(/[^0-9]/g, '');
-     if (phoneStr.slice(-4) === pin) {
-         return res.json({ 
-           success: true, 
-           reservationId: result.data.reservationId 
-         });
+  if (result.success && result.data) {
+     let phoneStr = '';
+     let actEmail = (result.data.guestEmail || '').toLowerCase();
+     
+     if (result.data.guestList) {
+         const guests = Object.values(result.data.guestList);
+         const mg = guests.find(g => g.isMainGuest) || guests[0];
+         if (mg) {
+             phoneStr = (mg.guestCellPhone || mg.guestPhone || '').replace(/[^0-9]/g, '');
+             if (!actEmail) actEmail = (mg.guestEmail || '').toLowerCase();
+         }
+     }
+
+     if (phoneStr && phoneStr.length >= 4) {
+         if (phoneStr.slice(-4) === pin) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID });
+     } else if (actEmail) {
+         if (actEmail === pin.toLowerCase().trim()) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID });
      }
   }
   
-  res.json({ success: false, message: "Verification failed. Incorrect PIN." });
+  res.json({ success: false, message: "Verification failed. Incorrect Security PIN or Email." });
 });
 
 // CRON SCHEDULER

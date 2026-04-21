@@ -370,7 +370,18 @@
                             document.getElementById('step1Row').style.display = 'none';
                             document.getElementById('step2Row').style.display = 'flex';
                             document.getElementById('verifyPrompt').style.display = 'block';
-                            document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number (ending in ${data.maskedPhone.split('-').pop()}) to verify.`;
+                            
+                            const pinInput = document.getElementById('pinInput');
+                            if (data.verifyType === 'email') {
+                                document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
+                                pinInput.placeholder = "Enter your email address";
+                                pinInput.maxLength = 100;
+                            } else {
+                                document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number (ending in ${data.maskedPhone.split('-').pop()}) to verify.`;
+                                pinInput.placeholder = "Enter last 4 digits of phone";
+                                pinInput.maxLength = 4;
+                            }
+                            
                             document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
                         } else {
                             showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
