@@ -67,8 +67,33 @@ class CloudbedsAPI {
 
     // REAL NETWORK CALL
     try {
+      // 1. If the query looks like a purely alphabetical name instead of a Reservation ID
+      if (/^[a-zA-Z\s]+$/.test(query) && query.length >= 2) {
+          logger.info(`[API CALL] Delegating Name Search for "${query}" to /getReservations scan...`);
+          // Grab reservations spanning the past week to next week to capture in-house and arriving guests
+          const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+          const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+          
+          const resList = await this.getReservations(past, future);
+          if (resList.success && resList.data) {
+              const exactMatch = resList.data.find(r => 
+                 (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
+                 (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
+                 (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase())
+              );
+              
+              if (exactMatch) {
+                  // Run strict lookup using the dynamically found ID to pull nested details like phone number
+                  logger.info(`[API CALL] Name resolved to ID: ${exactMatch.reservationId || exactMatch.reservationID}`);
+                  return await this.getReservation(exactMatch.reservationId || exactMatch.reservationID);
+              }
+          }
+          return { success: false, message: "Could not find an active reservation matching that name." };
+      }
+
+      // 2. Standard ID lookup
       const response = await this._getClient().get('/getReservation', {
-        params: { query }
+        params: { reservationID: query }
       });
       return response.data;
     } catch (error) {
