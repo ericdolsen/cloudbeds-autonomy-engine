@@ -244,7 +244,7 @@ STANDARD WORKFLOW:
 
     } catch (e) {
       logger.error(`[AUTONOMY ENGINE] Critical Failure: ${e.message}`);
-      return "I'm sorry, I am experiencing a technical issue and cannot process your request right now. Please contact the front desk.";
+      throw e;
     }
   }
 }
