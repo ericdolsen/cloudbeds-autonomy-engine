@@ -57,8 +57,8 @@ class AutonomyEngine {
             type: Type.OBJECT,
             properties: {
               reservationId: { type: Type.STRING, description: "The Cloudbeds reservation ID" },
-              updates: { 
-                type: Type.OBJECT, 
+              updates: {
+                type: Type.OBJECT,
                 description: "Key-value pairs to update (e.g., {'status': 'checked_out'}, {'roomType': 'King Suite'})"
               }
             },
@@ -159,10 +159,10 @@ STANDARD WORKFLOW:
 
   async executeTask(messagePayload) {
     logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
-    
+
     try {
       const chat = this.ai.chats.create({
-        model: process.env.GEMINI_MODEL || 'gemini-3.1-pro',
+        model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
         config: {
           systemInstruction: this.getSystemInstruction(),
           tools: this.getTools(),
@@ -178,9 +178,9 @@ STANDARD WORKFLOW:
       while (response.functionCalls && response.functionCalls.length > 0) {
         const call = response.functionCalls[0];
         const { name, args } = call;
-        
+
         logger.info(`[AUTONOMY ENGINE] Wants to execute: ${name}(${JSON.stringify(args)})`);
-        
+
         let apiResult;
         try {
           if (name === 'getReservation') apiResult = await this.api.getReservation(args.query);
@@ -202,21 +202,21 @@ STANDARD WORKFLOW:
             logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
             const resData = await this.api.getReservation(args.reservationId);
             if (resData.success && resData.data) {
-                // Update status
-                const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
-                
-                // Security Guard - DO NOT SEND INVOICE TO CHANNEL COLLECT BOOKINGS
-                if (resData.data.paymentType === 'Channel Collect Booking') {
-                   logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
-                   apiResult = { success: true, message: "Checkout processed, but invoice skipped due to Channel Collect policy." };
-                } else {
-                   // In reality, you extract the generated documentID from the reservation
-                   const fakeDocId = `DOC_${args.reservationId}_123`;
-                   const emailRes = await this.api.emailFiscalDocument(fakeDocId, resData.data.email || 'guest@example.com');
-                   apiResult = { success: true, message: `Checkout processed. Invoice sent via email via native fiscal endpoint. (Status: ${emailRes.success})` };
-                }
+              // Update status
+              const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
+
+              // Security Guard - DO NOT SEND INVOICE TO CHANNEL COLLECT BOOKINGS
+              if (resData.data.paymentType === 'Channel Collect Booking') {
+                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
+                apiResult = { success: true, message: "Checkout processed, but invoice skipped due to Channel Collect policy." };
+              } else {
+                // In reality, you extract the generated documentID from the reservation
+                const fakeDocId = `DOC_${args.reservationId}_123`;
+                const emailRes = await this.api.emailFiscalDocument(fakeDocId, resData.data.email || 'guest@example.com');
+                apiResult = { success: true, message: `Checkout processed. Invoice sent via email via native fiscal endpoint. (Status: ${emailRes.success})` };
+              }
             } else {
-                apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
+              apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
             }
           }
           else throw new Error("Unknown tool call");
@@ -227,7 +227,7 @@ STANDARD WORKFLOW:
         logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
 
         // Send tool output back to the model
-        response = await chat.sendMessage({ 
+        response = await chat.sendMessage({
           message: [{
             functionResponse: {
               name: name,

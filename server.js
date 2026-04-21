@@ -200,7 +200,7 @@ app.post('/api/kiosk/checkout', async (req, res) => {
 
 // Kiosk REST API Endpoint (Checkin)
 app.post('/api/kiosk/checkin', async (req, res) => {
-  const { reservationId, lastName, terminalName } = req.body;
+  const { reservationId, lastName, terminalName, guestUpdates } = req.body;
   logger.info(`[KIOSK] Checkin Request received - Res: ${reservationId}, Name: ${lastName}, Terminal: ${terminalName}`);
   
   if (!agent.isRunning) {
@@ -208,6 +208,38 @@ app.post('/api/kiosk/checkin', async (req, res) => {
   }
 
   try {
+    if (guestUpdates) {
+        logger.info(`[KIOSK] Syncing Registration Card and Profile Updates for ${reservationId}...`);
+        try {
+            // 1. Get Guest ID
+            const resData = await agent.engine.api.getReservation(reservationId);
+            if (resData.success && resData.data) {
+                let guestID = resData.data.guestID || resData.data.guestId;
+                if (!guestID && resData.data.guestList) {
+                    const guests = Object.values(resData.data.guestList);
+                    const mg = guests.find(g => g.isMainGuest) || guests[0];
+                    if (mg) guestID = mg.guestID || mg.guestId;
+                }
+                
+                // 2. Update Profile
+                if (guestID) {
+                    await agent.engine.api.putGuest(guestID, {
+                        guestEmail: guestUpdates.email,
+                        guestCellPhone: guestUpdates.phone,
+                        guestAddress: guestUpdates.address
+                    });
+                }
+            }
+            
+            // 3. Upload Signature
+            if (guestUpdates.signature) {
+                await agent.engine.api.postReservationDocument(reservationId, guestUpdates.signature, "Registration_Signature.png");
+            }
+        } catch (e) {
+            logger.error(`[KIOSK] Failed to sync registration to Cloudbeds (Non-Fatal): ${e.message}`);
+        }
+    }
+
     const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely by checking for an outstanding balance, prompting them to swipe/insert a card on the terminal if money is owed, and then finally executing the cloudbeds check-in status update and communicating success back.`;
     
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
@@ -239,11 +271,11 @@ app.post('/api/kiosk/push', (req, res) => {
 
 // Identity verification for Kiosk (Search by Last Name)
 app.post('/api/kiosk/identify', async (req, res) => {
-  const { query } = req.body;
+  const { query, mode } = req.body;
   if (!query) return res.status(400).json({ success: false });
 
-  logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query}`);
-  const result = await agent.engine.api.getReservation(query);
+  logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query} (Mode: ${mode})`);
+  const result = await agent.engine.api.getReservation(query, mode);
 
   if (result.success && result.data) {
      // Normalize phone and email deeply embedded in Cloudbeds guestList
@@ -305,10 +337,22 @@ app.post('/api/kiosk/verify', async (req, res) => {
          }
      }
 
+     let guestData = { email: actEmail, phone: phoneStr, address: '', city: '', state: '', zip: '' };
+     if (result.data.guestList) {
+         const guests = Object.values(result.data.guestList);
+         const mg = guests.find(g => g.isMainGuest) || guests[0];
+         if (mg) {
+             guestData.address = mg.guestAddress || '';
+             guestData.city = mg.guestCity || '';
+             guestData.state = mg.guestState || '';
+             guestData.zip = mg.guestZip || '';
+         }
+     }
+
      if (phoneStr && phoneStr.length >= 4) {
-         if (phoneStr.slice(-4) === pin) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID });
+         if (phoneStr.slice(-4) === pin) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID, guestData });
      } else if (actEmail) {
-         if (actEmail === pin.toLowerCase().trim()) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID });
+         if (actEmail === pin.toLowerCase().trim()) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID, guestData });
      }
   }
   

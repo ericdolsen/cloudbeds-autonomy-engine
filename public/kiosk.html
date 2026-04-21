@@ -259,6 +259,28 @@
             <div class="form-row" id="step2Row" style="display:none;">
                 <input type="text" id="pinInput" class="kiosk-input" placeholder="Enter last 4 digits of phone" maxlength="4" autocomplete="off" autocorrect="off">
             </div>
+            
+            <!-- STEP 3: REGISTRATION CARD -->
+            <div id="step3Row" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px;">
+                <h3 style="margin-bottom: 5px; color: #38bdf8;">Guest Registration</h3>
+                <div style="display: flex; gap: 15px;">
+                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px;">
+                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.2rem; padding: 15px;">
+                </div>
+                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.2rem; padding: 15px;">
+                
+                <div style="margin-top: 10px;">
+                    <p style="font-size: 1.1rem; margin-bottom: 10px;">Please sign below:</p>
+                    <canvas id="sigCanvas" width="760" height="150" style="background: white; border-radius: 10px; cursor: crosshair; touch-action: none;"></canvas>
+                    <button type="button" onclick="clearSignature()" style="background: transparent; border: none; color: #f43f5e; margin-top: 5px; cursor: pointer; text-decoration: underline;">Clear Signature</button>
+                </div>
+                
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 1.1rem; margin-top: 10px; cursor: pointer;">
+                    <input type="checkbox" id="regTerms" style="width: 25px; height: 25px;">
+                    I agree to the hotel Terms & Conditions and accept responsibility for the room.
+                </label>
+            </div>
+
             <div class="form-row" style="justify-content: center; margin-top: 10px;">
                 <button class="kiosk-btn form-btn cancel" onclick="hideForm()">Cancel</button>
                 <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()">Verify Identity</button>
@@ -320,6 +342,7 @@
             currentStep = 1;
             document.getElementById('step1Row').style.display = 'flex';
             document.getElementById('step2Row').style.display = 'none';
+            document.getElementById('step3Row').style.display = 'none';
             document.getElementById('verifyPrompt').style.display = 'none';
             document.getElementById('queryInput').value = '';
             document.getElementById('pinInput').value = '';
@@ -361,7 +384,7 @@
                     try {
                         const res = await fetch('/api/kiosk/identify', {
                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({ query })
+                           body: JSON.stringify({ query, mode })
                         });
                         const data = await res.json();
                         setLoading(false);
@@ -377,7 +400,7 @@
                                 pinInput.placeholder = "Enter your email address";
                                 pinInput.maxLength = 100;
                             } else {
-                                document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number (ending in ${data.maskedPhone.split('-').pop()}) to verify.`;
+                                document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
                                 pinInput.placeholder = "Enter last 4 digits of phone";
                                 pinInput.maxLength = 4;
                             }
@@ -404,37 +427,146 @@
                     const data = await res.json();
                     setLoading(false);
                     if (data.success && data.reservationId) {
-                        proceedWithValidatedId(data.reservationId, mode);
+                        if (mode === 'checkin') {
+                            showRegistrationStep(data.guestData || {}, data.reservationId);
+                        } else {
+                            proceedWithValidatedId(data.reservationId, mode);
+                        }
                     } else {
                         showToast(data.message || "Incorrect PIN. Please try again.");
                     }
                 } catch(e) { setLoading(false); showToast("Network Error."); }
+            } else if (currentStep === 3) {
+                // Handle Registration Submit
+                if (!document.getElementById('regTerms').checked) {
+                    showToast("You must agree to the Terms & Conditions.");
+                    return;
+                }
+                if (isCanvasEmpty(document.getElementById('sigCanvas'))) {
+                    showToast("Please provide your signature.");
+                    return;
+                }
+                
+                const sigBase64 = document.getElementById('sigCanvas').toDataURL('image/png');
+                const updates = {
+                    email: document.getElementById('regEmail').value.trim(),
+                    phone: document.getElementById('regPhone').value.trim(),
+                    address: document.getElementById('regAddress').value.trim(),
+                    signature: sigBase64
+                };
+                
+                proceedWithValidatedId(window.verifiedReservationId, mode, updates);
             }
         }
 
-        async function proceedWithValidatedId(resId, mode) {
+        function showRegistrationStep(guestData, resId) {
+            currentStep = 3;
+            window.verifiedReservationId = resId;
+            
+            document.getElementById('step2Row').style.display = 'none';
+            document.getElementById('verifyPrompt').innerText = "Please confirm your details and sign below.";
+            document.getElementById('step3Row').style.display = 'flex';
+            
+            document.getElementById('regEmail').value = guestData.email || '';
+            document.getElementById('regPhone').value = guestData.phone || '';
+            document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';
+            
+            document.getElementById('submitActionBtn').innerText = "Accept & Pay";
+            initSignaturePad();
+        }
+        
+        let ctx, isDrawing = false;
+        function initSignaturePad() {
+            const canvas = document.getElementById('sigCanvas');
+            ctx = canvas.getContext('2d');
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            clearSignature();
+            
+            const getPos = (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: clientX - rect.left, y: clientY - rect.top };
+            };
+
+            const startPosition = (e) => {
+                e.preventDefault();
+                isDrawing = true;
+                const pos = getPos(e);
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+            };
+
+            const endPosition = (e) => {
+                e.preventDefault();
+                isDrawing = false;
+            };
+
+            const draw = (e) => {
+                e.preventDefault();
+                if (!isDrawing) return;
+                const pos = getPos(e);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+            };
+
+            canvas.addEventListener('mousedown', startPosition);
+            canvas.addEventListener('mouseup', endPosition);
+            canvas.addEventListener('mousemove', draw);
+            
+            canvas.addEventListener('touchstart', startPosition, {passive: false});
+            canvas.addEventListener('touchend', endPosition, {passive: false});
+            canvas.addEventListener('touchmove', draw, {passive: false});
+        }
+        
+        function clearSignature() {
+            const canvas = document.getElementById('sigCanvas');
+            if(ctx) {
+                ctx.fillStyle = "white";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+        
+        function isCanvasEmpty(canvas) {
+            const blank = document.createElement('canvas');
+            blank.width = canvas.width;
+            blank.height = canvas.height;
+            const bCtx = blank.getContext('2d');
+            bCtx.fillStyle = "white";
+            bCtx.fillRect(0, 0, blank.width, blank.height);
+            return canvas.toDataURL() === blank.toDataURL();
+        }
+
+        async function proceedWithValidatedId(resId, mode, guestUpdates = null) {
             setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
 
             try {
                 const endpoint = (mode === 'checkin') ? '/api/kiosk/checkin' : '/api/kiosk/checkout';
+                const payload = {
+                    reservationId: resId,
+                    lastName: document.getElementById('queryInput').value,
+                    terminalName: TERMINAL_NAME 
+                };
+                
+                if (guestUpdates) payload.guestUpdates = guestUpdates;
+                
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        reservationId: resId,
-                        lastName: document.getElementById('queryInput').value, // Used as context
-                        terminalName: TERMINAL_NAME 
-                    })
+                    body: JSON.stringify(payload)
                 });
 
                 const data = await response.json();
 
                 if (data.status === 'complete') {
-                    setLoading(true, (mode === 'checkin') ? "Check-in Complete! Here are your keys..." : "Checkout Complete! Printing receipt...", false);
+                    setLoading(true, data.message, false);
                     setTimeout(() => {
                         setLoading(false);
                         hideForm();
-                    }, 4000);
+                    }, 8000);
                 } 
                 else {
                     setLoading(false);

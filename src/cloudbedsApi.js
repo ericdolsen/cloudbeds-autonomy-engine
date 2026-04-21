@@ -30,8 +30,8 @@ class CloudbedsAPI {
   /**
    * Fetch reservation details by searching for name, phone, or reservation ID
    */
-  async getReservation(query) {
-    logger.info(`[API CALL] GET /getReservation | query: ${query}`);
+  async getReservation(query, mode) {
+    logger.info(`[API CALL] GET /getReservation | query: ${query} | mode: ${mode}`);
     
     if (this.apiKey === 'MOCK_KEY') {
       // Mocking different behaviors for Last Name vs ID searches
@@ -71,16 +71,28 @@ class CloudbedsAPI {
       if (/^[a-zA-Z\s]+$/.test(query) && query.length >= 2) {
           logger.info(`[API CALL] Delegating Name Search for "${query}" to /getReservations scan...`);
           // Grab reservations spanning the past week to next week to capture in-house and arriving guests
+          const today = new Date().toISOString().split('T')[0];
           const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
           const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
           
           const resList = await this.getReservations(past, future);
           if (resList.success && resList.data) {
-              const exactMatch = resList.data.find(r => 
-                 (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
-                 (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
-                 (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase())
-              );
+              const exactMatch = resList.data.find(r => {
+                 const nameMatch = (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
+                                   (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
+                                   (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase());
+                 
+                 if (!nameMatch) return false;
+                 
+                 // Strict filtering based on the Kiosk mode
+                 if (mode === 'checkin') {
+                     return r.startDate === today;
+                 } else if (mode === 'checkout') {
+                     return r.endDate === today || r.status === 'checked_in';
+                 }
+                 
+                 return true;
+              });
               
               if (exactMatch) {
                   // Run strict lookup using the dynamically found ID to pull nested details like phone number
@@ -429,6 +441,61 @@ class CloudbedsAPI {
       results.push({ event: `${object}/${action}`, result: await this.postWebhook(object, action, endpointUrl) });
     }
     return results;
+  }
+
+  // ==========================================
+  // NATIVE REGISTRATION / GUEST UPDATE
+  // ==========================================
+
+  /**
+   * Update guest details (phone, email, address)
+   */
+  async putGuest(guestID, updates) {
+    logger.info(`[API CALL] PUT /putGuest | guestID: ${guestID}`);
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true });
+    }
+    try {
+      const payload = {
+          guestID: guestID,
+          propertyID: process.env.CLOUDBEDS_PROPERTY_ID,
+          ...updates
+      };
+      const response = await this._getClient().put('/putGuest', payload);
+      return response.data;
+    } catch (e) {
+      logger.error(`putGuest failed: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  }
+
+  /**
+   * Upload a document (like a signed registration card) to a reservation
+   */
+  async postReservationDocument(reservationID, base64Image, filename = "RegistrationCard.png") {
+    logger.info(`[API CALL] POST /postReservationDocument | reservationID: ${reservationID}`);
+    if (this.apiKey === 'MOCK_KEY') {
+      return this._mockReturn({ success: true });
+    }
+    try {
+      const buffer = Buffer.from(base64Image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+      const blob = new Blob([buffer], { type: 'image/png' });
+      
+      const formData = new FormData();
+      formData.append('reservationID', reservationID);
+      if (process.env.CLOUDBEDS_PROPERTY_ID) {
+          formData.append('propertyID', process.env.CLOUDBEDS_PROPERTY_ID);
+      }
+      formData.append('file', blob, filename);
+
+      const response = await this._getClient().post('/postReservationDocument', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      return response.data;
+    } catch (e) {
+      logger.error(`postReservationDocument failed: ${e.message}`);
+      return { success: false, error: e.message };
+    }
   }
 
   // ==========================================
