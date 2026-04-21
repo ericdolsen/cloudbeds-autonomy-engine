@@ -77,27 +77,35 @@ class CloudbedsAPI {
           
           const resList = await this.getReservations(past, future);
           if (resList.success && resList.data) {
-              const exactMatch = resList.data.find(r => {
-                 const nameMatch = (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
-                                   (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
-                                   (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase());
-                 
-                 if (!nameMatch) return false;
-                 
-                 // Strict filtering based on the Kiosk mode
-                 if (mode === 'checkin') {
-                     return r.startDate === today;
-                 } else if (mode === 'checkout') {
-                     return r.endDate === today || r.status === 'checked_in';
-                 }
-                 
-                 return true;
+              const nameMatches = resList.data.filter(r => {
+                 return (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
+                        (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
+                        (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase());
               });
-              
-              if (exactMatch) {
-                  // Run strict lookup using the dynamically found ID to pull nested details like phone number
-                  logger.info(`[API CALL] Name resolved to ID: ${exactMatch.reservationId || exactMatch.reservationID}`);
-                  return await this.getReservation(exactMatch.reservationId || exactMatch.reservationID);
+
+              if (nameMatches.length > 0) {
+                  const exactMatch = nameMatches.find(r => {
+                     if (mode === 'checkin') {
+                         return r.startDate === today;
+                     } else if (mode === 'checkout') {
+                         return r.endDate === today || r.status === 'checked_in';
+                     }
+                     return true;
+                  });
+                  
+                  if (exactMatch) {
+                      // Run strict lookup using the dynamically found ID to pull nested details like phone number
+                      logger.info(`[API CALL] Name resolved to ID: ${exactMatch.reservationId || exactMatch.reservationID}`);
+                      return await this.getReservation(exactMatch.reservationId || exactMatch.reservationID);
+                  } else {
+                      if (mode === 'checkin') {
+                          const futureRes = nameMatches.find(r => r.startDate > today);
+                          if (futureRes) {
+                              return { success: false, message: `We found a reservation for you, but your check-in date is ${futureRes.startDate}. You can only check in on your arrival date.` };
+                          }
+                      }
+                      return { success: false, message: "We found a reservation under your name, but it is not scheduled for today. Please see the front desk." };
+                  }
               }
           }
           return { success: false, message: "Could not find an active reservation matching that name." };
