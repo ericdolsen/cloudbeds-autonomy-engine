@@ -196,7 +196,7 @@ app.post('/api/kiosk/checkout', async (req, res) => {
 
   try {
     // We send a specific intent prompt to the Autonomy Engine mimicking the kiosk request
-    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to check out of reservation ${reservationId} using terminal ${terminalName}. Please process their checkout completely by verifying their balance, executing a checkout, and communicating success back.`;
+    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to check out of reservation ${reservationId}. Please process their checkout completely by verifying their balance. If they owe a balance, direct them to the front desk. Otherwise, execute a checkout and communicate success back. Do NOT attempt to process payments.`;
     
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
     

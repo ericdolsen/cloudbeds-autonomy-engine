@@ -611,6 +611,8 @@
         async function proceedWithValidatedId(resId, mode, guestUpdates = null) {
             if (mode === 'print') {
                 setLoading(true, "Fetching and printing your receipt...");
+            } else if (mode === 'checkout') {
+                setLoading(true, "Processing your checkout. Please wait...");
             } else {
                 setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
             }

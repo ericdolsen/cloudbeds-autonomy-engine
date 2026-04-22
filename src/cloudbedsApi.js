@@ -98,7 +98,7 @@ class CloudbedsAPI {
       if (isName || isPhone) {
         logger.info(`[API CALL] Delegating search "${query}" to /getReservations scan...`);
         const today = new Date().toISOString().split('T')[0];
-        const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+        const past = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
         const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
         const resList = await this.getReservations(past, future);
