@@ -238,18 +238,20 @@
         </div>
 
         <!-- Main Buttons -->
-        <div class="main-actions" id="mainActions">
-            <button class="kiosk-btn" onclick="showForm('checkin')">
-                <span class="icon">✨</span>
-                <span class="text">Guest Check-In</span>
-            </button>
-            <button class="kiosk-btn" onclick="showForm('checkout')">
-                <span class="icon">🧾</span>
-                <span class="text">Express Check-Out</span>
-            </button>
-            <button class="kiosk-btn secondary" style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); margin-top: 10px;" onclick="showForm('print')">
-                <span class="icon" style="font-size: 1.5rem;">🖨️</span>
-                <span class="text" style="font-size: 1.2rem; font-weight: 500;">Print Receipt</span>
+        <div class="main-actions" id="mainActions" style="flex-direction: column; align-items: center; gap: 20px;">
+            <div style="display: flex; gap: 40px; justify-content: center; flex-wrap: wrap;">
+                <button class="kiosk-btn" onclick="showForm('checkin')">
+                    <span class="icon">✨</span>
+                    <span class="text">Guest Check-In</span>
+                </button>
+                <button class="kiosk-btn" onclick="showForm('checkout')">
+                    <span class="icon">🧾</span>
+                    <span class="text">Express Check-Out</span>
+                </button>
+            </div>
+            <button class="kiosk-btn secondary" style="width: auto; padding: 15px 40px; border-radius: 20px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);" onclick="showForm('print')">
+                <span class="icon" style="font-size: 1.2rem; margin-right: 10px;">🖨️</span>
+                <span class="text" style="font-size: 1rem; font-weight: 500;">Print Receipt</span>
             </button>
         </div>
 
@@ -311,7 +313,7 @@
 
         <div class="footer">SYSTEM ONLINE &bull; TERMINAL CONNECTED</div>
 
-        <div class="qr-widget">
+        <div class="qr-widget" id="qrWidget">
             <img src="images/qrcode.png" alt="Scan Guest Portal">
             <p>Scan to check-in/out<br>on your mobile device</p>
         </div>
@@ -380,14 +382,17 @@
             document.getElementById('verifyPrompt').style.display = 'none';
             document.getElementById('queryInput').value = '';
             document.getElementById('pinInput').value = '';
+            document.getElementById('qrWidget').style.display = 'none';
 
             const btn = document.getElementById('submitActionBtn');
-            btn.innerText = (mode === 'checkin') ? 'Find Check-In' : 'Find Check-Out';
+            if (mode === 'print') btn.innerText = 'Find Reservation';
+            else btn.innerText = (mode === 'checkin') ? 'Find Check-In' : 'Find Check-Out';
         }
 
         function hideForm() {
             document.getElementById('kioskForm').style.display = 'none';
             document.getElementById('mainActions').style.display = 'flex';
+            document.getElementById('qrWidget').style.display = 'flex';
         }
 
         function showToast(message) {
