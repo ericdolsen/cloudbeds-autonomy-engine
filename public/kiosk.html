@@ -247,6 +247,10 @@
                 <span class="icon">🧾</span>
                 <span class="text">Express Check-Out</span>
             </button>
+            <button class="kiosk-btn secondary" style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); margin-top: 10px;" onclick="showForm('print')">
+                <span class="icon" style="font-size: 1.5rem;">🖨️</span>
+                <span class="text" style="font-size: 1.2rem; font-weight: 500;">Print Receipt</span>
+            </button>
         </div>
 
         <!-- Dynamic Form -->
@@ -594,10 +598,18 @@
         }
 
         async function proceedWithValidatedId(resId, mode, guestUpdates = null) {
-            setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
+            if (mode === 'print') {
+                setLoading(true, "Fetching and printing your receipt...");
+            } else {
+                setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
+            }
 
             try {
-                const endpoint = (mode === 'checkin') ? '/api/kiosk/checkin' : '/api/kiosk/checkout';
+                let endpoint;
+                if (mode === 'checkin') endpoint = '/api/kiosk/checkin';
+                else if (mode === 'print') endpoint = '/api/kiosk/print_receipt';
+                else endpoint = '/api/kiosk/checkout';
+
                 const payload = {
                     reservationId: resId,
                     lastName: document.getElementById('queryInput').value,

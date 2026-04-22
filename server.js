@@ -1,4 +1,10 @@
 const express = require('express');
+const { Server } = require('socket.io');
+const http = require('http');
+const path = require('path');
+const cron = require('node-cron');
+const { logger } = require('./src/logger');
+const { printPdfBuffer } = require('./src/printHandler');
 const http = require('http');
 const { Server } = require('socket.io');
 const cron = require('node-cron');
@@ -98,6 +104,8 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
       promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
     } else if (event === "reservation/dates_changed") {
       promptText = `The dates for reservation ${reservationID} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+    } else if (event === "reservation/checked_out") {
+      promptText = `Reservation ${reservationID} just checked out natively. Evaluate if an invoice should be emailed by checking the paymentType (skip if Channel Collect Booking). If safe, email the fiscal document. Do not attempt to update the checkout status.`;
     } else {
       promptText = `A generic Cloudbeds system event occurred: ${event} for reservation ${reservationID}. Review if necessary.`;
     }
@@ -298,6 +306,37 @@ app.post('/api/kiosk/push', (req, res) => {
   io.emit('pushToTablet', { reservationId });
   
   res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
+});
+
+// Kiosk REST API Endpoint (Print Receipt)
+app.post('/api/kiosk/print_receipt', async (req, res) => {
+  const { reservationId } = req.body;
+  if (!reservationId) return res.status(400).json({ success: false, message: 'reservationId required' });
+
+  logger.info(`[KIOSK] Print Receipt requested for ${reservationId}`);
+  try {
+    const invoiceInfo = await agent.engine.api.getReservationInvoiceInformation(reservationId);
+    if (!invoiceInfo || !invoiceInfo.data || !invoiceInfo.data.documentID) {
+      return res.status(404).json({ success: false, message: "No folio document found for this reservation." });
+    }
+
+    const docId = invoiceInfo.data.documentID;
+    const downloadRes = await agent.engine.api.downloadFiscalDocument(docId);
+    if (!downloadRes.success || !downloadRes.data) {
+      return res.status(500).json({ success: false, message: "Failed to download folio from Cloudbeds." });
+    }
+
+    // Print it physically
+    const printResult = await printPdfBuffer(downloadRes.data, docId);
+    if (printResult.success) {
+      return res.json({ status: 'complete', message: "Receipt sent to printer successfully." });
+    } else {
+      return res.status(500).json({ success: false, message: `Printer error: ${printResult.error}` });
+    }
+  } catch (err) {
+    logger.error(`[KIOSK] Print receipt failed: ${err.message}`);
+    return res.status(500).json({ success: false, message: "System error while printing." });
+  }
 });
 
 // Extract the main guest's verifiable contact info from a Cloudbeds reservation payload.

@@ -15,6 +15,7 @@
     "googleapis": "^171.4.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.5",
+    "pdf-to-printer": "^5.7.0",
     "playwright": "^1.59.1",
     "socket.io": "^4.8.3"
   }

@@ -156,7 +156,18 @@ class AutonomyEngine {
         },
         {
           name: "processCheckout",
-          description: "Initiates the absolute full checkout sequence. Updates PMS status to checked_out and emails the fiscal document strictly adhering to Channel rules.",
+          description: "Initiates the absolute full checkout sequence by updating PMS status to checked_out.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING }
+            },
+            required: ["reservationId"]
+          }
+        },
+        {
+          name: "evaluateAndEmailInvoice",
+          description: "Evaluates the paymentType of a reservation and emails the fiscal document to the guest if safe. Aborts for Channel Collect Booking.",
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -252,26 +263,35 @@ STANDARD WORKFLOW:
             const resData = await this.api.getReservationById(args.reservationId);
             if (resData.success && resData.data) {
               const updateRes = await this.api.updateReservation(args.reservationId, { reservationStatus: 'checked_out' });
-
               if (!updateRes.success) {
                 apiResult = { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };
-              } else if (resData.data.paymentType === 'Channel Collect Booking') {
-                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
-                apiResult = { success: true, message: "Checkout processed, but invoice skipped due to Channel Collect policy." };
               } else {
-                // Resolve a real documentID before emailing.
+                apiResult = { success: true, message: "Checkout processed successfully. Status updated to checked_out." };
+              }
+            } else {
+              apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
+            }
+          }
+          else if (name === 'evaluateAndEmailInvoice') {
+            logger.info(`[INVOICE GUARD] Evaluating invoice send for ${args.reservationId}`);
+            const resData = await this.api.getReservationById(args.reservationId);
+            if (resData.success && resData.data) {
+              if (resData.data.paymentType === 'Channel Collect Booking') {
+                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
+                apiResult = { success: true, message: "Invoice skipped due to Channel Collect policy." };
+              } else {
                 const invoice = await this.api.getReservationInvoiceInformation(args.reservationId);
                 const documentID = invoice && invoice.data ? invoice.data.documentID : null;
                 const guestEmail = this._resolveGuestEmail(resData.data);
                 if (!documentID || !guestEmail) {
-                  apiResult = { success: true, message: `Checkout processed. Invoice email skipped (missing ${!documentID ? 'documentID' : 'guest email'}).` };
+                  apiResult = { success: true, message: `Invoice email skipped (missing ${!documentID ? 'documentID' : 'guest email'}).` };
                 } else {
                   const emailRes = await this.api.emailFiscalDocument(documentID, guestEmail);
-                  apiResult = { success: true, message: `Checkout processed. Invoice emailed to ${guestEmail}. (Status: ${emailRes.success})` };
+                  apiResult = { success: true, message: `Invoice emailed to ${guestEmail}. (Status: ${emailRes.success})` };
                 }
               }
             } else {
-              apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
+              apiResult = { success: false, error: "Could not fetch reservation to evaluate invoice." };
             }
           }
           else throw new Error("Unknown tool call");

@@ -92,26 +92,42 @@ class CloudbedsAPI {
     }
 
     try {
-      // Name search: hyphens and apostrophes allowed so "O'Brien" / "Smith-Jones" work.
-      if (/^[a-zA-Z\s'\-]+$/.test(query) && query.length >= 2) {
-        logger.info(`[API CALL] Delegating name search "${query}" to /getReservations scan...`);
+      const isName = /^[a-zA-Z\s'\-]+$/.test(query) && query.length >= 2;
+      const isPhone = /^\+?[\d\s\-\(\)]{7,20}$/.test(query) && query.replace(/[^\d]/g, '').length >= 4; // allow last 4 or full
+
+      if (isName || isPhone) {
+        logger.info(`[API CALL] Delegating search "${query}" to /getReservations scan...`);
         const today = new Date().toISOString().split('T')[0];
         const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
         const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
         const resList = await this.getReservations(past, future);
         if (resList.success && Array.isArray(resList.data)) {
-          const needle = query.toLowerCase();
-          const nameMatches = resList.data.filter(r =>
-            (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
-            (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
-            (r.guestLastName && r.guestLastName.toLowerCase() === needle)
-          );
+          let matches = [];
+          if (isName) {
+            const needle = query.toLowerCase();
+            matches = resList.data.filter(r =>
+              (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+              (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+              (r.guestLastName && r.guestLastName.toLowerCase() === needle)
+            );
+          } else if (isPhone) {
+            const needle = query.replace(/[^\d]/g, '');
+            matches = resList.data.filter(r => {
+              if (!r.guestList) return false;
+              return Object.values(r.guestList).some(g => {
+                const cell = g.guestCellPhone ? g.guestCellPhone.toString().replace(/[^\d]/g, '') : '';
+                const phone = g.guestPhone ? g.guestPhone.toString().replace(/[^\d]/g, '') : '';
+                return (cell && cell.includes(needle)) || (phone && phone.includes(needle));
+              });
+            });
+          }
 
-          if (nameMatches.length > 0) {
-            const exactMatch = nameMatches.find(r => {
+          if (matches.length > 0) {
+            const exactMatch = matches.find(r => {
               if (mode === 'checkin') return r.startDate === today;
               if (mode === 'checkout') return r.endDate === today || r.status === 'checked_in';
+              if (mode === 'print') return r.startDate === today || r.endDate === today || r.status === 'checked_in' || r.status === 'checked_out';
               return true;
             });
 
@@ -122,12 +138,12 @@ class CloudbedsAPI {
             }
 
             if (mode === 'checkin') {
-              const futureRes = nameMatches.find(r => r.startDate > today);
+              const futureRes = matches.find(r => r.startDate > today);
               if (futureRes) {
                 return { success: false, message: `We found a reservation for you, but your check-in date is ${futureRes.startDate}. You can only check in on your arrival date.` };
               }
             }
-            return { success: false, message: "We found a reservation under your name, but it is not scheduled for today. Please see the front desk." };
+            return { success: false, message: "We found a reservation under your details, but it is not scheduled for today. Please see the front desk." };
           }
         }
         return { success: false, message: "Could not find an active reservation matching that name." };
@@ -461,6 +477,26 @@ class CloudbedsAPI {
       return response.data;
     } catch (error) {
       logger.error(`emailFiscalDocument failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Download a guest's fiscal document / invoice as a PDF.
+   */
+  async downloadFiscalDocument(documentId) {
+    logger.info(`[API CALL] GET /downloadFiscalDocument | DocID: ${documentId}`);
+    if (this._isMock()) {
+      return { success: false, error: "Cannot download physical PDF in mock mode." };
+    }
+    try {
+      const response = await this._getClient().get('/downloadFiscalDocument', {
+        params: { documentID: documentId, ...(this.propertyID ? { propertyID: this.propertyID } : {}) },
+        responseType: 'arraybuffer'
+      });
+      return { success: true, data: response.data };
+    } catch (error) {
+      logger.error(`downloadFiscalDocument failed: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
