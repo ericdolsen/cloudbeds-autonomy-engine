@@ -411,8 +411,8 @@ class CloudbedsAPI {
             checkInFrom,
             checkInTo,
             includeGuestsDetails: 'true',
-            resultsFrom: offset,
-            resultsTo: offset + pageSize - 1,
+            limit: pageSize,
+            offset: offset,
             ...(this.propertyID ? { propertyID: this.propertyID } : {})
           }
         });
