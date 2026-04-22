@@ -442,8 +442,58 @@ cron.schedule('0 6 * * *', async () => {
 
 // BOOTSTRAP
 // =====================================
+
+/**
+ * Validate env vars at boot so missing config surfaces immediately instead of
+ * failing silently at 2 AM / 4 AM / 6 AM when the crons fire.
+ */
+function validateStartupConfig() {
+  const groups = [
+    {
+      name: 'Gemini (Autonomy Engine)',
+      required: ['GEMINI_API_KEY'],
+      optional: ['GEMINI_MODEL']
+    },
+    {
+      name: 'Cloudbeds API',
+      required: ['CLOUDBEDS_API_KEY', 'CLOUDBEDS_PROPERTY_ID'],
+      optional: ['CLOUDBEDS_HOST']
+    },
+    {
+      name: 'Google Sheets (Night Audit + Housekeeping)',
+      required: ['GOOGLE_SHEET_ID', 'GOOGLE_SERVICE_ACCOUNT_EMAIL', 'GOOGLE_PRIVATE_KEY'],
+      optional: ['GOOGLE_SHEET_TAB_TRANSACTIONS', 'GOOGLE_SHEET_TAB_WEEKLY_SCHEDULE', 'GOOGLE_SHEET_TAB_HOUSEKEEPING_LOG']
+    },
+    {
+      name: 'SMTP (Night Audit email dispatch)',
+      required: ['SMTP_USER', 'SMTP_PASS'],
+      optional: ['REPORT_EMAILS']
+    }
+  ];
+
+  let allOk = true;
+  for (const g of groups) {
+    const missing = g.required.filter(k => !process.env[k]);
+    if (missing.length === 0) {
+      logger.info(`[CONFIG] ${g.name}: OK`);
+    } else {
+      allOk = false;
+      logger.warn(`[CONFIG] ${g.name}: MISSING ${missing.join(', ')} — dependent tasks will fail or fall back.`);
+    }
+  }
+
+  // Sanity-check the Google private key shape — a common failure mode is the
+  // escaped-newlines variant not being unescaped.
+  if (process.env.GOOGLE_PRIVATE_KEY && !process.env.GOOGLE_PRIVATE_KEY.includes('BEGIN PRIVATE KEY')) {
+    logger.warn('[CONFIG] GOOGLE_PRIVATE_KEY is set but does not look like a PEM key. Expected BEGIN PRIVATE KEY header.');
+  }
+
+  return allOk;
+}
+
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
+  validateStartupConfig();
   server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });

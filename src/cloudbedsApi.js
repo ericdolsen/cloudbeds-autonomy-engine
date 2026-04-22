@@ -321,18 +321,37 @@ class CloudbedsAPI {
     }
   }
 
+  /**
+   * GET /getDashboard — aggregate house metrics (occupancy, ADR, RevPAR, revenue)
+   * for a specific date. Returns a normalized { occupiedRooms, roomRevenue, adr,
+   * revpar } shape so callers don't need to know about the raw Cloudbeds field
+   * names. Name kept as getHouseCount for back-compat with existing callers.
+   */
   async getHouseCount(date) {
-    logger.info(`[API CALL] GET /getHouseCount | ${date}`);
+    logger.info(`[API CALL] GET /getDashboard | ${date}`);
     if (this._isMock()) {
       return this._mockReturn({ success: true, data: { occupiedRooms: 40, roomRevenue: 4200.50, adr: 105.01, revpar: 84.01 } });
     }
     try {
-      const response = await this._getClient().get('/getHouseCount', {
+      const response = await this._getClient().get('/getDashboard', {
         params: { date, ...(this.propertyID ? { propertyID: this.propertyID } : {}) }
       });
-      return response.data;
+      const raw = response.data && response.data.data ? response.data.data : {};
+      // Cloudbeds returns keys under nested `occupancy` / `revenue` objects
+      // depending on property type. Flatten to the shape the rest of the app
+      // already expects.
+      const occ = raw.occupancy || {};
+      const rev = raw.revenue || raw.roomRevenue || {};
+      const normalized = {
+        occupiedRooms: raw.occupiedRooms ?? occ.occupiedRooms ?? occ.roomsSold ?? 0,
+        totalRooms:    raw.totalRooms    ?? occ.totalRooms    ?? 0,
+        roomRevenue:   raw.roomRevenue   ?? rev.roomRevenue   ?? rev.total ?? 0,
+        adr:           raw.adr           ?? occ.adr           ?? 0,
+        revpar:        raw.revpar        ?? occ.revpar        ?? 0
+      };
+      return { success: true, data: normalized };
     } catch (e) {
-      logger.error(`getHouseCount failed: ${e.message}`);
+      logger.error(`getHouseCount (getDashboard) failed: ${e.message}`);
       return { success: false, data: {} };
     }
   }

@@ -13,6 +13,7 @@ class NightAuditReport {
     this.sheetId = process.env.GOOGLE_SHEET_ID;
     this.serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     this.serviceAccountKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
+    this.transactionsTab = process.env.GOOGLE_SHEET_TAB_TRANSACTIONS || 'Sheet1';
   }
 
   toYMD(d) { return d.toISOString().slice(0,10); }
@@ -201,7 +202,7 @@ class NightAuditReport {
 
       await sheets.spreadsheets.values.append({
          spreadsheetId: this.sheetId,
-         range: 'Sheet1!A:Z',
+         range: `${this.transactionsTab}!A:Z`,
          valueInputOption: 'USER_ENTERED',
          resource: { values }
       });

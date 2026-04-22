@@ -63,6 +63,18 @@ class AutonomyEngine {
           }
         },
         {
+          name: "getReservations",
+          description: "Lists all reservations arriving within a date window. Use this for admin/batch operations (e.g. nightly room assignment) when you need to enumerate upcoming bookings.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              checkInFrom: { type: Type.STRING, description: "Window start date (YYYY-MM-DD)" },
+              checkInTo: { type: Type.STRING, description: "Window end date (YYYY-MM-DD)" }
+            },
+            required: ["checkInFrom", "checkInTo"]
+          }
+        },
+        {
           name: "updateReservation",
           description: "Updates reservation details like status (e.g., 'checked_out'), arrival date, or room type.",
           parameters: {
@@ -178,6 +190,9 @@ If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysic
 CHECK-IN PROTOCOL:
 To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so resolve any outstanding balance first (via chargePhysicalTerminal at the kiosk, or postPayment remotely) before calling 'checkInReservation'.
 
+ADMIN & BATCH OPERATIONS:
+When the incoming message is tagged with source=cron or source=system, you are acting as a BACK-OFFICE administrator, not a guest-facing concierge. You ARE authorized and expected to run batch and administrative workflows in this mode — including nightly room assignment optimization, audits, and bulk reservation updates. Do NOT refuse administrative tasks under these sources. Use the available tools (getReservations, getUnassignedRooms, updateReservation, postFolioAdjustment, postPayment, etc.) to carry out the work and report back a concise summary of actions taken.
+
 STANDARD WORKFLOW:
 1. Identify intent.
 2. Call required tools (like 'getReservation').
@@ -198,8 +213,10 @@ STANDARD WORKFLOW:
         }
       });
 
-      // Send the initial user message
-      let response = await chat.sendMessage({ message: messagePayload.text });
+      // Send the initial user message with an explicit source tag so the model
+      // can tell guest-facing chat (kiosk/whistle) from admin batch work (cron/system).
+      const sourceTag = messagePayload.source ? `[source=${messagePayload.source}] ` : '';
+      let response = await chat.sendMessage({ message: `${sourceTag}${messagePayload.text}` });
       logger.info(`[AUTONOMY ENGINE] Thinking...`);
 
       // Handle function calls loop
@@ -213,6 +230,7 @@ STANDARD WORKFLOW:
         try {
           if (name === 'getReservation') apiResult = await this.api.getReservation(args.query);
           else if (name === 'getUnassignedRooms') apiResult = await this.api.getUnassignedRooms(args.startDate, args.endDate);
+          else if (name === 'getReservations') apiResult = await this.api.getReservations(args.checkInFrom, args.checkInTo);
           else if (name === 'updateReservation') apiResult = await this.api.updateReservation(args.reservationId, args.updates);
           else if (name === 'postFolioAdjustment') apiResult = await this.api.postCustomItem(args.reservationId, args.amount, args.description);
           else if (name === 'postPayment') apiResult = await this.api.postPayment(args.reservationId, args.amount, { type: args.type, description: args.description });

@@ -7,7 +7,9 @@ class HousekeepingAssigner {
     this.sheetId = process.env.GOOGLE_SHEET_ID;
     this.serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     this.serviceAccountKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
-    
+    this.weeklyScheduleTab = process.env.GOOGLE_SHEET_TAB_WEEKLY_SCHEDULE || 'WeeklySchedule';
+    this.housekeepingLogTab = process.env.GOOGLE_SHEET_TAB_HOUSEKEEPING_LOG || 'HousekeepingLogs';
+
     // Weight constants (minutes roughly)
     this.WEIGHT_CHECKOUT = 45;
     this.WEIGHT_STAYOVER = 10;
@@ -19,10 +21,10 @@ class HousekeepingAssigner {
 
   getGoogleAuth() {
     if (!this.serviceAccountEmail || !this.serviceAccountKey) return null;
-    return new google.auth.JWT(
-      this.serviceAccountEmail, null, this.serviceAccountKey,
-      ['https://www.googleapis.com/auth/spreadsheets']
-    );
+    return new google.auth.GoogleAuth({
+      credentials: { client_email: this.serviceAccountEmail, private_key: this.serviceAccountKey },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
   }
 
   async run6AMAssignment() {
@@ -77,7 +79,7 @@ class HousekeepingAssigner {
       const sheets = google.sheets({ version: 'v4', auth });
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: this.sheetId,
-        range: 'WeeklySchedule!A:Z' 
+        range: `${this.weeklyScheduleTab}!A:Z`
       });
       
       const rows = response.data.values || [];
@@ -208,7 +210,7 @@ class HousekeepingAssigner {
         const roomsString = bucket.assignedRooms.map(r => `${r.roomID}(${r.reservationCondition})`).join(', ');
         await sheets.spreadsheets.values.append({
            spreadsheetId: this.sheetId,
-           range: 'HousekeepingLogs!A:Z',
+           range: `${this.housekeepingLogTab}!A:Z`,
            valueInputOption: 'USER_ENTERED',
            resource: { values: [[ today, bucket.name, bucket.totalWeight, roomsString ]] }
         });
