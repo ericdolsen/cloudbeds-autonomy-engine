@@ -54,7 +54,7 @@ function injectTabletButton() {
         btn.innerText = 'Pushing...';
         
         // Ping our local Autonomy Engine server
-        fetch('http://localhost:3000/api/kiosk/push', {
+        fetch('http://10.25.25.39:3000/api/kiosk/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ reservationId: id })

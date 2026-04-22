@@ -10,7 +10,8 @@
   "host_permissions": [
     "https://*.cloudbeds.com/*",
     "http://127.0.0.1:3000/*",
-    "http://localhost:3000/*"
+    "http://localhost:3000/*",
+    "http://10.25.25.39:3000/*"
   ],
   "content_scripts": [
     {
