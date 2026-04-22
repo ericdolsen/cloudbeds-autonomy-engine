@@ -6,6 +6,7 @@ const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
 const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
+const { MessagingClient } = require('./src/messaging');
 const { logger } = require('./src/logger');
 
 require('dotenv').config();
@@ -26,6 +27,7 @@ app.get('/', (req, res) => {
 
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
+const messaging = new MessagingClient();
 
 // WebSockets (Tablet Connectivity)
 io.on('connection', (socket) => {
@@ -110,29 +112,54 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
 
 // Primary Webhook Ingress from Whistle / Guest Experience (Text Messaging)
 app.post('/api/webhooks/whistle', async (req, res) => {
-  const payload = req.body; 
+  const payload = req.body;
   logger.info(`[WEBHOOK] Incoming SMS/Message from Whistle`);
 
-  // Acknowledge immediately to Whistle
+  // Acknowledge immediately so Whistle doesn't retry.
   res.status(200).send("OK");
 
   if (!agent.isRunning) return;
 
   try {
-    // Example mapping - will be adjusted when Whistle keys arrive
-    const guestPhone = payload.guest_phone || payload.phone || "Unknown";
-    const message = payload.message || payload.text || payload.body;
-    
-    const promptText = `Guest at phone number ${guestPhone} just sent a text message: "${message}". Please respond. Your response will automatically be sent back to them via text.`;
-    
-    const result = await agent.processIncomingMessage({ source: 'whistle', text: promptText });
-    
-    // Ideally here we send the result.agent_response back to the Whistle API endpoint
-    if (result && result.agent_response) {
-       logger.info(`[WHISTLE API OUT] Sending SMS back off-chain: ${result.agent_response.substring(0,40)}...`);
-       // await agent.api.sendWhistleMessage(guestPhone, result.agent_response); // coming soon
+    const guestPhone = payload.guest_phone || payload.phone || payload.from;
+    const messageText = payload.message || payload.text || payload.body;
+    if (!guestPhone || !messageText) {
+      logger.warn('[WEBHOOK] Whistle payload missing phone or message; skipping.');
+      return;
     }
-    
+    const digits = String(guestPhone).replace(/[^0-9]/g, '');
+
+    // Look up the guest's most-relevant reservation so the agent has context
+    // and doesn't have to guess who the texter is.
+    let context = 'No active reservation was found matching this phone number. Treat as a prospective / general guest inquiry. ';
+    try {
+      const lookup = await agent.engine.api.getReservationsByPhone(digits);
+      if (lookup.success && lookup.data && lookup.data.length > 0) {
+        const r = lookup.data[0];
+        const id = r.reservationID || r.reservationId;
+        context = `Reservation context for this guest: reservationID=${id}, guestName=${r.guestName || ''}, status=${r.status || ''}, checkIn=${r.startDate || ''}, checkOut=${r.endDate || ''}. `;
+      }
+    } catch (e) {
+      logger.warn(`[WEBHOOK] Phone->reservation lookup failed (non-fatal): ${e.message}`);
+    }
+
+    const promptText = `${context}The guest at ${guestPhone} just texted: "${messageText}". Reply warmly and directly. Your reply will be sent back to them via SMS, so keep it concise and do not include sign-offs like [Hotel Name] placeholders.`;
+
+    const result = await agent.processIncomingMessage({
+      source: 'whistle',
+      sessionKey: `sms:${digits}`, // 30-min rolling thread memory per phone
+      text: promptText
+    });
+
+    if (result && result.agent_response) {
+      const send = await messaging.send(guestPhone, result.agent_response);
+      if (send.success) {
+        logger.action('Guest SMS', `Replied to ${guestPhone} (${messageText.substring(0, 40)}...)`, 'ok');
+      } else {
+        logger.action('Guest SMS', `Reply to ${guestPhone} failed: ${send.error}`, 'error');
+      }
+    }
+
   } catch (err) {
     logger.error(`Whistle Webhook processing error: ${err.message}`);
   }
@@ -468,8 +495,26 @@ function validateStartupConfig() {
       name: 'SMTP (Night Audit email dispatch)',
       required: ['SMTP_USER', 'SMTP_PASS'],
       optional: ['REPORT_EMAILS']
+    },
+    {
+      name: 'Messaging (Guest auto-replies)',
+      // MESSAGING_PROVIDER=none is a valid dev choice — don't flag it as missing.
+      required: [],
+      optional: ['MESSAGING_PROVIDER', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM', 'WHISTLE_API_KEY', 'WHISTLE_API_BASE']
     }
   ];
+
+  const messagingProvider = (process.env.MESSAGING_PROVIDER || 'none').toLowerCase();
+  if (messagingProvider === 'twilio') {
+    const missing = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM'].filter(k => !process.env[k]);
+    if (missing.length) logger.warn(`[CONFIG] MESSAGING_PROVIDER=twilio but missing: ${missing.join(', ')} — outbound texts will fail.`);
+    else logger.info('[CONFIG] Messaging provider: Twilio (OK).');
+  } else if (messagingProvider === 'whistle') {
+    if (!process.env.WHISTLE_API_KEY) logger.warn('[CONFIG] MESSAGING_PROVIDER=whistle but WHISTLE_API_KEY is missing — outbound texts will fail.');
+    else logger.info('[CONFIG] Messaging provider: Whistle (OK).');
+  } else {
+    logger.info('[CONFIG] Messaging provider: none (dry-run — agent replies logged but not sent).');
+  }
 
   let allOk = true;
   for (const g of groups) {

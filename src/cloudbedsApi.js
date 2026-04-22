@@ -413,6 +413,47 @@ class CloudbedsAPI {
     }
   }
 
+  /**
+   * Resolve a phone number to the guest's most-relevant active reservation.
+   * Scans a past-week / next-60-day window and filters by last-N-digit match
+   * so international prefixes, formatting, and partial-match variations all work.
+   * Returns in_house reservations first, then confirmed/arriving, then any.
+   */
+  async getReservationsByPhone(phone, { lookbackDays = 7, lookaheadDays = 60 } = {}) {
+    logger.info(`[API CALL] getReservationsByPhone: ${phone}`);
+    const digits = String(phone).replace(/[^0-9]/g, '');
+    if (!digits) return { success: false, data: [] };
+
+    if (this._isMock()) {
+      if (digits.endsWith('9988')) {
+        return this._mockReturn({ success: true, data: [{
+          reservationID: "JD10029384", status: "checked_in", guestName: "John Doe",
+          startDate: "2026-04-10", endDate: "2026-04-12"
+        }]});
+      }
+      return this._mockReturn({ success: true, data: [] });
+    }
+
+    const past   = new Date(Date.now() - lookbackDays * 86400000).toISOString().split('T')[0];
+    const future = new Date(Date.now() + lookaheadDays * 86400000).toISOString().split('T')[0];
+    const list = await this.getReservations(past, future);
+    if (!list.success || !Array.isArray(list.data)) return { success: false, data: [] };
+
+    const matches = list.data.filter(r => {
+      if (!r.guestList) return false;
+      const guests = Object.values(r.guestList);
+      return guests.some(g => {
+        const gp = String(g.guestCellPhone || g.guestPhone || '').replace(/[^0-9]/g, '');
+        if (!gp) return false;
+        return gp === digits || gp.endsWith(digits.slice(-10)) || digits.endsWith(gp.slice(-10));
+      });
+    });
+
+    const rank = s => (s === 'checked_in' ? 0 : s === 'confirmed' ? 1 : 2);
+    matches.sort((a, b) => rank(a.status) - rank(b.status));
+    return { success: true, data: matches };
+  }
+
   async getForecast(daysForward = 14) {
     logger.info(`[API CALL] GET /getForecast | +${daysForward} days`);
     if (this._isMock()) {
