@@ -24,10 +24,36 @@ class PaymentTerminal {
       // 1. Login
       logger.info(`[STRIPE TERMINAL] Logging into Cloudbeds...`);
       await page.goto(`https://${this.host}/login`, { waitUntil: 'domcontentloaded' });
-      await page.fill('input[name="user_email"]', this.email);
-      await page.fill('input[name="user_password"]', this.password);
-      await page.click('button[type="submit"]');
-      await page.waitForURL(`https://${this.host}/connect/*`, { timeout: 15000 });
+      
+      // Handle either the old login form or the new Okta SSO login form
+      await page.waitForSelector('input[name="email"], input[name="user_email"]', { timeout: 15000 });
+      const newEmailInput = await page.$('input[name="email"]');
+      
+      if (newEmailInput) {
+          // New Okta Flow
+          await page.fill('input[name="email"]', this.email);
+          await page.click('button[type="submit"]');
+          
+          await page.waitForURL('**/authorize**', { timeout: 15000 }).catch(() => {});
+          await page.waitForTimeout(2000);
+          
+          // Sometimes Okta asks to confirm the identifier first
+          const idInput = await page.$('input[name="identifier"]');
+          if (idInput) {
+              await page.click('input[type="submit"], button[type="submit"]');
+              await page.waitForTimeout(2000);
+          }
+          
+          await page.fill('input[name="credentials.passcode"]', this.password);
+          await page.click('input[type="submit"], button[type="submit"]');
+      } else {
+          // Legacy flow
+          await page.fill('input[name="user_email"]', this.email);
+          await page.fill('input[name="user_password"]', this.password);
+          await page.click('button[type="submit"]');
+      }
+
+      await page.waitForURL(`https://${this.host}/connect/*`, { timeout: 15000 }).catch(() => logger.warn('[STRIPE TERMINAL] Login redirect took too long, proceeding anyway...'));
 
       // 2. Navigate straight to the reservation folio
       logger.info(`[STRIPE TERMINAL] Navigating to reservation ${reservationId}...`);
