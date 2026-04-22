@@ -3,7 +3,7 @@ const { logger } = require('./logger');
 
 class PaymentTerminal {
   constructor() {
-    this.host = process.env.CLOUDBEDS_HOST || 'us2.cloudbeds.com';
+    this.host = process.env.CLOUDBEDS_UI_HOST || 'hotels.cloudbeds.com';
     this.propertyId = process.env.CLOUDBEDS_PROPERTY_ID;
     this.email = process.env.CLOUDBEDS_EMAIL;
     this.password = process.env.CLOUDBEDS_PASSWORD;
