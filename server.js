@@ -262,7 +262,7 @@ app.post('/api/kiosk/checkin', async (req, res) => {
               guestFirstName: guestUpdates.firstName || undefined,
               guestLastName: guestUpdates.lastName || undefined,
               guestEmail: guestUpdates.email || undefined,
-              guestCellPhone: guestUpdates.phone || undefined,
+              guestPhone: guestUpdates.phone || undefined,
               ...addressFields
             });
           } else {

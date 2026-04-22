@@ -498,6 +498,14 @@
                     showToast("You must agree to the Terms & Conditions.");
                     return;
                 }
+                
+                const emailVal = document.getElementById('regEmail').value.trim();
+                const phoneVal = document.getElementById('regPhone').value.trim();
+                if (!emailVal || !phoneVal) {
+                    showToast("Email and Phone Number are required.");
+                    return;
+                }
+
                 if (isCanvasEmpty(document.getElementById('sigCanvas'))) {
                     showToast("Please provide your signature.");
                     return;
