@@ -3,12 +3,43 @@ const { CloudbedsAPI } = require('./cloudbedsApi');
 const { PaymentTerminal } = require('./paymentTerminal');
 const { logger } = require('./logger');
 
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30-minute rolling window for guest SMS threads
+
 class AutonomyEngine {
   constructor() {
     // Initialize the Gemini client
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     this.api = new CloudbedsAPI();
     this.paymentTerminal = new PaymentTerminal();
+    // sessionKey -> { chat, lastSeen } — keeps Gemini chats warm so multi-turn
+    // guest conversations (e.g. texts) retain memory across webhook calls.
+    this.sessions = new Map();
+  }
+
+  _pruneSessions() {
+    const cutoff = Date.now() - SESSION_TTL_MS;
+    for (const [k, v] of this.sessions) {
+      if (v.lastSeen < cutoff) this.sessions.delete(k);
+    }
+  }
+
+  _getOrCreateChat(sessionKey) {
+    this._pruneSessions();
+    if (sessionKey && this.sessions.has(sessionKey)) {
+      const s = this.sessions.get(sessionKey);
+      s.lastSeen = Date.now();
+      return s.chat;
+    }
+    const chat = this.ai.chats.create({
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
+      config: {
+        systemInstruction: this.getSystemInstruction(),
+        tools: this.getTools(),
+        temperature: 0.1
+      }
+    });
+    if (sessionKey) this.sessions.set(sessionKey, { chat, lastSeen: Date.now() });
+    return chat;
   }
 
   _resolveGuestEmail(reservationData) {
@@ -217,20 +248,13 @@ STANDARD WORKFLOW:
     logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
 
     try {
-      const chat = this.ai.chats.create({
-        model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
-        config: {
-          systemInstruction: this.getSystemInstruction(),
-          tools: this.getTools(),
-          temperature: 0.1
-        }
-      });
+      const chat = this._getOrCreateChat(messagePayload.sessionKey);
 
       // Send the initial user message with an explicit source tag so the model
       // can tell guest-facing chat (kiosk/whistle) from admin batch work (cron/system).
       const sourceTag = messagePayload.source ? `[source=${messagePayload.source}] ` : '';
       let response = await chat.sendMessage({ message: `${sourceTag}${messagePayload.text}` });
-      logger.info(`[AUTONOMY ENGINE] Thinking...`);
+      logger.info(`[AUTONOMY ENGINE] Thinking...${messagePayload.sessionKey ? ` (session=${messagePayload.sessionKey})` : ''}`);
 
       // Handle function calls loop
       while (response.functionCalls && response.functionCalls.length > 0) {
