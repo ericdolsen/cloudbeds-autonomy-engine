@@ -1,5 +1,6 @@
 const { GoogleGenAI, Type } = require('@google/genai');
 const { CloudbedsAPI } = require('./cloudbedsApi');
+const { PaymentTerminal } = require('./paymentTerminal');
 const { logger } = require('./logger');
 
 class AutonomyEngine {
@@ -7,6 +8,7 @@ class AutonomyEngine {
     // Initialize the Gemini client
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     this.api = new CloudbedsAPI();
+    this.paymentTerminal = new PaymentTerminal();
   }
 
   _resolveGuestEmail(reservationData) {
@@ -242,8 +244,8 @@ STANDARD WORKFLOW:
           }
           else if (name === 'chargePhysicalTerminal') {
             logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
-            // This will block/wait for the Stripe API terminal callback
-            apiResult = { success: true, message: `Payment of $${args.amount} successfully captured via physical chip inserted at ${args.terminalName}.` };
+            // This natively executes the Playwright script to click "Charge" on the terminal
+            apiResult = await this.paymentTerminal.chargePhysicalTerminal(args.reservationId, args.amount, args.terminalName);
           }
           else if (name === 'processCheckout') {
             logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);

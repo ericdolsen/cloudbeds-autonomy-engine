@@ -257,8 +257,17 @@ app.post('/api/kiosk/checkin', async (req, res) => {
         if (guestUpdates.signature) {
           await agent.engine.api.postReservationDocument(reservationId, guestUpdates.signature, "Registration_Signature.png");
         }
+
+        if (guestUpdates.hasPet) {
+          logger.info(`[KIOSK] Guest indicated they have a pet. Posting $30 Pet Fee to ${reservationId}...`);
+          try {
+            await agent.engine.api.postCustomItem(reservationId, 30, "Pet Fee (Waiver Signed)", { appItemID: "PET_FEE" });
+          } catch (petErr) {
+            logger.warn(`[KIOSK] Failed to post Pet Fee for ${reservationId}: ${petErr.message}`);
+          }
+        }
       } catch (e) {
-        logger.error(`[KIOSK] Failed to sync registration to Cloudbeds (non-fatal): ${e.message}`);
+        logger.warn(`[KIOSK] Non-fatal error during pre-checkin profile sync: ${e.message}`);
       }
     }
 

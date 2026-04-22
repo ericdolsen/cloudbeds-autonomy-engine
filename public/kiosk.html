@@ -269,6 +269,24 @@
                 </div>
                 <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.2rem; padding: 15px;">
                 
+                <div style="margin-top: 15px;">
+                    <p style="font-size: 1.1rem; margin-bottom: 10px;">Are you traveling with a pet? ($30 pet fee applies, service animals excluded)</p>
+                    <div style="display: flex; gap: 15px;">
+                        <button type="button" id="petYesBtn" onclick="togglePetWaiver(true)" class="kiosk-input" style="flex: 1; font-size: 1.2rem; cursor: pointer; transition: all 0.3s;">Yes</button>
+                        <button type="button" id="petNoBtn" onclick="togglePetWaiver(false)" class="kiosk-input" style="flex: 1; font-size: 1.2rem; cursor: pointer; border-color: #38bdf8; background: rgba(56, 189, 248, 0.2); transition: all 0.3s;">No</button>
+                    </div>
+                </div>
+
+                <div id="petWaiverSection" style="display: none; margin-top: 15px; background: rgba(244, 63, 94, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(244, 63, 94, 0.3);">
+                    <h4 style="color: #f43f5e; margin-bottom: 5px;">Pet Waiver & Fee Agreement</h4>
+                    <p style="font-size: 0.9rem; color: #e2e8f0; line-height: 1.4;">Gateway Park Hotel & Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.</p>
+                </div>
+                
+                <div style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-size: 0.85rem; color: #cbd5e1; margin-top: 15px; border: 1px solid var(--glass-border); line-height: 1.4;">
+                    <p><strong>Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel & Suites is not responsible for any fees incurred by the guest when using a debit card.</p>
+                    <p style="margin-top: 8px;"><strong>Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel & Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.</p>
+                </div>
+                
                 <div style="margin-top: 10px;">
                     <p style="font-size: 1.1rem; margin-bottom: 10px;">Please sign below:</p>
                     <canvas id="sigCanvas" width="760" height="150" style="background: white; border-radius: 10px; cursor: crosshair; touch-action: none;"></canvas>
@@ -463,7 +481,8 @@
                     email: document.getElementById('regEmail').value.trim(),
                     phone: document.getElementById('regPhone').value.trim(),
                     address: document.getElementById('regAddress').value.trim(),
-                    signature: sigBase64
+                    signature: sigBase64,
+                    hasPet: currentPetStatus
                 };
 
                 proceedWithValidatedId(verifiedReservationId, mode, updates);
@@ -483,7 +502,30 @@
             document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';
             
             document.getElementById('submitActionBtn').innerText = "Accept & Pay";
+            togglePetWaiver(false); // default to no pet
             initSignaturePad();
+        }
+        
+        let currentPetStatus = false;
+        function togglePetWaiver(hasPet) {
+            currentPetStatus = hasPet;
+            const yesBtn = document.getElementById('petYesBtn');
+            const noBtn = document.getElementById('petNoBtn');
+            const waiverSection = document.getElementById('petWaiverSection');
+            
+            if (hasPet) {
+                yesBtn.style.borderColor = '#f43f5e';
+                yesBtn.style.background = 'rgba(244, 63, 94, 0.2)';
+                noBtn.style.borderColor = 'var(--glass-border)';
+                noBtn.style.background = 'rgba(15, 23, 42, 0.6)';
+                waiverSection.style.display = 'block';
+            } else {
+                noBtn.style.borderColor = '#38bdf8';
+                noBtn.style.background = 'rgba(56, 189, 248, 0.2)';
+                yesBtn.style.borderColor = 'var(--glass-border)';
+                yesBtn.style.background = 'rgba(15, 23, 42, 0.6)';
+                waiverSection.style.display = 'none';
+            }
         }
         
         let ctx, isDrawing = false;
