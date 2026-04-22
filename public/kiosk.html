@@ -274,7 +274,10 @@
                     <button type="button" onclick="hideForm()" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; font-weight: 500;">Start Over</button>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 15px;">
-                    <input type="text" id="regName" class="kiosk-input" placeholder="Full Name" style="font-size: 1.2rem; padding: 15px; width: 100%;">
+                    <div style="display: flex; gap: 15px; width: 100%;">
+                        <input type="text" id="regFirstName" class="kiosk-input" placeholder="First Name" style="font-size: 1.2rem; padding: 15px; flex: 1;">
+                        <input type="text" id="regLastName" class="kiosk-input" placeholder="Last Name" style="font-size: 1.2rem; padding: 15px; flex: 1;">
+                    </div>
                     <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
                     <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.2rem; padding: 15px; width: 100%;">
                 </div>
@@ -502,7 +505,8 @@
                 
                 const sigBase64 = document.getElementById('sigCanvas').toDataURL('image/png');
                 const updates = {
-                    name: document.getElementById('regName').value.trim(),
+                    firstName: document.getElementById('regFirstName').value.trim(),
+                    lastName: document.getElementById('regLastName').value.trim(),
                     email: document.getElementById('regEmail').value.trim(),
                     phone: document.getElementById('regPhone').value.trim(),
                     address: document.getElementById('regAddress').value.trim(),
@@ -525,7 +529,8 @@
             document.getElementById('verifyPrompt').innerText = "Please confirm your details and sign below.";
             document.getElementById('step3Row').style.display = 'flex';
             
-            document.getElementById('regName').value = guestData.name || guestData.guestName || '';
+            document.getElementById('regFirstName').value = guestData.firstName || '';
+            document.getElementById('regLastName').value = guestData.lastName || '';
             document.getElementById('regEmail').value = guestData.email || '';
             document.getElementById('regPhone').value = guestData.phone || '';
             document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';

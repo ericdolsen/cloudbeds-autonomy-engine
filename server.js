@@ -259,6 +259,8 @@ app.post('/api/kiosk/checkin', async (req, res) => {
           if (guestID) {
             const addressFields = parseAddressBlob(guestUpdates.address);
             await agent.engine.api.putGuest(guestID, {
+              guestFirstName: guestUpdates.firstName || undefined,
+              guestLastName: guestUpdates.lastName || undefined,
               guestEmail: guestUpdates.email || undefined,
               guestCellPhone: guestUpdates.phone || undefined,
               ...addressFields
@@ -351,6 +353,7 @@ function extractGuestContact(data) {
   let phone = '';
   let email = (data.guestEmail || '').toString();
   let address1 = '', city = '', state = '', zip = '', country = '';
+  let firstName = '', lastName = '';
 
   if (data.guestList) {
     const guests = Object.values(data.guestList);
@@ -363,16 +366,22 @@ function extractGuestContact(data) {
       state = mg.guestState || '';
       zip = mg.guestZip || '';
       country = mg.guestCountry || '';
+      firstName = mg.guestFirstName || '';
+      lastName = mg.guestLastName || '';
     }
   }
 
   // Fallbacks for mock / legacy payloads that carry phone/email at the top level.
   if (!phone && data.phone) phone = String(data.phone).replace(/[^0-9]/g, '');
   if (!email && data.email) email = data.email;
+  if (!firstName) firstName = data.guestFirstName || data.firstName || '';
+  if (!lastName) lastName = data.guestLastName || data.lastName || '';
 
   return {
     phone,
     email,
+    firstName,
+    lastName,
     address: [address1, city, state, zip].filter(Boolean).join(', '),
     city, state, zip, country
   };
@@ -436,9 +445,11 @@ app.post('/api/kiosk/verify', async (req, res) => {
   if (result.success && result.data) {
     const contact = extractGuestContact(result.data);
     const guestData = {
+      firstName: contact.firstName,
+      lastName: contact.lastName,
       email: contact.email.toLowerCase(),
       phone: contact.phone,
-      address: [contact.address1, contact.city, contact.state, contact.zip].filter(Boolean).join(', '),
+      address: contact.address,
       city: contact.city,
       state: contact.state,
       zip: contact.zip
