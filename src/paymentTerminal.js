@@ -1,4 +1,5 @@
 const { chromium } = require('playwright');
+const path = require('path');
 const { logger } = require('./logger');
 
 class PaymentTerminal {
@@ -15,17 +16,19 @@ class PaymentTerminal {
     }
 
     logger.info(`[STRIPE TERMINAL] Firing up headless browser for WisePOS E...`);
-    let browser;
+    let context;
     try {
-      browser = await chromium.launch({ headless: true });
-      const context = await browser.newContext();
+      const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
+      context = await chromium.launchPersistentContext(userDataDir, { headless: true });
       const page = await context.newPage();
-
-      // 1. Login
-      logger.info(`[STRIPE TERMINAL] Logging into Cloudbeds...`);
-      await page.goto(`https://${this.host}/login`, { waitUntil: 'domcontentloaded' });
       
-      // Handle either the old login form or the new Okta SSO login form
+      // 1. Navigate straight to the reservation folio to check if we're already logged in
+      logger.info(`[STRIPE TERMINAL] Checking session status / logging into Cloudbeds...`);
+      await page.goto(`https://${this.host}/connect/${this.propertyId}#/reservations/${reservationId}`, { waitUntil: 'domcontentloaded' });
+      
+      // Check if we got redirected to login
+      if (page.url().includes('/login') || page.url().includes('signin.cloudbeds.com')) {
+          // Handle either the old login form or the new Okta SSO login form
       await page.waitForSelector('input[name="email"], input[name="user_email"]', { timeout: 15000 });
       const newEmailInput = await page.$('input[name="email"]');
       
@@ -53,12 +56,10 @@ class PaymentTerminal {
           await page.click('button[type="submit"]');
       }
 
+      // Wait for the connect dashboard to be loaded
       await page.waitForURL(`https://${this.host}/connect/*`, { timeout: 15000 }).catch(() => logger.warn('[STRIPE TERMINAL] Login redirect took too long, proceeding anyway...'));
+      } // CLOSE THE IF BLOCK HERE
 
-      // 2. Navigate straight to the reservation folio
-      logger.info(`[STRIPE TERMINAL] Navigating to reservation ${reservationId}...`);
-      await page.goto(`https://${this.host}/connect/${this.propertyId}#/reservations/${reservationId}`, { waitUntil: 'networkidle' });
-      
       // 3. Click "Add Payment"
       logger.info(`[STRIPE TERMINAL] Triggering 'Add Payment'...`);
       await page.click('button:has-text("Add Payment")');
@@ -80,11 +81,13 @@ class PaymentTerminal {
       await page.waitForSelector('text="Payment successful"', { timeout: 60000 });
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
-      await browser.close();
-      return { success: true, message: `Payment of $${amount} successfully captured via physical chip inserted at ${terminalName}.` };
+      await page.waitForTimeout(5000);
+      await context.close();
+      
+      return { success: true, message: 'Terminal charge requested' };
     } catch (e) {
       logger.error(`[STRIPE TERMINAL] Failed to process physical charge: ${e.message}`);
-      if (browser) await browser.close();
+      if (context) await context.close();
       throw e;
     }
   }
