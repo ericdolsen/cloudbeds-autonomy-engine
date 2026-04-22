@@ -280,14 +280,45 @@ STANDARD WORKFLOW:
                 logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
                 apiResult = { success: true, message: "Invoice skipped due to Channel Collect policy." };
               } else {
-                const invoice = await this.api.getReservationInvoiceInformation(args.reservationId);
-                const documentID = invoice && invoice.data ? invoice.data.documentID : null;
                 const guestEmail = this._resolveGuestEmail(resData.data);
-                if (!documentID || !guestEmail) {
-                  apiResult = { success: true, message: `Invoice email skipped (missing ${!documentID ? 'documentID' : 'guest email'}).` };
+                if (!guestEmail) {
+                  apiResult = { success: true, message: `Invoice email skipped (missing guest email).` };
+                } else if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+                  apiResult = { success: false, error: "SMTP credentials not configured in .env" };
                 } else {
-                  const emailRes = await this.api.emailFiscalDocument(documentID, guestEmail);
-                  apiResult = { success: true, message: `Invoice emailed to ${guestEmail}. (Status: ${emailRes.success})` };
+                  try {
+                    const { generateFolioPdf } = require('./printHandler');
+                    const pdfBuffer = await generateFolioPdf(args.reservationId, resData.data);
+                    
+                    const nodemailer = require('nodemailer');
+                    const transporter = nodemailer.createTransport({
+                      service: 'gmail',
+                      auth: {
+                        user: process.env.SMTP_USER,
+                        pass: process.env.SMTP_PASS
+                      }
+                    });
+
+                    const mailOptions = {
+                      from: process.env.SMTP_ALIAS || process.env.SMTP_USER,
+                      replyTo: process.env.SMTP_REPLY_TO || process.env.SMTP_USER,
+                      to: guestEmail,
+                      subject: `Your Receipt - ${args.reservationId} - Gateway Park Hotel`,
+                      text: `Thank you for staying with us! Please find your final receipt attached.`,
+                      attachments: [{
+                        filename: `Receipt_${args.reservationId}.pdf`,
+                        content: pdfBuffer,
+                        contentType: 'application/pdf'
+                      }]
+                    };
+
+                    await transporter.sendMail(mailOptions);
+                    logger.info(`[INVOICE EMAIL] Sent local folio PDF to ${guestEmail}`);
+                    apiResult = { success: true, message: `Invoice generated and emailed locally to ${guestEmail}.` };
+                  } catch (err) {
+                    logger.error(`[INVOICE EMAIL] Failed to send email: ${err.message}`);
+                    apiResult = { success: false, error: `Failed to email invoice: ${err.message}` };
+                  }
                 }
               }
             } else {
