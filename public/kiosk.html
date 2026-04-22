@@ -59,19 +59,18 @@
 
         /* Main Container */
         .kiosk-container {
-            width: 90%;
-            max-width: 1200px;
-            height: 85vh;
+            width: 100vw;
+            height: 100vh;
             background: var(--glass-bg);
             backdrop-filter: blur(24px);
             -webkit-backdrop-filter: blur(24px);
-            border: 1px solid var(--glass-border);
-            border-radius: 40px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
             z-index: 10;
             display: flex;
             flex-direction: column;
-            padding: 60px;
+            padding: 40px;
             position: relative;
             overflow: hidden;
             transition: all 0.5s ease;
@@ -269,11 +268,12 @@
             <!-- STEP 3: REGISTRATION CARD -->
             <div id="step3Row" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px;">
                 <h3 style="margin-bottom: 5px; color: #38bdf8;">Guest Registration</h3>
-                <div style="display: flex; gap: 15px;">
-                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px;">
-                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.2rem; padding: 15px;">
+                <div style="display: flex; flex-direction: column; gap: 15px;">
+                    <input type="text" id="regName" class="kiosk-input" placeholder="Full Name" style="font-size: 1.2rem; padding: 15px; width: 100%;">
+                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
+                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.2rem; padding: 15px; width: 100%;">
                 </div>
-                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.2rem; padding: 15px;">
+                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
                 
                 <div style="margin-top: 15px;">
                     <p style="font-size: 1.1rem; margin-bottom: 10px;">Are you traveling with a pet? ($30 pet fee applies, service animals excluded)</p>
@@ -383,6 +383,7 @@
             document.getElementById('queryInput').value = '';
             document.getElementById('pinInput').value = '';
             document.getElementById('qrWidget').style.display = 'none';
+            document.querySelector('.footer').style.display = 'none';
 
             const btn = document.getElementById('submitActionBtn');
             if (mode === 'print') btn.innerText = 'Find Reservation';
@@ -393,6 +394,9 @@
             document.getElementById('kioskForm').style.display = 'none';
             document.getElementById('mainActions').style.display = 'flex';
             document.getElementById('qrWidget').style.display = 'flex';
+            document.querySelector('.footer').style.display = 'block';
+            document.querySelector('.clock-widget').style.display = 'flex';
+            document.querySelector('.header').style.display = 'block';
         }
 
         function showToast(message) {
@@ -493,6 +497,7 @@
                 
                 const sigBase64 = document.getElementById('sigCanvas').toDataURL('image/png');
                 const updates = {
+                    name: document.getElementById('regName').value.trim(),
                     email: document.getElementById('regEmail').value.trim(),
                     phone: document.getElementById('regPhone').value.trim(),
                     address: document.getElementById('regAddress').value.trim(),
@@ -508,10 +513,14 @@
             currentStep = 3;
             verifiedReservationId = resId;
             
+            document.querySelector('.clock-widget').style.display = 'none';
+            document.querySelector('.header').style.display = 'none';
+
             document.getElementById('step2Row').style.display = 'none';
             document.getElementById('verifyPrompt').innerText = "Please confirm your details and sign below.";
             document.getElementById('step3Row').style.display = 'flex';
             
+            document.getElementById('regName').value = guestData.name || guestData.guestName || '';
             document.getElementById('regEmail').value = guestData.email || '';
             document.getElementById('regPhone').value = guestData.phone || '';
             document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';
