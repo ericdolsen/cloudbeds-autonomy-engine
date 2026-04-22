@@ -539,7 +539,14 @@
             
             document.getElementById('regFirstName').value = guestData.firstName || '';
             document.getElementById('regLastName').value = guestData.lastName || '';
-            document.getElementById('regEmail').value = guestData.email || '';
+            
+            let displayEmail = guestData.email || '';
+            if (displayEmail.toLowerCase().endsWith('@m.expediapartnercentral.com') || 
+                displayEmail.toLowerCase().endsWith('@guest.booking.com')) {
+                displayEmail = ''; // Force guest to enter a real email
+            }
+            document.getElementById('regEmail').value = displayEmail;
+            
             document.getElementById('regPhone').value = guestData.phone || '';
             document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';
             
