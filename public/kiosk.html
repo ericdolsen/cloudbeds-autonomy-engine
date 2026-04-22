@@ -424,32 +424,38 @@
                     });
                     const data = await res.json();
                     setLoading(false);
-                    if (data.success && data.requiresVerification) {
-                        verifiedReservationId = data.reservationId;
-                        currentStep = 2;
-                        document.getElementById('step1Row').style.display = 'none';
-                        document.getElementById('step2Row').style.display = 'flex';
-                        document.getElementById('verifyPrompt').style.display = 'block';
+                      if (data.success && data.requiresVerification) {
+                          verifiedReservationId = data.reservationId;
+                          currentStep = 2;
+                          document.getElementById('step1Row').style.display = 'none';
+                          document.getElementById('step2Row').style.display = 'flex';
+                          document.getElementById('verifyPrompt').style.display = 'block';
 
-                        const pinInput = document.getElementById('pinInput');
-                        if (data.verifyType === 'email') {
-                            document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
-                            pinInput.placeholder = "Enter your email address";
-                            pinInput.type = "email";
-                            pinInput.inputMode = "email";
-                            pinInput.maxLength = 100;
-                        } else {
-                            document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
-                            pinInput.placeholder = "Enter last 4 digits of phone";
-                            pinInput.type = "tel";
-                            pinInput.inputMode = "numeric";
-                            pinInput.maxLength = 4;
-                        }
+                          const pinInput = document.getElementById('pinInput');
+                          if (data.verifyType === 'email') {
+                              document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
+                              pinInput.placeholder = "Enter your email address";
+                              pinInput.type = "email";
+                              pinInput.inputMode = "email";
+                              pinInput.maxLength = 100;
+                          } else {
+                              document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
+                              pinInput.placeholder = "Enter last 4 digits of phone";
+                              pinInput.type = "tel";
+                              pinInput.inputMode = "numeric";
+                              pinInput.maxLength = 4;
+                          }
 
-                        document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
-                    } else {
-                        showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
-                    }
+                          document.getElementById('submitActionBtn').innerText = (mode === 'print') ? 'Print Receipt' : ((mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out');
+                      } else if (data.success && !data.requiresVerification) {
+                          if (mode === 'checkin') {
+                              showRegistrationStep(data.guestData || {}, data.reservationId);
+                          } else {
+                              proceedWithValidatedId(data.reservationId, mode);
+                          }
+                      } else {
+                          showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
+                      }
                 } catch(e) {
                     setLoading(false);
                     showToast("Network Error connecting to the desk.");
