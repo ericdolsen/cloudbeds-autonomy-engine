@@ -1,18 +1,13 @@
 const express = require('express');
-const { Server } = require('socket.io');
 const http = require('http');
 const path = require('path');
 const cron = require('node-cron');
+const { Server } = require('socket.io');
 const { logger } = require('./src/logger');
 const { printPdfBuffer } = require('./src/printHandler');
-const http = require('http');
-const { Server } = require('socket.io');
-const cron = require('node-cron');
-const path = require('path');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
 const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
-const { logger } = require('./src/logger');
 
 require('dotenv').config();
 
