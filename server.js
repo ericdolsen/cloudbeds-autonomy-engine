@@ -20,6 +20,17 @@ const port = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '5mb' })); // large enough for signature PNGs from kiosk
 
+// Add CORS headers so the Chrome Extension can make requests
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 // Serve the Kiosk UI on the root directory
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
