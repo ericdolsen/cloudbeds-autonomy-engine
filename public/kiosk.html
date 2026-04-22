@@ -72,7 +72,8 @@
             flex-direction: column;
             padding: 40px;
             position: relative;
-            overflow: hidden;
+            overflow-y: auto;
+            overflow-x: hidden;
             transition: all 0.5s ease;
         }
 
@@ -132,6 +133,7 @@
             flex-direction: column;
             align-items: center;
             gap: 20px;
+            width: 100%;
         }
         
         .form-row {
@@ -267,7 +269,10 @@
             
             <!-- STEP 3: REGISTRATION CARD -->
             <div id="step3Row" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px;">
-                <h3 style="margin-bottom: 5px; color: #38bdf8;">Guest Registration</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <h3 style="color: #38bdf8; margin: 0;">Guest Registration</h3>
+                    <button type="button" onclick="hideForm()" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; font-weight: 500;">Start Over</button>
+                </div>
                 <div style="display: flex; flex-direction: column; gap: 15px;">
                     <input type="text" id="regName" class="kiosk-input" placeholder="Full Name" style="font-size: 1.2rem; padding: 15px; width: 100%;">
                     <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
