@@ -9,6 +9,18 @@ class AutonomyEngine {
     this.api = new CloudbedsAPI();
   }
 
+  _resolveGuestEmail(reservationData) {
+    if (!reservationData) return null;
+    if (reservationData.email) return reservationData.email;
+    if (reservationData.guestEmail) return reservationData.guestEmail;
+    if (reservationData.guestList) {
+      const guests = Object.values(reservationData.guestList);
+      const mg = guests.find(g => g.isMainGuest) || guests[0];
+      if (mg && mg.guestEmail) return mg.guestEmail;
+    }
+    return null;
+  }
+
   getHotelPolicies() {
     return {
       hotelName: "Independent Hotel",
@@ -67,27 +79,40 @@ class AutonomyEngine {
         },
         {
           name: "postFolioAdjustment",
-          description: "Adds a charge or credit to the guest's folio (e.g., room upgrade fee).",
+          description: "Adds a line-item charge to the guest's folio (e.g., room upgrade fee, parking, pet fee).",
           parameters: {
             type: Type.OBJECT,
             properties: {
               reservationId: { type: Type.STRING },
               amount: { type: Type.NUMBER, description: "Amount in USD" },
-              description: { type: Type.STRING, description: "Reason for the adjustment" }
+              description: { type: Type.STRING, description: "Reason for the charge" }
             },
             required: ["reservationId", "amount", "description"]
           }
         },
         {
           name: "postPayment",
-          description: "Charges the guest's credit card currently on file for a specified amount.",
+          description: "Records a payment against the reservation folio using the guest's card on file. Do NOT use for in-person kiosk payments - use chargePhysicalTerminal instead.",
           parameters: {
             type: Type.OBJECT,
             properties: {
               reservationId: { type: Type.STRING },
-              amount: { type: Type.NUMBER, description: "Amount to charge in USD" }
+              amount: { type: Type.NUMBER, description: "Amount to charge in USD" },
+              type: { type: Type.STRING, description: "One of: credit, debit, cash, check. Defaults to credit." },
+              description: { type: Type.STRING, description: "Description / memo for the payment line." }
             },
             required: ["reservationId", "amount"]
+          }
+        },
+        {
+          name: "checkInReservation",
+          description: "Transitions a confirmed reservation into 'checked_in' status via Cloudbeds. Use this once any outstanding balance has been collected.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING }
+            },
+            required: ["reservationId"]
           }
         },
         {
@@ -150,6 +175,9 @@ ${JSON.stringify(policies, null, 2)}
 KIOSK & PAYMENTS PROTOCOL:
 If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' instead of 'postPayment'. We rely on Card-Present chip reads for security and lower fees. Do not use the card on file for kiosk visitors.
 
+CHECK-IN PROTOCOL:
+To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so resolve any outstanding balance first (via chargePhysicalTerminal at the kiosk, or postPayment remotely) before calling 'checkInReservation'.
+
 STANDARD WORKFLOW:
 1. Identify intent.
 2. Call required tools (like 'getReservation').
@@ -186,8 +214,9 @@ STANDARD WORKFLOW:
           if (name === 'getReservation') apiResult = await this.api.getReservation(args.query);
           else if (name === 'getUnassignedRooms') apiResult = await this.api.getUnassignedRooms(args.startDate, args.endDate);
           else if (name === 'updateReservation') apiResult = await this.api.updateReservation(args.reservationId, args.updates);
-          else if (name === 'postFolioAdjustment') apiResult = await this.api.postFolioAdjustment(args.reservationId, args.amount, args.description);
-          else if (name === 'postPayment') apiResult = await this.api.postPayment(args.reservationId, args.amount);
+          else if (name === 'postFolioAdjustment') apiResult = await this.api.postCustomItem(args.reservationId, args.amount, args.description);
+          else if (name === 'postPayment') apiResult = await this.api.postPayment(args.reservationId, args.amount, { type: args.type, description: args.description });
+          else if (name === 'checkInReservation') apiResult = await this.api.checkInReservation(args.reservationId);
           else if (name === 'alertFrontDesk') {
             logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
             // Hook for future integration (e.g. Twilio API, Siren, UI flash)
@@ -200,20 +229,26 @@ STANDARD WORKFLOW:
           }
           else if (name === 'processCheckout') {
             logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
-            const resData = await this.api.getReservation(args.reservationId);
+            const resData = await this.api.getReservationById(args.reservationId);
             if (resData.success && resData.data) {
-              // Update status
-              const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
+              const updateRes = await this.api.updateReservation(args.reservationId, { reservationStatus: 'checked_out' });
 
-              // Security Guard - DO NOT SEND INVOICE TO CHANNEL COLLECT BOOKINGS
-              if (resData.data.paymentType === 'Channel Collect Booking') {
+              if (!updateRes.success) {
+                apiResult = { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };
+              } else if (resData.data.paymentType === 'Channel Collect Booking') {
                 logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
                 apiResult = { success: true, message: "Checkout processed, but invoice skipped due to Channel Collect policy." };
               } else {
-                // In reality, you extract the generated documentID from the reservation
-                const fakeDocId = `DOC_${args.reservationId}_123`;
-                const emailRes = await this.api.emailFiscalDocument(fakeDocId, resData.data.email || 'guest@example.com');
-                apiResult = { success: true, message: `Checkout processed. Invoice sent via email via native fiscal endpoint. (Status: ${emailRes.success})` };
+                // Resolve a real documentID before emailing.
+                const invoice = await this.api.getReservationInvoiceInformation(args.reservationId);
+                const documentID = invoice && invoice.data ? invoice.data.documentID : null;
+                const guestEmail = this._resolveGuestEmail(resData.data);
+                if (!documentID || !guestEmail) {
+                  apiResult = { success: true, message: `Checkout processed. Invoice email skipped (missing ${!documentID ? 'documentID' : 'guest email'}).` };
+                } else {
+                  const emailRes = await this.api.emailFiscalDocument(documentID, guestEmail);
+                  apiResult = { success: true, message: `Checkout processed. Invoice emailed to ${guestEmail}. (Status: ${emailRes.success})` };
+                }
               }
             } else {
               apiResult = { success: false, error: "Could not fetch reservation to process checkout." };

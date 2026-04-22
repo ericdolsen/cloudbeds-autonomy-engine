@@ -306,7 +306,17 @@
     <script>
         // --- CONFIGURATION ---
         // Change this for each individual tablet deployed so the server knows which reader to trigger
-        const TERMINAL_NAME = "Reader 1"; 
+        const TERMINAL_NAME = "Reader 1";
+
+        // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
+        let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
+        fetch('/api/kiosk/config')
+          .then(r => r.json())
+          .then(cfg => { kioskConfig = { ...kioskConfig, ...cfg }; })
+          .catch(() => {});
+
+        // Track the resolved reservation across multi-step identify -> verify -> register flow.
+        let verifiedReservationId = null;
 
         function updateClock() {
             const now = new Date();
@@ -322,12 +332,14 @@
         socket.on('pushToTablet', (data) => {
             if(data.reservationId) {
                 setLoading(true, `Incoming Check-In for Reservation ${data.reservationId}. Redirecting to Guest Portal...`, false);
-                
-                // Allow the user to see the transition message
+
                 setTimeout(() => {
-                    // Redirect tablet directly to the Cloudbeds native Guest Portal checkin form
-                    // Property ID mapped from server env is 10074733072513
-                    window.location.href = `https://hotels.cloudbeds.com/guest_portal/10074733072513/reservation/${data.reservationId}`;
+                    if (!kioskConfig.propertyID) {
+                        showToast("Kiosk is missing property configuration. Please see the front desk.");
+                        setLoading(false);
+                        return;
+                    }
+                    window.location.href = `${kioskConfig.guestPortalBase}/${kioskConfig.propertyID}/reservation/${data.reservationId}`;
                 }, 1500);
             }
         });
@@ -376,45 +388,44 @@
 
             if (currentStep === 1) {
                 if (!query) { showToast("Please enter an ID or Last Name"); return; }
-                
-                // If it's a number OR alphanumeric pattern that looks like an ID, jump straight there
-                // Let's assume lengths under 8 that are all letters are Last Names
-                if (/^[a-zA-Z]+$/.test(query) || query.length > 1) {
-                    setLoading(true, "Searching for reservation...", false);
-                    try {
-                        const res = await fetch('/api/kiosk/identify', {
-                           method: 'POST', headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({ query, mode })
-                        });
-                        const data = await res.json();
-                        setLoading(false);
-                        if (data.success && data.requiresVerification) {
-                            currentStep = 2;
-                            document.getElementById('step1Row').style.display = 'none';
-                            document.getElementById('step2Row').style.display = 'flex';
-                            document.getElementById('verifyPrompt').style.display = 'block';
-                            
-                            const pinInput = document.getElementById('pinInput');
-                            if (data.verifyType === 'email') {
-                                document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
-                                pinInput.placeholder = "Enter your email address";
-                                pinInput.maxLength = 100;
-                            } else {
-                                document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
-                                pinInput.placeholder = "Enter last 4 digits of phone";
-                                pinInput.maxLength = 4;
-                            }
-                            
-                            document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
+
+                setLoading(true, "Searching for reservation...", false);
+                try {
+                    const res = await fetch('/api/kiosk/identify', {
+                       method: 'POST', headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ query, mode })
+                    });
+                    const data = await res.json();
+                    setLoading(false);
+                    if (data.success && data.requiresVerification) {
+                        verifiedReservationId = data.reservationId;
+                        currentStep = 2;
+                        document.getElementById('step1Row').style.display = 'none';
+                        document.getElementById('step2Row').style.display = 'flex';
+                        document.getElementById('verifyPrompt').style.display = 'block';
+
+                        const pinInput = document.getElementById('pinInput');
+                        if (data.verifyType === 'email') {
+                            document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
+                            pinInput.placeholder = "Enter your email address";
+                            pinInput.type = "email";
+                            pinInput.inputMode = "email";
+                            pinInput.maxLength = 100;
                         } else {
-                            showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
+                            document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
+                            pinInput.placeholder = "Enter last 4 digits of phone";
+                            pinInput.type = "tel";
+                            pinInput.inputMode = "numeric";
+                            pinInput.maxLength = 4;
                         }
-                    } catch(e) { 
-                        setLoading(false); 
-                        showToast("Network Error connecting to the desk.");
+
+                        document.getElementById('submitActionBtn').innerText = (mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out';
+                    } else {
+                        showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
                     }
-                } else {
-                    proceedWithValidatedId(query, mode);
+                } catch(e) {
+                    setLoading(false);
+                    showToast("Network Error connecting to the desk.");
                 }
             } else if (currentStep === 2) {
                 const pin = document.getElementById('pinInput').value.trim();
@@ -422,7 +433,7 @@
                 try {
                     const res = await fetch('/api/kiosk/verify', {
                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                       body: JSON.stringify({ query, pin })
+                       body: JSON.stringify({ reservationId: verifiedReservationId, pin })
                     });
                     const data = await res.json();
                     setLoading(false);
@@ -454,14 +465,14 @@
                     address: document.getElementById('regAddress').value.trim(),
                     signature: sigBase64
                 };
-                
-                proceedWithValidatedId(window.verifiedReservationId, mode, updates);
+
+                proceedWithValidatedId(verifiedReservationId, mode, updates);
             }
         }
 
         function showRegistrationStep(guestData, resId) {
             currentStep = 3;
-            window.verifiedReservationId = resId;
+            verifiedReservationId = resId;
             
             document.getElementById('step2Row').style.display = 'none';
             document.getElementById('verifyPrompt').innerText = "Please confirm your details and sign below.";

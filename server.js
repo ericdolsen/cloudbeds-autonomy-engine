@@ -17,7 +17,7 @@ const port = process.env.PORT || 3000;
 
 // Setup static files and APIs
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' })); // large enough for signature PNGs from kiosk
 
 // Serve the Kiosk UI on the root directory
 app.get('/', (req, res) => {
@@ -77,9 +77,12 @@ app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res
 
 // Primary Webhook Ingress from Cloudbeds (System Events like reservation created)
 app.post('/api/webhooks/cloudbeds', async (req, res) => {
-  const payload = req.body; 
-  logger.info(`[WEBHOOK] Incoming payload from Cloudbeds: ${payload.event}`);
-  
+  const payload = req.body;
+  // Cloudbeds webhooks deliver `object` and `action` as separate top-level fields.
+  const event = payload.event || (payload.object && payload.action ? `${payload.object}/${payload.action}` : 'unknown');
+  const reservationID = payload.reservationID || payload.reservationId || 'unknown';
+  logger.info(`[WEBHOOK] Incoming payload from Cloudbeds: ${event}`);
+
   // Cloudbeds requires an immediate 2XX response to prevent webhook retry loops
   res.status(200).send("OK");
 
@@ -90,14 +93,13 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
 
   try {
     let promptText = "";
-    
-    // Translate raw JSON webhooks into human-readable prompts for the LLM
-    if (payload.event === "reservation/created") {
-      promptText = `A new reservation (ID: ${payload.reservationID || payload.reservationId}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
-    } else if (payload.event === "reservation/dates_changed") {
-      promptText = `The dates for reservation ${payload.reservationId} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+
+    if (event === "reservation/created") {
+      promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
+    } else if (event === "reservation/dates_changed") {
+      promptText = `The dates for reservation ${reservationID} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
     } else {
-      promptText = `A generic Cloudbeds system event occurred: ${payload.event} for reservation ${payload.reservationID || 'unknown'}. Review if necessary.`;
+      promptText = `A generic Cloudbeds system event occurred: ${event} for reservation ${reservationID}. Review if necessary.`;
     }
 
     await agent.processIncomingMessage({ source: 'cloudbeds', text: promptText });
@@ -161,10 +163,8 @@ app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) 
      const taxEngine = new SalesTaxEngine(agent.engine.api);
      const result = await taxEngine.generateReport(month, parseInt(year), parseFloat(useTax || 0));
      logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
-     logger.action('System', `Computed automated Sales Tax report for ${month} ${year}.`, 'ok');
      res.json(result);
   } catch (err) {
-     logger.action('System', `Failed to generate Tax Report: ${err.message}`, 'error');
      logger.action('System', `Failed to generate Tax Report: ${err.message}`, 'error');
      logger.error(`[SALES TAX] Failed to process tax generation: ${err.message}`);
      res.status(500).json({ success: false, error: err.message });
@@ -198,52 +198,74 @@ app.post('/api/kiosk/checkout', async (req, res) => {
   }
 });
 
+// Best-effort US-style "street, city, state zip" parser.
+function parseAddressBlob(blob) {
+  if (!blob || typeof blob !== 'string') return {};
+  const parts = blob.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return { guestAddress1: parts[0] };
+  const [street, maybeCity, maybeStateZip, ...rest] = parts;
+  const result = { guestAddress1: street };
+  if (maybeCity) result.guestCity = maybeCity;
+  if (maybeStateZip) {
+    const m = maybeStateZip.match(/^([A-Za-z .]+?)\s*(\d{5}(?:-\d{4})?)?$/);
+    if (m) {
+      if (m[1]) result.guestState = m[1].trim();
+      if (m[2]) result.guestZip = m[2];
+    } else {
+      result.guestState = maybeStateZip;
+    }
+  }
+  if (rest.length) result.guestCountry = rest[rest.length - 1];
+  return result;
+}
+
 // Kiosk REST API Endpoint (Checkin)
 app.post('/api/kiosk/checkin', async (req, res) => {
   const { reservationId, lastName, terminalName, guestUpdates } = req.body;
   logger.info(`[KIOSK] Checkin Request received - Res: ${reservationId}, Name: ${lastName}, Terminal: ${terminalName}`);
-  
+
   if (!agent.isRunning) {
     return res.status(503).json({ success: false, message: "Front desk system is currently initializing." });
   }
 
   try {
     if (guestUpdates) {
-        logger.info(`[KIOSK] Syncing Registration Card and Profile Updates for ${reservationId}...`);
-        try {
-            // 1. Get Guest ID
-            const resData = await agent.engine.api.getReservation(reservationId);
-            if (resData.success && resData.data) {
-                let guestID = resData.data.guestID || resData.data.guestId;
-                if (!guestID && resData.data.guestList) {
-                    const guests = Object.values(resData.data.guestList);
-                    const mg = guests.find(g => g.isMainGuest) || guests[0];
-                    if (mg) guestID = mg.guestID || mg.guestId;
-                }
-                
-                // 2. Update Profile
-                if (guestID) {
-                    await agent.engine.api.putGuest(guestID, {
-                        guestEmail: guestUpdates.email,
-                        guestCellPhone: guestUpdates.phone,
-                        guestAddress: guestUpdates.address
-                    });
-                }
-            }
-            
-            // 3. Upload Signature
-            if (guestUpdates.signature) {
-                await agent.engine.api.postReservationDocument(reservationId, guestUpdates.signature, "Registration_Signature.png");
-            }
-        } catch (e) {
-            logger.error(`[KIOSK] Failed to sync registration to Cloudbeds (Non-Fatal): ${e.message}`);
+      logger.info(`[KIOSK] Syncing Registration Card and Profile Updates for ${reservationId}...`);
+      try {
+        const resData = await agent.engine.api.getReservationById(reservationId);
+        if (resData.success && resData.data) {
+          let guestID = resData.data.guestID || resData.data.guestId;
+          if (!guestID && resData.data.guestList) {
+            const guests = Object.values(resData.data.guestList);
+            const mg = guests.find(g => g.isMainGuest) || guests[0];
+            if (mg) guestID = mg.guestID || mg.guestId;
+          }
+
+          if (guestID) {
+            const addressFields = parseAddressBlob(guestUpdates.address);
+            await agent.engine.api.putGuest(guestID, {
+              guestEmail: guestUpdates.email || undefined,
+              guestCellPhone: guestUpdates.phone || undefined,
+              ...addressFields
+            });
+          } else {
+            logger.warn(`[KIOSK] Could not resolve guestID for reservation ${reservationId}; skipping putGuest.`);
+          }
         }
+
+        if (guestUpdates.signature) {
+          await agent.engine.api.postReservationDocument(reservationId, guestUpdates.signature, "Registration_Signature.png");
+        }
+      } catch (e) {
+        logger.error(`[KIOSK] Failed to sync registration to Cloudbeds (non-fatal): ${e.message}`);
+      }
     }
 
-    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely by checking for an outstanding balance, prompting them to swipe/insert a card on the terminal if money is owed, and then finally executing the cloudbeds check-in status update and communicating success back.`;
-    
+    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely: fetch the reservation, collect any outstanding balance via chargePhysicalTerminal on the kiosk terminal, then call checkInReservation to transition Cloudbeds to checked_in, and communicate success back. If any step fails, surface the exact reason and ask the guest to see the front desk.`;
+
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
-    
+
     logger.action('Checkin', `Processed self-checkin for guest ${lastName} (Res: ${reservationId})`, 'ok');
     res.json({ success: true, status: 'complete', message: result.agent_response });
   } catch (error) {
@@ -269,7 +291,39 @@ app.post('/api/kiosk/push', (req, res) => {
   res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
 });
 
-// Identity verification for Kiosk (Search by Last Name)
+// Extract the main guest's verifiable contact info from a Cloudbeds reservation payload.
+function extractGuestContact(data) {
+  let phone = '';
+  let email = (data.guestEmail || '').toString();
+  let address1 = '', city = '', state = '', zip = '', country = '';
+
+  if (data.guestList) {
+    const guests = Object.values(data.guestList);
+    const mg = guests.find(g => g.isMainGuest) || guests[0];
+    if (mg) {
+      phone = (mg.guestCellPhone || mg.guestPhone || '').toString().replace(/[^0-9]/g, '');
+      if (!email) email = mg.guestEmail || '';
+      address1 = mg.guestAddress1 || mg.guestAddress || '';
+      city = mg.guestCity || '';
+      state = mg.guestState || '';
+      zip = mg.guestZip || '';
+      country = mg.guestCountry || '';
+    }
+  }
+
+  // Fallbacks for mock / legacy payloads that carry phone/email at the top level.
+  if (!phone && data.phone) phone = String(data.phone).replace(/[^0-9]/g, '');
+  if (!email && data.email) email = data.email;
+
+  return {
+    phone,
+    email,
+    address: [address1, city, state, zip].filter(Boolean).join(', '),
+    city, state, zip, country
+  };
+}
+
+// Identity verification for Kiosk (Search by Last Name or Reservation ID)
 app.post('/api/kiosk/identify', async (req, res) => {
   const { query, mode } = req.body;
   if (!query) return res.status(400).json({ success: false });
@@ -278,85 +332,74 @@ app.post('/api/kiosk/identify', async (req, res) => {
   const result = await agent.engine.api.getReservation(query, mode);
 
   if (result.success && result.data) {
-     // Normalize phone and email deeply embedded in Cloudbeds guestList
-     let phoneStr = '';
-     let actEmail = result.data.guestEmail || '';
-     
-     if (result.data.guestList) {
-         const guests = Object.values(result.data.guestList);
-         const mg = guests.find(g => g.isMainGuest) || guests[0];
-         if (mg) {
-             phoneStr = (mg.guestCellPhone || mg.guestPhone || '').replace(/[^0-9]/g, '');
-             if (!actEmail) actEmail = mg.guestEmail;
-         }
-     }
+    const contact = extractGuestContact(result.data);
+    const reservationId = result.data.reservationID || result.data.reservationId;
 
-     if (phoneStr && phoneStr.length >= 4) {
-         const last4 = phoneStr.slice(-4);
-         return res.json({ 
-           success: true, 
-           requiresVerification: true, 
-           verifyType: 'phone',
-           maskedPhone: `***-***-${last4}`
-         });
-     } else if (actEmail) {
-         const parts = actEmail.split('@');
-         const maskedEmail = parts.length === 2 ? `${parts[0].charAt(0)}***@${parts[1]}` : 'your email address';
-         return res.json({
-           success: true,
-           requiresVerification: true,
-           verifyType: 'email',
-           maskedEmail: maskedEmail
-         });
-     } else {
-         // Extreme Fallback
-         return res.json({ success: false, message: "We found your reservation, but it lacks contact details for secure verification. Please see the front desk." });
-     }
+    if (contact.phone && contact.phone.length >= 4) {
+      const last4 = contact.phone.slice(-4);
+      return res.json({
+        success: true,
+        requiresVerification: true,
+        verifyType: 'phone',
+        reservationId,
+        maskedPhone: `***-***-${last4}`
+      });
+    }
+    if (contact.email) {
+      const parts = contact.email.split('@');
+      const maskedEmail = parts.length === 2 ? `${parts[0].charAt(0)}***@${parts[1]}` : 'your email address';
+      return res.json({
+        success: true,
+        requiresVerification: true,
+        verifyType: 'email',
+        reservationId,
+        maskedEmail
+      });
+    }
+    return res.json({ success: false, message: "We found your reservation, but it lacks contact details for secure verification. Please see the front desk." });
   }
-  
-  res.json({ success: false, message: "Could not locate a reservation with that information." });
+
+  res.json({ success: false, message: result.message || "Could not locate a reservation with that information." });
 });
 
 app.post('/api/kiosk/verify', async (req, res) => {
-  const { query, pin } = req.body;
-  if (!query || !pin) return res.status(400).json({ success: false });
+  const { reservationId, pin } = req.body;
+  if (!reservationId || !pin) return res.status(400).json({ success: false });
 
-  logger.info(`[KIOSK VERIFY] Verifying Security PIN for guest: ${query}`);
-  const result = await agent.engine.api.getReservation(query);
+  logger.info(`[KIOSK VERIFY] Verifying Security PIN for reservation: ${reservationId}`);
+  const result = await agent.engine.api.getReservationById(reservationId);
 
   if (result.success && result.data) {
-     let phoneStr = '';
-     let actEmail = (result.data.guestEmail || '').toLowerCase();
-     
-     if (result.data.guestList) {
-         const guests = Object.values(result.data.guestList);
-         const mg = guests.find(g => g.isMainGuest) || guests[0];
-         if (mg) {
-             phoneStr = (mg.guestCellPhone || mg.guestPhone || '').replace(/[^0-9]/g, '');
-             if (!actEmail) actEmail = (mg.guestEmail || '').toLowerCase();
-         }
-     }
+    const contact = extractGuestContact(result.data);
+    const guestData = {
+      email: contact.email.toLowerCase(),
+      phone: contact.phone,
+      address: [contact.address1, contact.city, contact.state, contact.zip].filter(Boolean).join(', '),
+      city: contact.city,
+      state: contact.state,
+      zip: contact.zip
+    };
 
-     let guestData = { email: actEmail, phone: phoneStr, address: '', city: '', state: '', zip: '' };
-     if (result.data.guestList) {
-         const guests = Object.values(result.data.guestList);
-         const mg = guests.find(g => g.isMainGuest) || guests[0];
-         if (mg) {
-             guestData.address = mg.guestAddress || '';
-             guestData.city = mg.guestCity || '';
-             guestData.state = mg.guestState || '';
-             guestData.zip = mg.guestZip || '';
-         }
-     }
-
-     if (phoneStr && phoneStr.length >= 4) {
-         if (phoneStr.slice(-4) === pin) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID, guestData });
-     } else if (actEmail) {
-         if (actEmail === pin.toLowerCase().trim()) return res.json({ success: true, reservationId: result.data.reservationId || result.data.reservationID, guestData });
-     }
+    if (contact.phone && contact.phone.length >= 4) {
+      if (contact.phone.slice(-4) === pin.replace(/\s/g, '')) {
+        return res.json({ success: true, reservationId, guestData });
+      }
+    } else if (contact.email) {
+      if (contact.email.toLowerCase() === pin.toLowerCase().trim()) {
+        return res.json({ success: true, reservationId, guestData });
+      }
+    }
   }
-  
+
   res.json({ success: false, message: "Verification failed. Incorrect Security PIN or Email." });
+});
+
+// Kiosk config (property-specific values the client needs, like propertyID for the Guest Portal URL)
+app.get('/api/kiosk/config', (req, res) => {
+  res.json({
+    propertyID: process.env.CLOUDBEDS_PROPERTY_ID || null,
+    guestPortalBase: process.env.CLOUDBEDS_GUEST_PORTAL_BASE || 'https://hotels.cloudbeds.com/guest_portal'
+  });
 });
 
 // CRON SCHEDULER
@@ -390,7 +433,7 @@ cron.schedule('0 4 * * *', async () => {
 cron.schedule('0 6 * * *', async () => {
   logger.info('[CRON] 6:00 AM - Triggering Housekeeping Load-Balancer algorithm...');
   if (agent.isRunning) {
-    const housekeepingEngine = new HousekeepingAssigner(agent.api);
+    const housekeepingEngine = new HousekeepingAssigner(agent.engine.api);
     await housekeepingEngine.run6AMAssignment();
   } else {
     logger.warn('[CRON] Agent is not running. Skipping Housekeeping pipeline.');
