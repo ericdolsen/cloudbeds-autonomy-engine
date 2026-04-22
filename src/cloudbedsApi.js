@@ -3,132 +3,165 @@ const { logger } = require('./logger');
 
 /**
  * Cloudbeds REST API wrapper
- * Automatically switches to MOCK data if the CLOUDBEDS_API_KEY is missing or set to MOCK_KEY.
+ * Falls back to mock data when CLOUDBEDS_API_KEY is unset or 'MOCK_KEY'.
+ *
+ * The Cloudbeds PMS API expects POST/PUT bodies as application/x-www-form-urlencoded,
+ * NOT JSON. All write helpers go through _encodeForm().
  */
 class CloudbedsAPI {
   constructor() {
     this.host = process.env.CLOUDBEDS_HOST || 'https://hotels.cloudbeds.com/api/v1.3';
     this.apiKey = process.env.CLOUDBEDS_API_KEY || 'MOCK_KEY';
+    this.propertyID = process.env.CLOUDBEDS_PROPERTY_ID || null;
   }
 
-  // Helper to simulate network latency for mocks
   async _mockReturn(data, delayMs = 300) {
     return new Promise(resolve => setTimeout(() => resolve(data), delayMs));
   }
 
-  // Pre-configured Axios client for real network requests
   _getClient() {
     return axios.create({
       baseURL: this.host,
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json'
-      }
+      headers: { 'Authorization': `Bearer ${this.apiKey}` }
     });
   }
 
   /**
-   * Fetch reservation details by searching for name, phone, or reservation ID
+   * Convert a plain object to URLSearchParams, skipping nullish values.
+   * Attaches propertyID automatically when the env var is set.
+   */
+  _encodeForm(data, { attachProperty = true } = {}) {
+    const params = new URLSearchParams();
+    if (attachProperty && this.propertyID && !('propertyID' in data)) {
+      params.append('propertyID', this.propertyID);
+    }
+    for (const [k, v] of Object.entries(data)) {
+      if (v === undefined || v === null) continue;
+      params.append(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+    }
+    return params;
+  }
+
+  _formHeaders() {
+    return { 'Content-Type': 'application/x-www-form-urlencoded' };
+  }
+
+  _isMock() {
+    return this.apiKey === 'MOCK_KEY';
+  }
+
+  /**
+   * Fetch reservation details by searching for name, phone, or reservation ID.
+   * When a name is supplied we fall back to a getReservations scan.
    */
   async getReservation(query, mode) {
     logger.info(`[API CALL] GET /getReservation | query: ${query} | mode: ${mode}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      // Mocking different behaviors for Last Name vs ID searches
+
+    if (this._isMock()) {
       if (query && query.toLowerCase() === 'smith') {
-         return this._mockReturn({
-           success: true,
-           data: {
-             reservationId: "RD98273410",
-             guestName: "Amanda Smith",
-             status: "confirmed",
-             phone: "555-827-8492"
-           }
-         });
+        return this._mockReturn({
+          success: true,
+          data: {
+            reservationID: "RD98273410",
+            guestName: "Amanda Smith",
+            status: "confirmed",
+            guestList: {
+              "g_1": { isMainGuest: true, guestCellPhone: "5558278492", guestEmail: "amanda@example.com" }
+            }
+          }
+        });
       }
 
-      // Default fallback mock
       return this._mockReturn({
         success: true,
         data: {
-          reservationId: "JD10029384",
-          status: "in_house",
+          reservationID: "JD10029384",
+          status: "checked_in",
           guestName: "John Doe",
-          phone: "555-221-9988",
           balanceDue: 45.00,
           currency: "USD",
           roomType: "Standard Queen",
           startDate: "2026-04-10",
           endDate: "2026-04-12",
+          guestList: {
+            "g_1": { isMainGuest: true, guestCellPhone: "5552219988", guestEmail: "john@example.com" }
+          },
           tags: ["VIP"]
         }
       });
     }
 
-    // REAL NETWORK CALL
     try {
-      // 1. If the query looks like a purely alphabetical name instead of a Reservation ID
-      if (/^[a-zA-Z\s]+$/.test(query) && query.length >= 2) {
-          logger.info(`[API CALL] Delegating Name Search for "${query}" to /getReservations scan...`);
-          // Grab reservations spanning the past week to next week to capture in-house and arriving guests
-          const today = new Date().toISOString().split('T')[0];
-          const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-          const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
-          
-          const resList = await this.getReservations(past, future);
-          if (resList.success && resList.data) {
-              const nameMatches = resList.data.filter(r => {
-                 return (r.guestName && r.guestName.toLowerCase().includes(query.toLowerCase())) ||
-                        (r.guestFirstName && r.guestFirstName.toLowerCase() === query.toLowerCase()) ||
-                        (r.guestLastName && r.guestLastName.toLowerCase() === query.toLowerCase());
-              });
+      // Name search: hyphens and apostrophes allowed so "O'Brien" / "Smith-Jones" work.
+      if (/^[a-zA-Z\s'\-]+$/.test(query) && query.length >= 2) {
+        logger.info(`[API CALL] Delegating name search "${query}" to /getReservations scan...`);
+        const today = new Date().toISOString().split('T')[0];
+        const past = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+        const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
-              if (nameMatches.length > 0) {
-                  const exactMatch = nameMatches.find(r => {
-                     if (mode === 'checkin') {
-                         return r.startDate === today;
-                     } else if (mode === 'checkout') {
-                         return r.endDate === today || r.status === 'checked_in';
-                     }
-                     return true;
-                  });
-                  
-                  if (exactMatch) {
-                      // Run strict lookup using the dynamically found ID to pull nested details like phone number
-                      logger.info(`[API CALL] Name resolved to ID: ${exactMatch.reservationId || exactMatch.reservationID}`);
-                      return await this.getReservation(exactMatch.reservationId || exactMatch.reservationID);
-                  } else {
-                      if (mode === 'checkin') {
-                          const futureRes = nameMatches.find(r => r.startDate > today);
-                          if (futureRes) {
-                              return { success: false, message: `We found a reservation for you, but your check-in date is ${futureRes.startDate}. You can only check in on your arrival date.` };
-                          }
-                      }
-                      return { success: false, message: "We found a reservation under your name, but it is not scheduled for today. Please see the front desk." };
-                  }
+        const resList = await this.getReservations(past, future);
+        if (resList.success && Array.isArray(resList.data)) {
+          const needle = query.toLowerCase();
+          const nameMatches = resList.data.filter(r =>
+            (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+            (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+            (r.guestLastName && r.guestLastName.toLowerCase() === needle)
+          );
+
+          if (nameMatches.length > 0) {
+            const exactMatch = nameMatches.find(r => {
+              if (mode === 'checkin') return r.startDate === today;
+              if (mode === 'checkout') return r.endDate === today || r.status === 'checked_in';
+              return true;
+            });
+
+            if (exactMatch) {
+              const id = exactMatch.reservationID || exactMatch.reservationId;
+              logger.info(`[API CALL] Name resolved to ID: ${id}`);
+              return await this.getReservationById(id);
+            }
+
+            if (mode === 'checkin') {
+              const futureRes = nameMatches.find(r => r.startDate > today);
+              if (futureRes) {
+                return { success: false, message: `We found a reservation for you, but your check-in date is ${futureRes.startDate}. You can only check in on your arrival date.` };
               }
+            }
+            return { success: false, message: "We found a reservation under your name, but it is not scheduled for today. Please see the front desk." };
           }
-          return { success: false, message: "Could not find an active reservation matching that name." };
+        }
+        return { success: false, message: "Could not find an active reservation matching that name." };
       }
 
-      // 2. Standard ID lookup
-      const response = await this._getClient().get('/getReservation', {
-        params: { reservationID: query }
-      });
-      return response.data;
+      return await this.getReservationById(query);
     } catch (error) {
       logger.error(`getReservation failed: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
 
-  /**
-   * Search for available rooms matching a criteria for given dates
-   */
+  async getReservationById(reservationID) {
+    if (this._isMock()) {
+      return this.getReservation(reservationID);
+    }
+    try {
+      const response = await this._getClient().get('/getReservation', {
+        params: {
+          reservationID,
+          ...(this.propertyID ? { propertyID: this.propertyID } : {}),
+          includeGuestsDetails: 'true'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`getReservationById failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
   async getUnassignedRooms(startDate, endDate) {
     logger.info(`[API CALL] GET /getUnassignedRooms | ${startDate} to ${endDate}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({
         success: true,
         data: [
@@ -137,11 +170,13 @@ class CloudbedsAPI {
         ]
       });
     }
-
-    // REAL NETWORK CALL
     try {
       const response = await this._getClient().get('/getUnassignedRooms', {
-        params: { startDate, endDate }
+        params: {
+          startDate,
+          endDate,
+          ...(this.propertyID ? { propertyID: this.propertyID } : {})
+        }
       });
       return response.data;
     } catch (error) {
@@ -151,22 +186,18 @@ class CloudbedsAPI {
   }
 
   /**
-   * Update a reservation's details (status, dates, room type)
+   * PUT /putReservation — update reservation fields (dates, room, status).
+   * Note: Cloudbeds permits status transitions to confirmed, checked_out,
+   * canceled, no_show via this endpoint. For check-in use checkInReservation().
    */
   async updateReservation(reservationId, updates) {
     logger.info(`[API CALL] PUT /putReservation [${reservationId}] | payload: ${JSON.stringify(updates)}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      return this._mockReturn({
-        success: true,
-        message: "Reservation successfully updated."
-      });
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Reservation updated." });
     }
-
-    // REAL NETWORK CALL
     try {
-      const payload = { reservationID: reservationId, ...updates };
-      const response = await this._getClient().put('/putReservation', payload);
+      const body = this._encodeForm({ reservationID: reservationId, ...updates });
+      const response = await this._getClient().put('/putReservation', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
       logger.error(`updateReservation failed: ${error.message}`);
@@ -175,23 +206,50 @@ class CloudbedsAPI {
   }
 
   /**
-   * Charge the card on file for a specific amount
+   * Move a reservation into the checked_in state. Cloudbeds only permits this
+   * transition from `confirmed`; we guard for that and surface a clear error.
    */
-  async postPayment(reservationId, amount) {
-    logger.info(`[API CALL] POST /postPaymentActivity [${reservationId}] | Amount: $${amount}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      return this._mockReturn({
-        success: true,
-        transactionId: "txn_893jd9283udj",
-        message: "Payment processed successfully."
-      });
+  async checkInReservation(reservationId) {
+    logger.info(`[API CALL] CHECK-IN [${reservationId}]`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Reservation checked in." });
     }
-
-    // REAL NETWORK CALL
     try {
-      const payload = { reservationID: reservationId, type: 'charge', amount };
-      const response = await this._getClient().post('/postPaymentActivity', payload);
+      const existing = await this.getReservationById(reservationId);
+      if (!existing.success || !existing.data) {
+        return { success: false, error: "Reservation not found." };
+      }
+      const status = existing.data.status;
+      if (status === 'checked_in') {
+        return { success: true, message: "Reservation is already checked in." };
+      }
+      if (status !== 'confirmed') {
+        return { success: false, error: `Reservation must be 'confirmed' before check-in (current: ${status}).` };
+      }
+      const body = this._encodeForm({
+        reservationID: reservationId,
+        reservationStatus: 'checked_in'
+      });
+      const response = await this._getClient().put('/putReservation', body, { headers: this._formHeaders() });
+      return response.data;
+    } catch (error) {
+      logger.error(`checkInReservation failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * POST /postPayment — add a payment to a reservation folio.
+   * type must be one of: credit, debit, cash, check.
+   */
+  async postPayment(reservationId, amount, { type = 'credit', description = 'Kiosk payment' } = {}) {
+    logger.info(`[API CALL] POST /postPayment [${reservationId}] | Amount: $${amount} | Type: ${type}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, transactionID: "txn_mock_001", message: "Payment processed." });
+    }
+    try {
+      const body = this._encodeForm({ reservationID: reservationId, amount, type, description });
+      const response = await this._getClient().post('/postPayment', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
       logger.error(`postPayment failed: ${error.message}`);
@@ -200,27 +258,36 @@ class CloudbedsAPI {
   }
 
   /**
-   * Add a line item / charge to the guest's folio
+   * POST /postCustomItem — add a line item / charge to the guest's folio.
+   * Cloudbeds requires appItemID so repeat posts de-duplicate; we default
+   * it to a stable slug derived from the description.
    */
-  async postFolioAdjustment(reservationId, amount, description) {
-    logger.info(`[API CALL] POST /postFolioAdjustment [${reservationId}] | Amount: $${amount} | Desc: ${description}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      return this._mockReturn({
-        success: true,
-        message: "Adjustment added to folio."
-      });
+  async postCustomItem(reservationId, amount, description, { appItemID } = {}) {
+    logger.info(`[API CALL] POST /postCustomItem [${reservationId}] | Amount: $${amount} | Desc: ${description}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Charge added to folio." });
     }
-
-    // REAL NETWORK CALL
     try {
-      const payload = { reservationID: reservationId, amount, description };
-      const response = await this._getClient().post('/postFolioAdjustment', payload);
+      const slug = appItemID || `autonomy_${description.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}`;
+      const body = this._encodeForm({
+        reservationID: reservationId,
+        appItemID: slug,
+        name: description,
+        description,
+        subtotal: amount,
+        quantity: 1
+      });
+      const response = await this._getClient().post('/postCustomItem', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
-      logger.error(`postFolioAdjustment failed: ${error.message}`);
+      logger.error(`postCustomItem failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  // Back-compat alias for existing callers
+  async postFolioAdjustment(reservationId, amount, description) {
+    return this.postCustomItem(reservationId, amount, description);
   }
 
   /**
@@ -228,22 +295,24 @@ class CloudbedsAPI {
    */
   async getReservationsWithRateDetails(startDate, endDate) {
     logger.info(`[API CALL] GET /getReservationsWithRateDetails | ${startDate} to ${endDate}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({
         success: true,
         data: [
-          { reservationId: "R_01", startDate: startDate, endDate: endDate, status: "checked_in", source: "OTA (Booking.com)", total: 350.00 },
-          { reservationId: "R_02", startDate: startDate, endDate: endDate, status: "no_show", source: "Direct", total: 150.00 },
-          { reservationId: "R_03", startDate: startDate, endDate: endDate, status: "checked_in", source: "OTA (Expedia)", total: 420.00 },
-          { reservationId: "R_04", startDate: startDate, endDate: endDate, status: "checked_in", source: "Direct", total: 80.00 }
+          { reservationID: "R_01", startDate, endDate, status: "checked_in", source: "OTA (Booking.com)", total: 350.00 },
+          { reservationID: "R_02", startDate, endDate, status: "no_show", source: "Direct", total: 150.00 },
+          { reservationID: "R_03", startDate, endDate, status: "checked_in", source: "OTA (Expedia)", total: 420.00 },
+          { reservationID: "R_04", startDate, endDate, status: "checked_in", source: "Direct", total: 80.00 }
         ]
       });
     }
-
     try {
       const response = await this._getClient().get('/getReservationsWithRateDetails', {
-        params: { checkInFrom: startDate, checkInTo: endDate }
+        params: {
+          checkInFrom: startDate,
+          checkInTo: endDate,
+          ...(this.propertyID ? { propertyID: this.propertyID } : {})
+        }
       });
       return response.data;
     } catch (error) {
@@ -252,16 +321,15 @@ class CloudbedsAPI {
     }
   }
 
-  /**
-   * Fetch House Count (Occupancy, Revenue) for a specific date
-   */
   async getHouseCount(date) {
     logger.info(`[API CALL] GET /getHouseCount | ${date}`);
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true, data: { occupiedRooms: 40, roomRevenue: 4200.50, adr: 105.01, revpar: 84.01 } });
     }
     try {
-      const response = await this._getClient().get('/getHouseCount', { params: { date, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      const response = await this._getClient().get('/getHouseCount', {
+        params: { date, ...(this.propertyID ? { propertyID: this.propertyID } : {}) }
+      });
       return response.data;
     } catch (e) {
       logger.error(`getHouseCount failed: ${e.message}`);
@@ -269,16 +337,20 @@ class CloudbedsAPI {
     }
   }
 
-  /**
-   * Fetch raw transaction ledger within a date range
-   */
   async getTransactions(startDate, endDate) {
     logger.info(`[API CALL] GET /getTransactions | ${startDate} to ${endDate}`);
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
-      const response = await this._getClient().get('/getTransactions', { params: { startDate, endDate, type: 'all', propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
+      const response = await this._getClient().get('/getTransactions', {
+        params: {
+          startDate,
+          endDate,
+          type: 'all',
+          ...(this.propertyID ? { propertyID: this.propertyID } : {})
+        }
+      });
       return response.data;
     } catch (e) {
       logger.error(`getTransactions failed: ${e.message}`);
@@ -287,30 +359,44 @@ class CloudbedsAPI {
   }
 
   /**
-   * Fetch standard reservations for activity tracking (Check-ins, Check-outs)
+   * Fetch reservations within a date range, auto-paginating (limit max 100).
    */
   async getReservations(checkInFrom, checkInTo) {
     logger.info(`[API CALL] GET /getReservations | ${checkInFrom} to ${checkInTo}`);
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
-      const response = await this._getClient().get('/getReservations', { params: { checkInFrom, checkInTo, pageSize: 500, propertyID: process.env.CLOUDBEDS_PROPERTY_ID }});
-      return response.data;
+      const collected = [];
+      const pageSize = 100;
+      let offset = 0;
+      while (true) {
+        const response = await this._getClient().get('/getReservations', {
+          params: {
+            checkInFrom,
+            checkInTo,
+            includeGuestsDetails: 'true',
+            resultsFrom: offset,
+            resultsTo: offset + pageSize - 1,
+            ...(this.propertyID ? { propertyID: this.propertyID } : {})
+          }
+        });
+        const page = (response.data && response.data.data) || [];
+        collected.push(...page);
+        if (page.length < pageSize) break;
+        offset += pageSize;
+        if (offset > 2000) break; // safety cap
+      }
+      return { success: true, data: collected };
     } catch (e) {
       logger.error(`getReservations failed: ${e.message}`);
       return { success: false, data: [] };
     }
   }
 
-  /**
-   * Fetch a multi-day forecast for projected occupancy and revenue.
-   */
   async getForecast(daysForward = 14) {
     logger.info(`[API CALL] GET /getForecast | +${daysForward} days`);
-    
-    // Cloudbeds has a GET /getDashboard or GET /getOccupancy endpoint, mocked here
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn([
         { date: "Tomorrow", occupancy: "82%", onTheBooksRev: "$2,400" },
         { date: "+2 Days", occupancy: "85%", onTheBooksRev: "$2,600" },
@@ -318,23 +404,41 @@ class CloudbedsAPI {
         { date: "Next Weekend", occupancy: "95%", onTheBooksRev: "$4,200" }
       ]);
     }
-    
-    // REAL NETWORK CALL (Mapping to whichever endpoint client uses)
     return { error: "Live forecast endpoint not mapped yet." };
   }
 
   /**
-   * Native Endpoint to email the fiscal document / invoice generated at checkout.
+   * GET /getReservationInvoiceInformation — fetch fiscal document info
+   * (used to pull documentID before emailing a guest their invoice).
+   */
+  async getReservationInvoiceInformation(reservationId) {
+    logger.info(`[API CALL] GET /getReservationInvoiceInformation [${reservationId}]`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, data: { documentID: `MOCK_DOC_${reservationId}` } });
+    }
+    try {
+      const response = await this._getClient().get('/getReservationInvoiceInformation', {
+        params: { reservationID: reservationId, ...(this.propertyID ? { propertyID: this.propertyID } : {}) }
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`getReservationInvoiceInformation failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Email a guest's fiscal document / invoice.
+   * NOTE: endpoint availability depends on Cloudbeds account configuration.
    */
   async emailFiscalDocument(documentId, emailAddress) {
     logger.info(`[API CALL] POST /emailFiscalDocument | DocID: ${documentId} to ${emailAddress}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      return this._mockReturn({ success: true, message: "Email sent successfully." });
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Email sent." });
     }
-
     try {
-      const response = await this._getClient().post('/emailFiscalDocument', { documentID: documentId, email: emailAddress });
+      const body = this._encodeForm({ documentID: documentId, email: emailAddress });
+      const response = await this._getClient().post('/emailFiscalDocument', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
       logger.error(`emailFiscalDocument failed: ${error.message}`);
@@ -346,13 +450,9 @@ class CloudbedsAPI {
   // HOUSEKEEPING API
   // ==========================================
 
-  /**
-   * Pull all housekeeping inspections (used to find Dirty rooms globally)
-   */
   async getHousekeepingStatus() {
     logger.info(`[API CALL] GET /housekeeping/v1/inspections`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({
         success: true,
         data: [
@@ -365,10 +465,8 @@ class CloudbedsAPI {
         ]
       });
     }
-
     try {
-      // Typically v1 or v2 depending on Cloudbeds PMS
-      const response = await this._getClient().get(`/housekeeping/v1/inspections/${process.env.CLOUDBEDS_PROPERTY_ID}`);
+      const response = await this._getClient().get(`/housekeeping/v1/inspections/${this.propertyID}`);
       return response.data;
     } catch (error) {
       logger.error(`getHousekeepingStatus failed: ${error.message}`);
@@ -376,19 +474,14 @@ class CloudbedsAPI {
     }
   }
 
-  /**
-   * Push assigned housekeeper mapping directly to the Cloudbeds dashboard.
-   */
   async postHousekeepingAssignment(assignments) {
     logger.info(`[API CALL] POST /postHousekeepingAssignment | count: ${assignments.length}`);
-    
-    if (this.apiKey === 'MOCK_KEY') {
-      return this._mockReturn({ success: true, message: "Housekeeping assignments posted to dashboard." });
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Housekeeping assignments posted." });
     }
-
     try {
-      // assignments format: [ { roomID: "101", housekeeperID: "HK_123" } ]
-      const response = await this._getClient().post('/postHousekeepingAssignment', { assignments });
+      const body = this._encodeForm({ assignments: JSON.stringify(assignments) });
+      const response = await this._getClient().post('/postHousekeepingAssignment', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
       logger.error(`postHousekeepingAssignment failed: ${error.message}`);
@@ -400,25 +493,14 @@ class CloudbedsAPI {
   // WEBHOOK SUBSCRIPTIONS
   // ==========================================
 
-  /**
-   * Register a webhook subscription with Cloudbeds.
-   * object: e.g. 'reservation', 'guest', 'housekeeping', 'night_audit'
-   * action: e.g. 'created', 'status_changed', 'room_condition_changed', 'completed'
-   * endpointUrl: public URL Cloudbeds will POST to
-   */
   async postWebhook(object, action, endpointUrl) {
     logger.info(`[API CALL] POST /postWebhook | ${object}/${action} -> ${endpointUrl}`);
-
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true, subscriptionID: `mock_sub_${object}_${action}` });
     }
-
     try {
-      const response = await this._getClient().post('/postWebhook', {
-        object,
-        action,
-        endpointUrl
-      });
+      const body = this._encodeForm({ object, action, endpointUrl }, { attachProperty: false });
+      const response = await this._getClient().post('/postWebhook', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
       logger.error(`postWebhook failed: ${error.message}`);
@@ -426,10 +508,6 @@ class CloudbedsAPI {
     }
   }
 
-  /**
-   * Subscribe to the full set of events the Autonomy Engine reacts to.
-   * Idempotent on the Cloudbeds side (duplicate subscriptions return the existing one).
-   */
   async registerAllWebhooks(endpointUrl) {
     const events = [
       ['reservation', 'created'],
@@ -452,24 +530,22 @@ class CloudbedsAPI {
   }
 
   // ==========================================
-  // NATIVE REGISTRATION / GUEST UPDATE
+  // GUEST PROFILE / REGISTRATION
   // ==========================================
 
   /**
-   * Update guest details (phone, email, address)
+   * PUT /putGuest — update guest profile fields.
+   * Accepts Cloudbeds-native field names directly (guestEmail, guestCellPhone,
+   * guestAddress1, guestCity, guestState, guestZip, guestCountry, ...).
    */
   async putGuest(guestID, updates) {
     logger.info(`[API CALL] PUT /putGuest | guestID: ${guestID}`);
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true });
     }
     try {
-      const payload = {
-          guestID: guestID,
-          propertyID: process.env.CLOUDBEDS_PROPERTY_ID,
-          ...updates
-      };
-      const response = await this._getClient().put('/putGuest', payload);
+      const body = this._encodeForm({ guestID, ...updates });
+      const response = await this._getClient().put('/putGuest', body, { headers: this._formHeaders() });
       return response.data;
     } catch (e) {
       logger.error(`putGuest failed: ${e.message}`);
@@ -478,27 +554,27 @@ class CloudbedsAPI {
   }
 
   /**
-   * Upload a document (like a signed registration card) to a reservation
+   * POST /postReservationDocument — upload a file (signed reg card).
+   * axios will set the multipart boundary automatically when we omit Content-Type.
    */
   async postReservationDocument(reservationID, base64Image, filename = "RegistrationCard.png") {
     logger.info(`[API CALL] POST /postReservationDocument | reservationID: ${reservationID}`);
-    if (this.apiKey === 'MOCK_KEY') {
+    if (this._isMock()) {
       return this._mockReturn({ success: true });
     }
     try {
       const buffer = Buffer.from(base64Image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
       const blob = new Blob([buffer], { type: 'image/png' });
-      
+
       const formData = new FormData();
       formData.append('reservationID', reservationID);
-      if (process.env.CLOUDBEDS_PROPERTY_ID) {
-          formData.append('propertyID', process.env.CLOUDBEDS_PROPERTY_ID);
-      }
-      formData.append('file', blob, filename);
+      if (this.propertyID) formData.append('propertyID', this.propertyID);
+      formData.append('documentType', 'registration_card');
+      formData.append('documentFile', blob, filename);
 
-      const response = await this._getClient().post('/postReservationDocument', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      // NOTE: do NOT set Content-Type here; axios + FormData must generate the
+      // multipart boundary themselves.
+      const response = await this._getClient().post('/postReservationDocument', formData);
       return response.data;
     } catch (e) {
       logger.error(`postReservationDocument failed: ${e.message}`);
@@ -509,27 +585,14 @@ class CloudbedsAPI {
   // ==========================================
   // WHISTLE (Guest Experience) MESSAGE SENDING
   // ==========================================
-  
-  /**
-   * Send a Text/Email to the guest via Whistle.
-   * Whistle handles external comms instead of Cloudbeds direct.
-   */
+
   async sendWhistleMessage(reservationId, messageText) {
     logger.info(`[WHISTLE API] POST /sendMessage [${reservationId}] | Text: ${messageText.substring(0, 30)}...`);
-    
-    // Fallback while we don't have Whistle integrated
-    if (this.apiKey === 'MOCK_KEY' || !process.env.WHISTLE_API_KEY) {
-      return this._mockReturn({
-        success: true,
-        message: "Whistle message successfully queued via Mock."
-      });
+    if (this._isMock() || !process.env.WHISTLE_API_KEY) {
+      return this._mockReturn({ success: true, message: "Whistle message queued via mock." });
     }
-
-    // REAL NETWORK CALL (Placeholder for Whistle's exact API route)
-    // const whistleAxios = axios.create({ baseURL: 'https://api.whistle.com/v1', headers: { ... } });
-    // whistleAxios.post('/message', { ... });
+    // Real Whistle integration pending vendor keys.
   }
-
 }
 
 module.exports = { CloudbedsAPI };
