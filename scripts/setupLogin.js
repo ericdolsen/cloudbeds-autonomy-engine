@@ -14,7 +14,7 @@ const readline = require('readline');
   console.log("");
 
   const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
-  const host = process.env.CLOUDBEDS_UI_HOST || 'hotels.cloudbeds.com';
+  const host = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com';
 
   // Find Chrome installation path (Windows standard paths)
   const chromePaths = [
