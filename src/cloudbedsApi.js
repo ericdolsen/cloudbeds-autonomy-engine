@@ -429,6 +429,48 @@ class CloudbedsAPI {
     }
   }
 
+  /**
+   * Resolve a phone number to the guest's most-relevant active reservation.
+   * Scans a past/future window and filters by last-N-digit match so international
+   * prefixes, formatting, and partial-match variations all normalize.
+   * Returns in_house reservations first, then confirmed/arriving, then anything else.
+   */
+  async getReservationsByPhone(phone, { lookbackDays = 7, lookaheadDays = 60 } = {}) {
+    logger.info(`[API CALL] getReservationsByPhone: ${phone}`);
+    const digits = String(phone).replace(/[^0-9]/g, '');
+    if (!digits) return { success: false, data: [] };
+
+    if (this._isMock()) {
+      if (digits.endsWith('9988')) {
+        return this._mockReturn({ success: true, data: [{
+          reservationID: "JD10029384", status: "checked_in", guestName: "John Doe",
+          startDate: "2026-04-10", endDate: "2026-04-12"
+        }]});
+      }
+      return this._mockReturn({ success: true, data: [] });
+    }
+
+    const past   = new Date(Date.now() - lookbackDays * 86400000).toISOString().split('T')[0];
+    const future = new Date(Date.now() + lookaheadDays * 86400000).toISOString().split('T')[0];
+    const list = await this.getReservations(past, future);
+    if (!list.success || !Array.isArray(list.data)) return { success: false, data: [] };
+
+    const needle = digits.slice(-10); // match on the last 10 digits to ignore country/area-code variance
+    const matches = list.data.filter(r => {
+      if (!r.guestList) return false;
+      return Object.values(r.guestList).some(g => {
+        const gp = String(g.guestCellPhone || g.guestPhone || '').replace(/[^0-9]/g, '');
+        if (!gp) return false;
+        const tail = gp.slice(-10);
+        return gp === digits || tail === needle || tail.endsWith(needle) || needle.endsWith(tail);
+      });
+    });
+
+    const rank = s => (s === 'checked_in' ? 0 : s === 'confirmed' ? 1 : 2);
+    matches.sort((a, b) => rank(a.status) - rank(b.status));
+    return { success: true, data: matches };
+  }
+
   async getForecast(daysForward = 14) {
     logger.info(`[API CALL] GET /getForecast | +${daysForward} days`);
     if (this._isMock()) {
