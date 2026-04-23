@@ -19,7 +19,11 @@ class PaymentTerminal {
     let context;
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
-      context = await chromium.launchPersistentContext(userDataDir, { headless: true });
+      context = await chromium.launchPersistentContext(userDataDir, { 
+          headless: true,
+          args: ['--disable-blink-features=AutomationControlled'],
+          ignoreDefaultArgs: ['--enable-automation']
+      });
       const page = await context.newPage();
       
       // 1. Navigate straight to the reservation folio to check if we're already logged in

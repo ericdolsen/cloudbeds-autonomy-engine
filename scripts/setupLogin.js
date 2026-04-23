@@ -16,7 +16,9 @@ const readline = require('readline');
 
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
-    viewport: null
+    viewport: null,
+    args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],
+    ignoreDefaultArgs: ['--enable-automation']
   });
 
   const page = context.pages()[0] || await context.newPage();
