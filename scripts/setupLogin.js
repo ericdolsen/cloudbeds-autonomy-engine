@@ -22,6 +22,13 @@ const readline = require('readline');
     ignoreDefaultArgs: ['--enable-automation']
   });
 
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    window.navigator.chrome = { runtime: {} };
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+  });
+
   const page = context.pages()[0] || await context.newPage();
   await page.goto(`https://${host}/login`);
 

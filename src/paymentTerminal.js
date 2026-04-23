@@ -25,6 +25,14 @@ class PaymentTerminal {
           args: ['--disable-blink-features=AutomationControlled'],
           ignoreDefaultArgs: ['--enable-automation']
       });
+
+      await context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        window.navigator.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      });
+
       const page = await context.newPage();
       
       // 1. Navigate straight to the reservation folio to check if we're already logged in
