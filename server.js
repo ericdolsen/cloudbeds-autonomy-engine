@@ -41,9 +41,48 @@ app.get('/', (req, res) => {
 const agent = new CloudbedsAgent();
 const messaging = new MessagingClient();
 
-// WebSockets (Tablet Connectivity)
+// WebSockets (Tablet & Chat Connectivity)
 io.on('connection', (socket) => {
-  logger.info(`[WEBSOCKET] Kiosk Tablet Connected: ${socket.id}`);
+  logger.info(`[WEBSOCKET] Client Connected: ${socket.id}`);
+  
+  socket.on('chat_message', async (data) => {
+      const room = data.room || 'Unknown Room';
+      const text = data.text;
+      if (!text) return;
+      
+      logger.info(`[CHAT] Incoming message from Room ${room}: ${text}`);
+      
+      if (!agent.isRunning) {
+          socket.emit('chat_response', { text: "The front desk is currently unavailable. Please call the main line." });
+          return;
+      }
+      
+      try {
+          // Look up reservation by room
+          let context = `Guest is messaging from Room ${room}. Treat as a general inquiry. `;
+          
+          // Execute autonomy engine logic
+          const promptText = `${context}The guest in Room ${room} just sent a web chat message: "${text}". Reply warmly and directly to their question. Your reply will be sent immediately back to their device chat screen.`;
+          
+          const result = await agent.processIncomingMessage({
+              source: 'webchat',
+              sessionKey: `room:${room}`,
+              text: promptText
+          });
+          
+          if (result && result.agent_response) {
+              socket.emit('chat_response', { text: result.agent_response });
+              logger.action('Web Chat', `Replied to Room ${room}: ${text.substring(0, 40)}`, 'ok');
+          }
+      } catch (err) {
+          logger.error(`[CHAT] Error processing message: ${err.message}`);
+          socket.emit('chat_response', { text: "Sorry, we encountered a system error processing your message. Please call the front desk." });
+      }
+  });
+});
+
+app.get('/chat', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'chat.html'));
 });
 
 // Employee Dashboard Security Middleware
@@ -112,7 +151,7 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
       promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
     } else if (event === "reservation/dates_changed") {
       promptText = `The dates for reservation ${reservationID} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
-    } else if (event === "reservation/checked_out") {
+    } else if (event === "reservation/status_changed" && (payload.status === "checked_out" || payload.new_status === "checked_out")) {
       promptText = `Reservation ${reservationID} just checked out natively. Evaluate if an invoice should be emailed by checking the paymentType (skip if Channel Collect Booking). If safe, email the fiscal document. Do not attempt to update the checkout status.`;
     } else {
       promptText = `A generic Cloudbeds system event occurred: ${event} for reservation ${reservationID}. Review if necessary.`;
