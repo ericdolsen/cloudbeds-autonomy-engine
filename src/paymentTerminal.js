@@ -37,7 +37,10 @@ class PaymentTerminal {
       
       // 1. Navigate straight to the reservation folio to check if we're already logged in
       logger.info(`[STRIPE TERMINAL] Checking session status / logging into Cloudbeds...`);
-      await page.goto(`https://${this.host}/connect/#/reservations/${reservationId}`);
+      const propertyPath = this.propertyId ? `${this.propertyId}` : '';
+      const uiHost = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com'; // Default to us2 as requested
+      const targetUrl = `https://${uiHost}/connect/${propertyPath}#/reservations/${reservationId}`;
+      await page.goto(targetUrl);
       
       // Wait for SPA to either load the reservation or redirect to login
       await page.waitForTimeout(3000);
