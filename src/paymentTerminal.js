@@ -24,10 +24,13 @@ class PaymentTerminal {
       
       // 1. Navigate straight to the reservation folio to check if we're already logged in
       logger.info(`[STRIPE TERMINAL] Checking session status / logging into Cloudbeds...`);
-      await page.goto(`https://${this.host}/connect/${this.propertyId}#/reservations/${reservationId}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`https://${this.host}/connect/#/reservations/${reservationId}`);
+      
+      // Wait for SPA to either load the reservation or redirect to login
+      await page.waitForTimeout(3000);
       
       // Check if we got redirected to login
-      if (page.url().includes('/login') || page.url().includes('signin.cloudbeds.com')) {
+      if (page.url().includes('login') || page.url().includes('signin')) {
           // Handle either the old login form or the new Okta SSO login form
       await page.waitForSelector('input[name="email"], input[name="user_email"]', { timeout: 15000 });
       const newEmailInput = await page.$('input[name="email"]');
