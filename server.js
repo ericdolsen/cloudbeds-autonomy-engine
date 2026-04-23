@@ -20,6 +20,7 @@ const port = process.env.PORT || 3000;
 // Setup static files and APIs
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '5mb' })); // large enough for signature PNGs from kiosk
+app.use(express.urlencoded({ extended: true })); // Required to parse incoming Twilio form payloads
 
 // Add CORS headers so the Chrome Extension can make requests
 app.use((req, res, next) => {
@@ -163,21 +164,21 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
   }
 });
 
-// Primary Webhook Ingress from Whistle / Guest Experience (Text Messaging)
-app.post('/api/webhooks/whistle', async (req, res) => {
+// Primary Webhook Ingress from Twilio (Text Messaging)
+app.post('/api/webhooks/sms', async (req, res) => {
   const payload = req.body;
-  logger.info(`[WEBHOOK] Incoming SMS/Message from Whistle: ${JSON.stringify(Object.keys(payload || {}))}`);
+  logger.info(`[WEBHOOK] Incoming SMS Message: ${JSON.stringify(Object.keys(payload || {}))}`);
 
-  // Acknowledge immediately so Whistle doesn't retry.
+  // Acknowledge immediately so Twilio doesn't retry.
   res.status(200).send("OK");
 
   if (!agent.isRunning) return;
 
   try {
-    const guestPhone = payload.guest_phone || payload.phone || payload.from || (payload.sms && payload.sms.from);
-    const messageText = payload.message || payload.text || payload.body || (payload.sms && payload.sms.body);
+    const guestPhone = payload.guest_phone || payload.phone || payload.from || payload.From || (payload.sms && payload.sms.from);
+    const messageText = payload.message || payload.text || payload.body || payload.Body || (payload.sms && payload.sms.body);
     if (!guestPhone || !messageText) {
-      logger.warn(`[WEBHOOK] Whistle payload missing phone or message. Raw: ${JSON.stringify(payload).substring(0, 300)}`);
+      logger.warn(`[WEBHOOK] SMS payload missing phone or message. Raw: ${JSON.stringify(payload).substring(0, 300)}`);
       return;
     }
     const digits = String(guestPhone).replace(/[^0-9]/g, '');
