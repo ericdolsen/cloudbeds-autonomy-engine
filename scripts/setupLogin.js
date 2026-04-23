@@ -15,6 +15,7 @@ const readline = require('readline');
   const host = process.env.CLOUDBEDS_UI_HOST || 'hotels.cloudbeds.com';
 
   const context = await chromium.launchPersistentContext(userDataDir, {
+    channel: 'chrome',
     headless: false,
     viewport: null,
     args: ['--disable-blink-features=AutomationControlled', '--start-maximized'],

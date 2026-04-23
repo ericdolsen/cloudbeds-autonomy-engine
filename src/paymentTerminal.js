@@ -20,6 +20,7 @@ class PaymentTerminal {
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
       context = await chromium.launchPersistentContext(userDataDir, { 
+          channel: 'chrome',
           headless: true,
           args: ['--disable-blink-features=AutomationControlled'],
           ignoreDefaultArgs: ['--enable-automation']
