@@ -52,9 +52,19 @@ const readline = require('readline');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   rl.question("\nWhen you have successfully logged in and see your dashboard, close the Chrome window and press ENTER here to finish...\n> ", () => {
-    console.log("\nSession natively saved to .cloudbeds_session/");
-    console.log("The Autonomy Engine will now use this physical Chrome profile for headless operations.");
-    rl.close();
-    process.exit(0);
+    console.log("\nCleaning up background Chrome processes...");
+    // Kill the specific chrome process tree we spawned to release the directory lock
+    try {
+      process.kill(chromeProcess.pid, 'SIGINT');
+    } catch (e) {
+      // Ignore if already dead
+    }
+    
+    setTimeout(() => {
+      console.log("\nSession natively saved to .cloudbeds_session/");
+      console.log("The Autonomy Engine will now use this physical Chrome profile for headless operations.");
+      rl.close();
+      process.exit(0);
+    }, 1000);
   });
 })();
