@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const path = require('path');
+const fs = require('fs');
 const { logger } = require('./logger');
 
 class PaymentTerminal {
@@ -19,13 +20,20 @@ class PaymentTerminal {
     let context;
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
+      
+      // Clean up stale locks that cause Chrome to exit with code 0
+      try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
+      try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+      
       context = await chromium.launchPersistentContext(userDataDir, { 
           channel: 'chrome',
           headless: false,
           args: [
               '--disable-blink-features=AutomationControlled',
               '--window-position=-32000,-32000',
-              '--window-size=1920,1080'
+              '--window-size=1920,1080',
+              '--disable-gpu',
+              '--disable-software-rasterizer'
           ],
           ignoreDefaultArgs: ['--enable-automation']
       });
