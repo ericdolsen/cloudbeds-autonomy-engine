@@ -79,25 +79,43 @@ class PaymentTerminal {
       await page.waitForURL(`https://${this.host}/connect/*`, { timeout: 15000 }).catch(() => logger.warn('[STRIPE TERMINAL] Login redirect took too long, proceeding anyway...'));
       } // CLOSE THE IF BLOCK HERE
 
-      // 3. Click "Add Payment"
+      // 3. Switch to Folio tab
+      logger.info(`[STRIPE TERMINAL] Switching to Folio tab...`);
+      await page.waitForTimeout(2000);
+      try {
+        await page.getByRole('tab', { name: 'Folio' }).click();
+      } catch (e) {
+        // Fallback if role is not strictly defined
+        await page.locator('text="Folio"').first().click();
+      }
+      await page.waitForTimeout(1000);
+      
+      // 4. Click "ADD/REFUND PAYMENT" then "Add Payment"
       logger.info(`[STRIPE TERMINAL] Triggering 'Add Payment'...`);
-      await page.click('button:has-text("Add Payment")');
+      await page.locator('text=/ADD\\/REFUND PAYMENT/i').click();
+      await page.locator('text="Add Payment"').first().click();
+      await page.waitForTimeout(1500); // Wait for side panel
       
-      // 4. Select the Terminal from dropdown
-      // Cloudbeds Payments usually uses a custom react-select or select element for the payment method
-      await page.click('div.payment-method-dropdown'); // Adjust selector based on actual Cloudbeds UI
-      await page.click(`text="${terminalName}"`);
+      // 5. Select "Terminal" from the Payment method dropdown
+      logger.info(`[STRIPE TERMINAL] Selecting 'Terminal' as payment method...`);
+      await page.locator('text="Payment method"').locator('..').click();
+      await page.keyboard.type('Terminal');
+      await page.waitForTimeout(500);
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(1000);
       
-      // 5. Enter Amount
-      await page.fill('input[name="payment_amount"]', amount.toString()); // Adjust selector
-      
-      // 6. Click "Charge"
+      // 6. Click Process Payment
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
-      await page.click('button:has-text("Charge")');
+      await page.locator('text="Process Payment"').first().click();
       
-      // 7. Wait for Success Toast/Modal
-      // A physical card transaction can take 15-30 seconds depending on the guest.
-      await page.waitForSelector('text="Payment successful"', { timeout: 60000 });
+      // 7. Choose Terminal
+      await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
+      await page.locator(`text="${terminalName}"`).first().click();
+      
+      // 8. Wait for the physical transaction to complete (auto-closes)
+      logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
+      await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 }).catch(() => {});
+      await page.waitForSelector('text="Now processing with terminal"', { state: 'hidden', timeout: 90000 });
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
       await page.waitForTimeout(5000);
