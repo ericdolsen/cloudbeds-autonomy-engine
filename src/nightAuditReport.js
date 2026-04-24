@@ -10,7 +10,7 @@ const TOTAL_ROOMS = 50;
 class NightAuditReport {
   constructor(cloudbedsApi) {
     this.api = cloudbedsApi;
-    this.sheetId = process.env.GOOGLE_SHEET_ID;
+    this.sheetId = '1L_y5a7nNvhaEqpt6VWGvtS3RuoBPFcSRAc9fJz3jqdw';
     this.serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     this.serviceAccountKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
     this.transactionsTab = process.env.GOOGLE_SHEET_TAB_TRANSACTIONS || 'NightAuditData';
