@@ -26,6 +26,7 @@ class PaymentTerminal {
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
       
       context = await chromium.launchPersistentContext(userDataDir, { 
+          executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           channel: 'chrome',
           headless: false,
           args: [
