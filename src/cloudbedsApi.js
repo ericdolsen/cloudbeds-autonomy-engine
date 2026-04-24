@@ -378,24 +378,37 @@ class CloudbedsAPI {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
-      const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.2/getTransactions', {
-        params: {
-          startDate,
-          endDate,
-          type: 'all',
-          ...(this.propertyID ? { propertyID: this.propertyID } : {})
-        }
-      });
+      const collected = [];
+      const pageSize = 100;
+      let pageNumber = 1;
+      while (true) {
+        const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.2/getTransactions', {
+          params: {
+            startDate,
+            endDate,
+            type: 'all',
+            limit: pageSize,
+            pageNumber: pageNumber,
+            ...(this.propertyID ? { propertyID: this.propertyID } : {})
+          }
+        });
+        const page = (response.data && response.data.data) ? response.data.data : [];
+        collected.push(...page);
+        if (page.length < pageSize) break;
+        pageNumber++;
+      }
+      
       // Normalize v1.2 properties to legacy names expected by the night audit script
-      if (response.data && Array.isArray(response.data.data)) {
-        response.data.data = response.data.data.map(t => {
+      let mapped = collected;
+      if (collected.length > 0) {
+        mapped = collected.map(t => {
           let transactionAmount = parseFloat(t.amount || 0);
           if (t.transactionType === 'credit') {
             transactionAmount = -transactionAmount;
           }
           let type = '';
           if (t.transactionCategory === 'payment') type = 'Payment';
-          else if (t.transactionCategory === 'custom_item') type = 'Items & Services';
+          else if (['custom_item', 'product', 'addon'].includes(t.transactionCategory)) type = 'Items & Services';
 
           let roomRevenueType = '';
           if (t.transactionCategory === 'rate') roomRevenueType = 'Room Rate';
@@ -412,7 +425,7 @@ class CloudbedsAPI {
           };
         });
       }
-      return response.data;
+      return { success: true, data: mapped };
     } catch (e) {
       logger.error(`getTransactions failed: ${e.message}`);
       return { success: false, data: [] };

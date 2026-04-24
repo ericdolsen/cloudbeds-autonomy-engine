@@ -93,7 +93,7 @@ class NightAuditReport {
     } catch (err) {
       logger.warn(`Page rendering issue (often safe to ignore if network timeouts): ${err.message}`);
     }
-    const pdfBuffer = await page.pdf({ format: 'Letter', printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+    const pdfBuffer = await page.pdf({ format: 'Letter', landscape: true, scale: 0.8, printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
     await browser.close();
     
     return { pdfBuffer, tdFilter };
