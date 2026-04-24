@@ -378,7 +378,7 @@ class CloudbedsAPI {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
-      const response = await this._getClient().get('/getTransactions', {
+      const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.2/getTransactions', {
         params: {
           startDate,
           endDate,
@@ -386,6 +386,32 @@ class CloudbedsAPI {
           ...(this.propertyID ? { propertyID: this.propertyID } : {})
         }
       });
+      // Normalize v1.2 properties to legacy names expected by the night audit script
+      if (response.data && Array.isArray(response.data.data)) {
+        response.data.data = response.data.data.map(t => {
+          let transactionAmount = parseFloat(t.amount || 0);
+          if (t.transactionType === 'credit') {
+            transactionAmount = -transactionAmount;
+          }
+          let type = '';
+          if (t.transactionCategory === 'payment') type = 'Payment';
+          else if (t.transactionCategory === 'custom_item') type = 'Items & Services';
+
+          let roomRevenueType = '';
+          if (t.transactionCategory === 'rate') roomRevenueType = 'Room Rate';
+
+          return {
+            ...t,
+            transactionDate: t.serviceDate || (t.transactionDateTime ? t.transactionDateTime.split(' ')[0] : ''),
+            transactionAmount: transactionAmount,
+            transactionType: type,
+            roomRevenueType: roomRevenueType,
+            transactionCodeDescription: t.description || '',
+            transactionVoid: t.isDeleted,
+            roomNumber: t.roomName || ''
+          };
+        });
+      }
       return response.data;
     } catch (e) {
       logger.error(`getTransactions failed: ${e.message}`);
@@ -548,7 +574,7 @@ class CloudbedsAPI {
   // ==========================================
 
   async getHousekeepingStatus() {
-    logger.info(`[API CALL] GET /housekeeping/v1/inspections`);
+    logger.info(`[API CALL] GET /getHousekeepingStatus`);
     if (this._isMock()) {
       return this._mockReturn({
         success: true,
@@ -563,7 +589,9 @@ class CloudbedsAPI {
       });
     }
     try {
-      const response = await this._getClient().get(`/housekeeping/v1/inspections/${this.propertyID}`);
+      const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.2/getHousekeepingStatus', {
+        params: { ...(this.propertyID ? { propertyID: this.propertyID } : {}) }
+      });
       return response.data;
     } catch (error) {
       logger.error(`getHousekeepingStatus failed: ${error.message}`);

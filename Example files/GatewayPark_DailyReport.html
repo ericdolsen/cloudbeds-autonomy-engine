@@ -334,6 +334,11 @@
     .page { padding: 16px; }
     .refresh-bar { flex-direction: column; align-items: flex-start; }
   }
+
+  @media print {
+    .refresh-bar { display: none !important; }
+    .error-banner { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -858,8 +863,6 @@ function renderReport(d) {
 // ── Load embedded data immediately on page open ──
 window.addEventListener('DOMContentLoaded', () => {
   renderReport(EMBEDDED);
-  document.getElementById('statusText').innerHTML =
-    'Showing <strong>saved data from April 14, 2026</strong>. Press the button to load today\'s live numbers from Cloudbeds.';
 });
 </script>
 </body>
