@@ -190,6 +190,30 @@ app.delete('/api/admin/webhooks/:id', checkLocalNetwork, async (req, res) => {
   }
 });
 
+// Night Audit Completion Webhook (Event-Driven Alternative to Cron)
+app.post('/api/webhooks/night-audit-complete', async (req, res) => {
+  const payload = req.body;
+  logger.info(`[WEBHOOK] Incoming Night Audit Complete event: ${JSON.stringify(payload)}`);
+  
+  if (!agent.isRunning) {
+    logger.warn('[WEBHOOK] Agent offline, ignoring night audit trigger.');
+    return res.status(503).json({ error: "System is offline" });
+  }
+
+  res.status(200).send("OK"); // Ack immediately
+  
+  try {
+    logger.info('[EVENT] Night Audit is complete! Triggering reporting and housekeeping pipelines sequentially...');
+    const reportEngine = new NightAuditReport(agent.engine.api);
+    await reportEngine.runDailyAudit();
+
+    const housekeepingEngine = new HousekeepingAssigner(agent.engine.api);
+    await housekeepingEngine.run6AMAssignment();
+  } catch (err) {
+    logger.error(`[EVENT] Error during post-night-audit pipelines: ${err.message}`);
+  }
+});
+
 // Primary Webhook Ingress from Cloudbeds (System Events like reservation created)
 app.post('/api/webhooks/cloudbeds', async (req, res) => {
   const payload = req.body;
@@ -618,28 +642,6 @@ cron.schedule('0 2 * * *', async () => {
     });
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled room assignment.');
-  }
-});
-
-// 2. Automated Daily Report with Google Sheets Data Warehouse (4:00 AM)
-cron.schedule('0 4 * * *', async () => {
-  logger.info('[CRON] 4:00 AM - Triggering Automated Night Audit Data Warehouse routine...');
-  if (agent.isRunning) {
-    const reportEngine = new NightAuditReport(agent.engine.api);
-    await reportEngine.runDailyAudit();
-  } else {
-    logger.warn('[CRON] Agent is not running. Skipping reporting pipeline.');
-  }
-});
-
-// 3. Automated Housekeeping Clustering & Scheduling (6:00 AM)
-cron.schedule('0 6 * * *', async () => {
-  logger.info('[CRON] 6:00 AM - Triggering Housekeeping Load-Balancer algorithm...');
-  if (agent.isRunning) {
-    const housekeepingEngine = new HousekeepingAssigner(agent.engine.api);
-    await housekeepingEngine.run6AMAssignment();
-  } else {
-    logger.warn('[CRON] Agent is not running. Skipping Housekeeping pipeline.');
   }
 });
 

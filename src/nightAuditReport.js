@@ -13,7 +13,7 @@ class NightAuditReport {
     this.sheetId = process.env.GOOGLE_SHEET_ID;
     this.serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     this.serviceAccountKey = process.env.GOOGLE_PRIVATE_KEY ? process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
-    this.transactionsTab = process.env.GOOGLE_SHEET_TAB_TRANSACTIONS || 'Sheet1';
+    this.transactionsTab = process.env.GOOGLE_SHEET_TAB_TRANSACTIONS || 'NightAuditData';
   }
 
   toYMD(d) { return d.toISOString().slice(0,10); }
@@ -40,14 +40,11 @@ class NightAuditReport {
     const lyMs = this.monthStart(lyDate);
     const lyYs = this.yearStart(lyDate);
 
-    // 1. Fetch live data
-    const [tdOcc, mtdTxns, ytdTxns, lyOcc, lyMtdTxns, lyYtdTxns, tdRes, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
+    // 1. Fetch live data for TODAY only
+    const [tdOcc, tdTxns, lyOcc, tdRes, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
         this.api.getHouseCount(this.toYMD(reportDate)),
-        this.api.getTransactions(this.toYMD(ms),   this.toYMD(reportDate)),
-        this.api.getTransactions(this.toYMD(ys),   this.toYMD(reportDate)),
+        this.api.getTransactions(this.toYMD(reportDate), this.toYMD(reportDate)),
         this.api.getHouseCount(this.toYMD(lyDate)),
-        this.api.getTransactions(this.toYMD(lyMs), this.toYMD(lyDate)),
-        this.api.getTransactions(this.toYMD(lyYs), this.toYMD(lyDate)),
         this.api.getReservations(this.toYMD(reportDate), this.toYMD(reportDate)),
         this.api.getReservations(this.toYMD(ms),   this.toYMD(reportDate)),
         this.api.getReservations(this.toYMD(ys),   this.toYMD(reportDate)),
@@ -55,16 +52,23 @@ class NightAuditReport {
         this.api.getReservations(this.toYMD(lyYs), this.toYMD(lyDate))
     ]);
 
-    const tdFilter = (mtdTxns.data || []).filter(t => t.transactionDate === this.toYMD(reportDate));
-    const lyFilter = (lyMtdTxns.data || []).filter(t => t.transactionDate === this.toYMD(lyDate));
+    const tdFilter = (tdTxns.data || []);
+    
+    // 1.5 Fetch Historical MTD/YTD data from Google Sheets database
+    const mtdTxnsData = await this.getTransactionsFromSheets(ms, reportDate);
+    const ytdTxnsData = await this.getTransactionsFromSheets(ys, reportDate);
+    const lyMtdTxnsData = await this.getTransactionsFromSheets(lyMs, lyDate);
+    const lyYtdTxnsData = await this.getTransactionsFromSheets(lyYs, lyDate);
+
+    const lyFilter = lyMtdTxnsData.filter(t => t.transactionDate === this.toYMD(lyDate));
 
     // 2. Build the exact EMBEDDED json object
     const td   = { ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...(tdOcc.data || {}), ...this.computeActivity(tdRes.data || [], reportDate) };
-    const mtd  = { ...this.computeFromTransactions(mtdTxns.data || [], ms, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate) };
-    const ytd  = { ...this.computeFromTransactions(ytdTxns.data || [], ys, reportDate), ...this.computeActivity(ytdRes.data || [], reportDate) };
+    const mtd  = { ...this.computeFromTransactions(mtdTxnsData, ms, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate) };
+    const ytd  = { ...this.computeFromTransactions(ytdTxnsData, ys, reportDate), ...this.computeActivity(ytdRes.data || [], reportDate) };
     const ly   = { ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...(lyOcc.data || {}), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
-    const ly_m = { ...this.computeFromTransactions(lyMtdTxns.data || [], lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
-    const ly_y = { ...this.computeFromTransactions(lyYtdTxns.data || [], lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyDate) };
+    const ly_m = { ...this.computeFromTransactions(lyMtdTxnsData, lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
+    const ly_y = { ...this.computeFromTransactions(lyYtdTxnsData, lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyDate) };
 
     const dataObj = {
       report_date: this.toYMD(reportDate), ly_date: this.toYMD(lyDate),
@@ -173,7 +177,44 @@ class NightAuditReport {
   }
 
 
-  // --- GOOGLE SHEETS APPENDER ---
+  // --- GOOGLE SHEETS APP / READ ---
+  async getTransactionsFromSheets(startDate, endDate) {
+    const auth = this.getGoogleAuth();
+    if (!auth || !this.sheetId) return [];
+    try {
+      const sheets = google.sheets({ version: 'v4', auth });
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: this.sheetId,
+        range: `${this.transactionsTab}!A:Z`
+      });
+      const rows = res.data.values || [];
+      const startStr = this.toYMD(startDate);
+      const endStr = this.toYMD(endDate);
+      
+      const parsed = [];
+      for (const r of rows) {
+        if (!r[1] || r[1] === '-') continue;
+        const tDate = r[1];
+        if (tDate >= startStr && tDate <= endStr) {
+          parsed.push({
+            transactionDate: tDate,
+            transactionAmount: r[2],
+            transactionType: r[3],
+            roomRevenueType: r[4],
+            transactionCodeDescription: r[5],
+            roomNumber: r[6] === '-' ? '' : r[6],
+            reservationID: r[7] === '-' ? '' : r[7],
+            transactionVoid: r[8] === 'Yes'
+          });
+        }
+      }
+      return parsed;
+    } catch(e) {
+      logger.error(`[NIGHT AUDIT] Error reading from Sheets DB: ${e.message}`);
+      return [];
+    }
+  }
+
   async appendTransactionsToSheets(transactions, dateStr) {
     const auth = this.getGoogleAuth();
     if (!auth || !this.sheetId) {

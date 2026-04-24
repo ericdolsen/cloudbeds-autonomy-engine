@@ -1,6 +1,8 @@
 const axios = require('axios');
 const { logger } = require('./logger');
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 /**
  * Cloudbeds REST API wrapper
  * Falls back to mock data when CLOUDBEDS_API_KEY is unset or 'MOCK_KEY'.
@@ -396,6 +398,7 @@ class CloudbedsAPI {
         collected.push(...page);
         if (page.length < pageSize) break;
         pageNumber++;
+        await sleep(250);
       }
       
       // Normalize v1.2 properties to legacy names expected by the night audit script
@@ -460,6 +463,7 @@ class CloudbedsAPI {
         if (page.length < pageSize) break;
         offset += pageSize;
         if (offset > 2000) break; // safety cap
+        await sleep(250);
       }
       return { success: true, data: collected };
     } catch (e) {
