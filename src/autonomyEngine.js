@@ -286,7 +286,7 @@ STANDARD WORKFLOW:
             logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
             const resData = await this.api.getReservationById(args.reservationId);
             if (resData.success && resData.data) {
-              const updateRes = await this.api.updateReservation(args.reservationId, { reservationStatus: 'checked_out' });
+              const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
               if (!updateRes.success) {
                 apiResult = { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };
               } else {
