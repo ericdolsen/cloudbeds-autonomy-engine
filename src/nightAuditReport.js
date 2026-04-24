@@ -114,7 +114,7 @@ class NightAuditReport {
     const { pdfBuffer, tdFilter } = result;
 
     // 5. Append transactions to Google Sheets ensuring independent database construction
-    await this.appendTransactionsToSheets(tdFilter, this.toYMD(reportDate));
+    await this.appendTransactionsToSheets(tdFilter, this.toYMD(reportDate), {});
 
     // 6. Send the PDF email
     await this.sendPdfEmail(pdfBuffer, this.toYMD(reportDate));
@@ -215,7 +215,7 @@ class NightAuditReport {
     }
   }
 
-  async appendTransactionsToSheets(transactions, dateStr) {
+  async appendTransactionsToSheets(transactions, dateStr, sharedCache = {}) {
     const auth = this.getGoogleAuth();
     if (!auth || !this.sheetId) {
       logger.error('[NIGHT AUDIT] *** SHEETS DB UNAVAILABLE *** — Google credentials or GOOGLE_SHEET_ID missing. Transaction data for ' + dateStr + ' will NOT be saved. Check GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, and GOOGLE_SHEET_ID env vars.');
@@ -225,17 +225,44 @@ class NightAuditReport {
       logger.info(`[NIGHT AUDIT] Appending ${transactions.length} transaction records to Google Sheets for ${dateStr} (tab: ${this.transactionsTab})...`);
       const sheets = google.sheets({ version: 'v4', auth });
 
-      const values = transactions.map(t => [
-        dateStr,
-        t.transactionDate || '-',
-        t.transactionAmount || '0',
-        t.transactionType || '-',
-        t.roomRevenueType || '-',
-        t.transactionCodeDescription || '-',
-        t.roomNumber || '-',
-        t.reservationID || '-',
-        t.transactionVoid ? 'Yes' : 'No'
-      ]);
+      // Cache missing reservations
+      const uniqueResIds = [...new Set(transactions.map(t => t.reservationID).filter(id => id && id !== '-'))];
+      const missingIds = uniqueResIds.filter(id => !sharedCache[id]);
+      
+      if (missingIds.length > 0) {
+        logger.info(`[NIGHT AUDIT] Resolving ${missingIds.length} missing reservation profiles for ${dateStr}...`);
+        for (const id of missingIds) {
+          const resData = await this.api.getReservationById(id);
+          if (resData.success && resData.data) {
+            sharedCache[id] = {
+              checkIn: resData.data.startDate || '-',
+              checkOut: resData.data.endDate || '-',
+              groupName: resData.data.companyName || resData.data.allotmentBlockCode || '-'
+            };
+          } else {
+            sharedCache[id] = { checkIn: '-', checkOut: '-', groupName: '-' };
+          }
+          await new Promise(r => setTimeout(r, 100)); // sleep to respect rate limits
+        }
+      }
+
+      const values = transactions.map(t => {
+        const c = sharedCache[t.reservationID] || { checkIn: '-', checkOut: '-', groupName: '-' };
+        return [
+          dateStr,
+          t.transactionDate || '-',
+          t.transactionAmount || '0',
+          t.transactionType || '-',
+          t.roomRevenueType || '-',
+          t.transactionCodeDescription || '-',
+          t.roomNumber || '-',
+          t.reservationID || '-',
+          t.transactionVoid ? 'Yes' : 'No',
+          c.checkIn,
+          c.checkOut,
+          c.groupName
+        ];
+      });
 
       if (values.length === 0) {
         values.push([dateStr, "NO_TRANSACTIONS_FOUND"]);

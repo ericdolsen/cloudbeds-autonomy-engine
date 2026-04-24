@@ -43,6 +43,9 @@ async function main() {
   let successCount = 0;
   let skipCount = 0;
   let errorCount = 0;
+  
+  // Shared cache to avoid fetching the same reservation details hundreds of times across days
+  const sharedCache = {};
 
   for (let i = days; i >= 1; i--) {
     const date = new Date(today);
@@ -60,7 +63,7 @@ async function main() {
         logger.info(`[BACKFILL] ${dateStr}: ${txns.length} transactions fetched.`);
       }
 
-      await report.appendTransactionsToSheets(txns, dateStr);
+      await report.appendTransactionsToSheets(txns, dateStr, sharedCache);
       successCount++;
     } catch (e) {
       logger.error(`[BACKFILL] ${dateStr}: FAILED — ${e.message}`);
