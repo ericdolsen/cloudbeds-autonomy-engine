@@ -667,6 +667,45 @@ class CloudbedsAPI {
     return results;
   }
 
+  /**
+   * GET /getWebhooks — list current webhook subscriptions for the property.
+   */
+  async getWebhooks() {
+    logger.info(`[API CALL] GET /getWebhooks`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, data: [] });
+    }
+    try {
+      const response = await this._getClient().get('/getWebhooks', {
+        params: { ...(this.propertyID ? { propertyID: this.propertyID } : {}) }
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`getWebhooks failed: ${error.message}`);
+      return { success: false, data: [], error: error.message };
+    }
+  }
+
+  /**
+   * DELETE /deleteWebhook — remove a single subscription by its Cloudbeds subscriptionID.
+   */
+  async deleteWebhook(subscriptionID) {
+    logger.info(`[API CALL] DELETE /deleteWebhook | id=${subscriptionID}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true });
+    }
+    try {
+      const body = this._encodeForm({ subscriptionID }, { attachProperty: false });
+      // Cloudbeds accepts deleteWebhook over POST with the id in the body.
+      const response = await this._getClient().post('/deleteWebhook', body, { headers: this._formHeaders() });
+      return response.data;
+    } catch (error) {
+      logger.error(`deleteWebhook failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+
   // ==========================================
   // GUEST PROFILE / REGISTRATION
   // ==========================================
