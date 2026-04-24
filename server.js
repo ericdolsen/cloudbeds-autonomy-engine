@@ -65,6 +65,10 @@ app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res
      const result = await reportEngine.generatePdfBuffer(reportDt);
      if (!result || !result.pdfBuffer) throw new Error("PDF Generation Failed");
      
+     // Write to Sheets in background — don't block PDF delivery
+     reportEngine.appendTransactionsToSheets(result.tdFilter, reportEngine.toYMD(reportDt))
+       .catch(e => logger.error(`[EMPLOYEE] Background Sheets write failed: ${e.message}`));
+
      res.setHeader('Content-Length', result.pdfBuffer.length);
      res.setHeader('Content-Type', 'application/pdf');
      res.setHeader('Content-Disposition', 'inline; filename="GatewayPark_DailyReport.pdf"');
