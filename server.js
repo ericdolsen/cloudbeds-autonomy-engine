@@ -129,6 +129,67 @@ app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res
   }
 });
 
+// ==========================================
+// WEBHOOK ADMIN ENDPOINTS
+// (staff-only, gated by checkLocalNetwork)
+// ==========================================
+
+// List the webhook subscriptions Cloudbeds currently has on file for this property.
+app.get('/api/admin/webhooks', checkLocalNetwork, async (req, res) => {
+  try {
+    const result = await agent.engine.api.getWebhooks();
+    res.json(result);
+  } catch (err) {
+    logger.error(`[ADMIN] List webhooks failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Register the full event set against an endpoint URL. Idempotent on Cloudbeds'
+// side (duplicate (object,action,url) tuples return the existing subscription).
+// endpointUrl can be passed in the body, or falls back to the WEBHOOK_PUBLIC_URL
+// env var. The handler always appends `/api/webhooks/cloudbeds` if the URL
+// supplied doesn't already end with that path — so the staff just paste their
+// tunnel hostname.
+app.post('/api/admin/webhooks/register', checkLocalNetwork, async (req, res) => {
+  try {
+    let base = (req.body && req.body.endpointUrl) || process.env.WEBHOOK_PUBLIC_URL;
+    if (!base) {
+      return res.status(400).json({
+        success: false,
+        error: 'endpointUrl is required (pass in body or set WEBHOOK_PUBLIC_URL in .env)'
+      });
+    }
+    base = base.replace(/\/+$/, ''); // strip trailing slashes
+    const endpointUrl = base.endsWith('/api/webhooks/cloudbeds')
+      ? base
+      : `${base}/api/webhooks/cloudbeds`;
+
+    logger.info(`[ADMIN] Registering all Cloudbeds webhooks against ${endpointUrl}...`);
+    const results = await agent.engine.api.registerAllWebhooks(endpointUrl);
+    logger.action('Webhooks', `Registered ${results.length} Cloudbeds webhook subscriptions to ${endpointUrl}`, 'ok');
+    res.json({ success: true, endpointUrl, results });
+  } catch (err) {
+    logger.error(`[ADMIN] Webhook registration failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete one subscription by its Cloudbeds subscriptionID.
+app.delete('/api/admin/webhooks/:id', checkLocalNetwork, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await agent.engine.api.deleteWebhook(id);
+    if (result.success) {
+      logger.action('Webhooks', `Deleted subscription ${id}`, 'ok');
+    }
+    res.json(result);
+  } catch (err) {
+    logger.error(`[ADMIN] Webhook delete failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Primary Webhook Ingress from Cloudbeds (System Events like reservation created)
 app.post('/api/webhooks/cloudbeds', async (req, res) => {
   const payload = req.body;
@@ -616,6 +677,13 @@ function validateStartupConfig() {
       // MESSAGING_PROVIDER=none is a valid dev choice — don't flag it as missing.
       required: [],
       optional: ['MESSAGING_PROVIDER', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM', 'WHISTLE_API_KEY', 'WHISTLE_API_BASE']
+    },
+    {
+      name: 'Cloudbeds Webhook Subscriptions',
+      // Optional but recommended — without it, /api/admin/webhooks/register
+      // requires the staff to type the public URL each time.
+      required: [],
+      optional: ['WEBHOOK_PUBLIC_URL']
     }
   ];
 
@@ -629,6 +697,12 @@ function validateStartupConfig() {
     else logger.info('[CONFIG] Messaging provider: Whistle (OK).');
   } else {
     logger.info('[CONFIG] Messaging provider: none (dry-run — agent replies logged but not sent).');
+  }
+
+  if (process.env.WEBHOOK_PUBLIC_URL) {
+    logger.info(`[CONFIG] Cloudbeds webhook public URL: ${process.env.WEBHOOK_PUBLIC_URL}`);
+  } else {
+    logger.warn('[CONFIG] WEBHOOK_PUBLIC_URL not set — POST /api/admin/webhooks/register will require an explicit endpointUrl in the request body.');
   }
 
   let allOk = true;
