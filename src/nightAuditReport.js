@@ -93,13 +93,13 @@ class NightAuditReport {
     const page = await browser.newPage();
     try {
       await page.setContent(htmlContent, { waitUntil: 'networkidle' });
-      await page.waitForTimeout(500); 
+      await page.waitForTimeout(500);
     } catch (err) {
       logger.warn(`Page rendering issue (often safe to ignore if network timeouts): ${err.message}`);
     }
     const pdfBuffer = await page.pdf({ format: 'Letter', landscape: true, scale: 0.8, printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
     await browser.close();
-    
+
     return { pdfBuffer, tdFilter };
   }
 
@@ -110,7 +110,7 @@ class NightAuditReport {
 
     const result = await this.generatePdfBuffer(reportDate);
     if (!result) return;
-    
+
     const { pdfBuffer, tdFilter } = result;
 
     // 5. Append transactions to Google Sheets ensuring independent database construction
@@ -146,7 +146,7 @@ class NightAuditReport {
     }
 
     const days = this.daysBetween(startDate, endDate);
-    const rn = rooms.size; 
+    const rn = rooms.size;
     const adr = rn > 0 ? rev / rn : 0;
     const revpar = rev / (TOTAL_ROOMS * days);
     const occ_pct = rn / (TOTAL_ROOMS * days);
@@ -218,22 +218,22 @@ class NightAuditReport {
   async appendTransactionsToSheets(transactions, dateStr) {
     const auth = this.getGoogleAuth();
     if (!auth || !this.sheetId) {
-      logger.warn('[NIGHT AUDIT] Google Keys not established. Skipping permanent Google Sheet Database inject.');
+      logger.error('[NIGHT AUDIT] *** SHEETS DB UNAVAILABLE *** — Google credentials or GOOGLE_SHEET_ID missing. Transaction data for ' + dateStr + ' will NOT be saved. Check GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY, and GOOGLE_SHEET_ID env vars.');
       return;
     }
     try {
-      logger.info(`[NIGHT AUDIT] Appending ${transactions.length} native raw transaction records to Google Sheets...`);
+      logger.info(`[NIGHT AUDIT] Appending ${transactions.length} transaction records to Google Sheets for ${dateStr} (tab: ${this.transactionsTab})...`);
       const sheets = google.sheets({ version: 'v4', auth });
-      
+
       const values = transactions.map(t => [
-        dateStr, 
-        t.transactionDate || '-', 
-        t.transactionAmount || '0', 
-        t.transactionType || '-', 
-        t.roomRevenueType || '-', 
-        t.transactionCodeDescription || '-', 
-        t.roomNumber || '-', 
-        t.reservationID || '-', 
+        dateStr,
+        t.transactionDate || '-',
+        t.transactionAmount || '0',
+        t.transactionType || '-',
+        t.roomRevenueType || '-',
+        t.transactionCodeDescription || '-',
+        t.roomNumber || '-',
+        t.reservationID || '-',
         t.transactionVoid ? 'Yes' : 'No'
       ]);
 
@@ -247,9 +247,9 @@ class NightAuditReport {
          valueInputOption: 'USER_ENTERED',
          resource: { values }
       });
-      logger.info('[NIGHT AUDIT] Successfully populated Google Sheets active ledger.');
+      logger.info(`[NIGHT AUDIT] Successfully saved ${transactions.length} transactions for ${dateStr} to Google Sheets (tab: ${this.transactionsTab}).`);
     } catch(e) {
-      logger.error(`[NIGHT AUDIT] Automated raw append failed: ${e.message}`);
+      logger.error(`[NIGHT AUDIT] *** SHEETS DB WRITE FAILED *** for ${dateStr} — ${e.message}. Verify the tab "${this.transactionsTab}" exists and the service account has Editor access to spreadsheet ID: ${this.sheetId}`);
     }
   }
 
