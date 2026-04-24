@@ -426,7 +426,7 @@ class CloudbedsAPI {
             transactionVoid: t.isDeleted,
             roomNumber: t.roomName || ''
           };
-        });
+        }).filter(t => t.transactionDate >= startDate && t.transactionDate <= endDate);
       }
       return { success: true, data: mapped };
     } catch (e) {
