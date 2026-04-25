@@ -649,6 +649,32 @@ cron.schedule('0 2 * * *', async () => {
   }
 });
 
+// 2. Night Audit at 4:00 AM
+cron.schedule('0 4 * * *', async () => {
+  logger.info('[CRON] 4:00 AM - Triggering Night Audit Generation...');
+  if (agent.isRunning) {
+    await agent.processIncomingMessage({
+       source: 'cron',
+       text: 'It is 4:00 AM. Please run the daily night audit report.'
+    });
+  } else {
+    logger.warn('[CRON] Agent is not running. Skipping scheduled night audit.');
+  }
+});
+
+// 3. Housekeeping Assignment at 6:00 AM
+cron.schedule('0 6 * * *', async () => {
+  logger.info('[CRON] 6:00 AM - Triggering Housekeeping Assignment task...');
+  if (agent.isRunning) {
+    await agent.processIncomingMessage({
+       source: 'cron',
+       text: 'It is 6:00 AM. Please run the morning housekeeping assignment algorithm.'
+    });
+  } else {
+    logger.warn('[CRON] Agent is not running. Skipping scheduled housekeeping assignment.');
+  }
+});
+
 // BOOTSTRAP
 // =====================================
 

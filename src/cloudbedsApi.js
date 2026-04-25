@@ -178,7 +178,7 @@ class CloudbedsAPI {
   }
 
   async getUnassignedRooms(startDate, endDate) {
-    logger.info(`[API CALL] GET /getUnassignedRooms | ${startDate} to ${endDate}`);
+    logger.info(`[API CALL] getUnassignedRooms (Synthesized) | ${startDate} to ${endDate}`);
     if (this._isMock()) {
       return this._mockReturn({
         success: true,
@@ -189,14 +189,39 @@ class CloudbedsAPI {
       });
     }
     try {
-      const response = await this._getClient().get('/getUnassignedRooms', {
-        params: {
-          startDate,
-          endDate,
-          ...(this.propertyID ? { propertyID: this.propertyID } : {})
+      // 1. Get all physical rooms
+      const roomsRes = await this._getClient().get('/getRooms', {
+        params: this.propertyID ? { propertyID: this.propertyID } : {}
+      });
+      const allRooms = (roomsRes.data && roomsRes.data.data && roomsRes.data.data[0] && roomsRes.data.data[0].rooms) ? roomsRes.data.data[0].rooms : [];
+
+      // 2. Get all reservations intersecting these dates
+      const resData = await this.getReservations(startDate, endDate);
+      const activeReservations = resData.success ? resData.data : [];
+
+      // 3. Find rooms that are assigned
+      const assignedRoomIDs = new Set();
+      activeReservations.forEach(r => {
+        if (r.status === 'canceled' || r.status === 'no_show') return;
+        if (r.guestList) {
+          Object.values(r.guestList).forEach(guest => {
+            if (guest.rooms && Array.isArray(guest.rooms)) {
+              guest.rooms.forEach(rm => {
+                assignedRoomIDs.add(rm.roomID);
+              });
+            }
+          });
         }
       });
-      return response.data;
+
+      // 4. Filter to unassigned rooms
+      const unassigned = allRooms.filter(room => !assignedRoomIDs.has(room.roomID)).map(r => ({
+        roomId: r.roomName, // map to expected format by LLM
+        roomType: r.roomTypeName,
+        doorlockID: r.doorlockID || ''
+      }));
+
+      return { success: true, data: unassigned };
     } catch (error) {
       logger.error(`getUnassignedRooms failed: ${error.message}`);
       return { success: false, error: error.message };
