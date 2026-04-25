@@ -63,10 +63,10 @@ class NightAuditReport {
     const lyFilter = lyMtdTxnsData.filter(t => t.transactionDate === this.toYMD(lyDate));
 
     // 2. Build the exact EMBEDDED json object
-    const td   = { ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...(tdOcc.data || {}), ...this.computeActivity(tdRes.data || [], reportDate) };
+    const td   = { ...(tdOcc.data || {}), ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...this.computeActivity(tdRes.data || [], reportDate) };
     const mtd  = { ...this.computeFromTransactions(mtdTxnsData, ms, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate) };
     const ytd  = { ...this.computeFromTransactions(ytdTxnsData, ys, reportDate), ...this.computeActivity(ytdRes.data || [], reportDate) };
-    const ly   = { ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...(lyOcc.data || {}), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
+    const ly   = { ...(lyOcc.data || {}), ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
     const ly_m = { ...this.computeFromTransactions(lyMtdTxnsData, lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
     const ly_y = { ...this.computeFromTransactions(lyYtdTxnsData, lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyDate) };
 
@@ -138,7 +138,7 @@ class NightAuditReport {
 
       if (roomRevTypes.includes(rvType)) {
         rev += amt;
-        if (t.roomNumber) rooms.add(t.roomNumber);
+        if (t.roomNumber) rooms.add(t.transactionDate + '_' + t.roomNumber);
       }
       if (['Items & Services','Add-On'].includes(type)) items += amt;
       if (type === 'Payment' && amt < 0) pay += Math.abs(amt);
@@ -188,8 +188,8 @@ class NightAuditReport {
         range: `${this.transactionsTab}!A:Z`
       });
       const rows = res.data.values || [];
-      const startStr = this.toYMD(startDate);
-      const endStr = this.toYMD(endDate);
+      const startStr = typeof startDate === 'string' ? startDate : this.toYMD(startDate);
+      const endStr = typeof endDate === 'string' ? endDate : this.toYMD(endDate);
       
       const parsed = [];
       for (const r of rows) {
@@ -313,3 +313,4 @@ class NightAuditReport {
 }
 
 module.exports = { NightAuditReport };
+

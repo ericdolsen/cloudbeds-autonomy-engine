@@ -400,56 +400,70 @@ class CloudbedsAPI {
   }
 
   async getTransactions(startDate, endDate) {
-    logger.info(`[API CALL] GET /getTransactions | ${startDate} to ${endDate}`);
+    logger.info(`[API CALL] POST /accounting/v1.0/transactions | ${startDate} to ${endDate}`);
     if (this._isMock()) {
       return this._mockReturn({ success: true, data: [] });
     }
     try {
       const collected = [];
       const pageSize = 100;
-      let pageNumber = 1;
+      let pageToken = null;
       while (true) {
-        const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.2/getTransactions', {
-          params: {
-            startDate,
-            endDate,
-            type: 'all',
-            limit: pageSize,
-            pageNumber: pageNumber,
-            ...(this.propertyID ? { propertyID: this.propertyID } : {})
+        const response = await this._getClient().post('https://api.cloudbeds.com/accounting/v1.0/transactions', {
+          limit: pageSize,
+          pageToken: pageToken,
+          filters: {
+            and: [
+              { operator: 'greater_than_or_equal', field: 'service_date', value: startDate },
+              { operator: 'less_than_or_equal', field: 'service_date', value: endDate }
+            ]
+          }
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.propertyID ? { 'X-PROPERTY-ID': this.propertyID } : {})
           }
         });
-        const page = (response.data && response.data.data) ? response.data.data : [];
+        const page = (response.data && response.data.transactions) ? response.data.transactions : [];
         collected.push(...page);
-        if (page.length < pageSize) break;
-        pageNumber++;
-        await sleep(250);
+        pageToken = response.data ? response.data.nextPageToken : null;
+        if (!pageToken) break;
+        await sleep(150); // Be nice to rate limits
       }
       
-      // Normalize v1.2 properties to legacy names expected by the night audit script
       let mapped = collected;
       if (collected.length > 0) {
         mapped = collected.map(t => {
-          let transactionAmount = parseFloat(t.amount || 0);
-          if (t.transactionType === 'credit') {
-            transactionAmount = -transactionAmount;
-          }
+          const code = t.internalTransactionCode || '';
+          const transactionAmount = parseFloat(t.amount || 0);
+          
           let type = '';
-          if (t.transactionCategory === 'payment') type = 'Payment';
-          else if (['custom_item', 'product', 'addon'].includes(t.transactionCategory)) type = 'Items & Services';
+          if (code.startsWith('9')) type = 'Payment';
+          else if (code.startsWith('2') || code.startsWith('3') || code.startsWith('4')) type = 'Items & Services';
+
+          let transactionCategory = '';
+          if (code.startsWith('1')) transactionCategory = 'rate';
+          else if (code.startsWith('8')) transactionCategory = 'tax';
+          else if (code.startsWith('9')) transactionCategory = 'payment';
+          else transactionCategory = 'custom_item';
+
+          if (code.endsWith('A')) transactionCategory = 'adjustment';
 
           let roomRevenueType = '';
-          if (t.transactionCategory === 'rate') roomRevenueType = 'Room Rate';
+          if (code.startsWith('1') && !code.endsWith('V') && !code.endsWith('A')) roomRevenueType = 'Room Rate';
+          if (t.description === 'Room Revenue - Manual') roomRevenueType = 'Room Rate';
 
           return {
             ...t,
-            transactionDate: t.serviceDate || (t.transactionDateTime ? t.transactionDateTime.split(' ')[0] : ''),
+            transactionDate: t.serviceDate || (t.transactionDatetime ? t.transactionDatetime.split('T')[0] : ''),
             transactionAmount: transactionAmount,
             transactionType: type,
             roomRevenueType: roomRevenueType,
+            transactionCategory: transactionCategory,
             transactionCodeDescription: t.description || '',
-            transactionVoid: t.isDeleted,
-            roomNumber: t.roomName || ''
+            transactionVoid: code.endsWith('V'),
+            roomNumber: t.sourceId || '', // use sourceId as unique identifier for room-night math
+            reservationID: t.sourceId || ''
           };
         }).filter(t => t.transactionDate >= startDate && t.transactionDate <= endDate);
       }
