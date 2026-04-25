@@ -159,7 +159,7 @@ class NightAuditReport {
     let ci=0, co=0, ns=0, wi=0, cx=0;
     const seenCI = new Set(), seenCO = new Set();
     for (const r of reservations) {
-      if (r.checkInDate === ymd && !seenCI.has(r.reservationID)) {
+      if (r.startDate === ymd && !seenCI.has(r.reservationID)) {
         seenCI.add(r.reservationID);
         const status = r.status || '';
         if (['checked_in','checked_out'].includes(status)) ci++;
@@ -168,7 +168,7 @@ class NightAuditReport {
         const src = r.sourceID || r.source || '';
         if (src.toLowerCase().includes('walk')) wi++;
       }
-      if (r.checkOutDate === ymd && !seenCO.has(r.reservationID)) {
+      if (r.endDate === ymd && !seenCO.has(r.reservationID)) {
         seenCO.add(r.reservationID);
         if ((r.status||'') === 'checked_out') co++;
       }
@@ -191,12 +191,14 @@ class NightAuditReport {
       const startStr = typeof startDate === 'string' ? startDate : this.toYMD(startDate);
       const endStr = typeof endDate === 'string' ? endDate : this.toYMD(endDate);
       
-      const parsed = [];
+      const parsedMap = new Map();
+      let pseudoIdCount = 0;
       for (const r of rows) {
         if (!r[1] || r[1] === '-') continue;
         const tDate = r[1];
         if (tDate >= startStr && tDate <= endStr) {
-          parsed.push({
+          const tID = r[12] && r[12] !== '-' ? r[12] : `pseudo_${pseudoIdCount++}`;
+          parsedMap.set(tID, {
             transactionDate: tDate,
             transactionAmount: r[2],
             transactionType: r[3],
@@ -204,11 +206,12 @@ class NightAuditReport {
             transactionCodeDescription: r[5],
             roomNumber: r[6] === '-' ? '' : r[6],
             reservationID: r[7] === '-' ? '' : r[7],
-            transactionVoid: r[8] === 'Yes'
+            transactionVoid: r[8] === 'Yes',
+            transactionID: tID
           });
         }
       }
-      return parsed;
+      return Array.from(parsedMap.values());
     } catch(e) {
       logger.error(`[NIGHT AUDIT] Error reading from Sheets DB: ${e.message}`);
       return [];
@@ -260,7 +263,8 @@ class NightAuditReport {
           t.transactionVoid ? 'Yes' : 'No',
           c.checkIn,
           c.checkOut,
-          c.groupName
+          c.groupName,
+          t.transactionID || '-'
         ];
       });
 

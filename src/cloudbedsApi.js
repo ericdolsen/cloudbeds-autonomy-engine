@@ -463,7 +463,8 @@ class CloudbedsAPI {
             transactionCodeDescription: t.description || '',
             transactionVoid: code.endsWith('V'),
             roomNumber: t.sourceId || '', // use sourceId as unique identifier for room-night math
-            reservationID: t.sourceId || ''
+            reservationID: t.sourceId || '',
+            transactionID: t.id || ''
           };
         }).filter(t => t.transactionDate >= startDate && t.transactionDate <= endDate);
       }
