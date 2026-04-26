@@ -133,6 +133,32 @@ app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res
   }
 });
 
+// 7-/14-day forward forecast (per-day OCC %, ADR, RevPAR, Room Revenue).
+app.get('/api/employee/forecast', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  const days = Math.min(60, Math.max(1, parseInt(req.query.days || 14, 10)));
+  try {
+    const result = await agent.engine.api.getForecast(days);
+    res.json(result);
+  } catch (err) {
+    logger.error(`[EMPLOYEE] Forecast failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Business on the books for a calendar month (default = current month).
+app.get('/api/employee/business-on-books', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  const offset = parseInt(req.query.monthOffset || 0, 10);
+  try {
+    const result = await agent.engine.api.getBusinessOnBooks(offset);
+    res.json(result);
+  } catch (err) {
+    logger.error(`[EMPLOYEE] BoB failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // WEBHOOK ADMIN ENDPOINTS
 // (staff-only, gated by checkLocalNetwork)
