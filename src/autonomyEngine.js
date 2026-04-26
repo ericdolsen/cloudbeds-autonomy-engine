@@ -300,11 +300,16 @@ STANDARD WORKFLOW:
             logger.info(`[INVOICE GUARD] Evaluating invoice send for ${args.reservationId}`);
             const resData = await this.api.getReservationById(args.reservationId);
             if (resData.success && resData.data) {
-              if (resData.data.paymentType === 'Channel Collect Booking') {
-                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Payment Type is Channel Collect Booking!`);
+              const source = (resData.data.source || '').toLowerCase();
+              const guestEmail = this._resolveGuestEmail(resData.data) || '';
+              
+              const isMaskedEmail = guestEmail.includes('expediapartnercentral.com') || guestEmail.includes('guest.booking.com') || guestEmail.includes('agoda.com');
+              const isChannelCollect = isMaskedEmail || source.includes('expedia collect') || source.includes('booking.com collect');
+              
+              if (isChannelCollect) {
+                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Identified as Channel Collect / OTA Masked Booking!`);
                 apiResult = { success: true, message: "Invoice skipped due to Channel Collect policy." };
               } else {
-                const guestEmail = this._resolveGuestEmail(resData.data);
                 if (!guestEmail) {
                   apiResult = { success: true, message: `Invoice email skipped (missing guest email).` };
                 } else if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
