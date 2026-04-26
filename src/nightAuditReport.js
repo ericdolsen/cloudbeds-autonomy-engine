@@ -16,7 +16,12 @@ class NightAuditReport {
     this.transactionsTab = process.env.GOOGLE_SHEET_TAB_TRANSACTIONS || 'NightAuditData';
   }
 
-  toYMD(d) { return d.toISOString().slice(0,10); }
+  toYMD(d) {
+    if (typeof d === 'string') return d;
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    const localISOTime = (new Date(d.getTime() - tzOffset)).toISOString().slice(0, -1);
+    return localISOTime.split('T')[0];
+  }
   addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
   addYears(d, n) { const r = new Date(d); r.setFullYear(r.getFullYear() + n); return r; }
   monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
