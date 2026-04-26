@@ -31,7 +31,6 @@ class WhistleListener {
           headless: false, // Run headlessly? User might want to see it, or keep it hidden. Set to false for "-32000" position trick
           args: [
               '--disable-blink-features=AutomationControlled',
-              '--window-position=-32000,-32000',
               '--window-size=1920,1080',
               '--disable-gpu',
               '--disable-software-rasterizer'
@@ -74,12 +73,28 @@ class WhistleListener {
   async _pollForMessages() {
     if (!this.page) return;
 
+    const currentUrl = this.page.url();
+    if (currentUrl.includes('login') || currentUrl.includes('auth')) {
+        logger.warn(`[WHISTLE RPA] Warning: The browser appears to be stuck on a login page: ${currentUrl}. Please log in manually inside the popup window.`);
+        await this.page.waitForTimeout(5000);
+        return;
+    }
+
+    // Handle potential iframe embedding (since Whistle is an acquired product)
+    let context = this.page;
+    const iframeCount = await this.page.locator('iframe').count();
+    if (iframeCount > 0) {
+        // If there's an iframe, we will search inside the first iframe (or one containing whistle/guest)
+        context = this.page.frameLocator('iframe').first();
+    }
+
     // Use flexible semantic locators to find unread messages
-    const unreadIndicator = this.page.locator('[aria-label*="unread" i], .unread, [class*="unread" i]').first();
+    const unreadIndicator = context.locator('[aria-label*="unread" i], .unread, [class*="unread" i]').first();
     
     const isUnread = await unreadIndicator.isVisible().catch(() => false);
     if (!isUnread) {
-        return; // No new messages
+        // Just quietly wait
+        return; 
     }
 
     logger.info(`[WHISTLE RPA] Unread message detected! Extracting...`);
