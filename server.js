@@ -9,6 +9,7 @@ const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
 const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
 const { MessagingClient } = require('./src/messaging');
+const { WhistleListener } = require('./src/whistleListener');
 
 require('dotenv').config();
 
@@ -812,8 +813,11 @@ async function boot() {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });
 
+  let whistleListener = null;
+
   const gracefulShutdown = async () => {
     logger.info('Shutting down server and agent...');
+    if (whistleListener) await whistleListener.stop();
     await agent.stop();
     process.exit(0);
   };
@@ -824,6 +828,11 @@ async function boot() {
   // Start the background scraping sentinel
   try {
     await agent.start();
+    
+    if (process.env.ENABLE_WHISTLE_RPA === 'true') {
+      whistleListener = new WhistleListener(agent);
+      whistleListener.start().catch(e => logger.error(`[WHISTLE RPA] Fatal error: ${e.message}`));
+    }
   } catch (error) {
     logger.error('Fatal agent error:', error.message);
   }
