@@ -6,7 +6,7 @@ const { logger } = require('./logger');
 class WhistleListener {
   constructor(autonomyAgent) {
     this.agent = autonomyAgent;
-    this.host = process.env.CLOUDBEDS_UI_HOST || 'hotels.cloudbeds.com';
+    this.host = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com';
     this.whistleUrl = process.env.CLOUDBEDS_WHISTLE_URL || `https://${this.host}/guest_experience/inbox`;
     this.isRunning = false;
     this.context = null;
