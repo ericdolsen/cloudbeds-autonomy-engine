@@ -53,14 +53,16 @@ class NightAuditReport {
     const lb = (d) => this.addDays(d, -ACTIVITY_LOOKBACK_DAYS);
 
     // 1. Fetch live data for TODAY only
-    const [tdOcc, tdTxns, lyOcc, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
+    const [tdOcc, tdTxns, lyOcc, mtdRes, ytdRes, lyMtdRes, lyYtdRes, forecastRes, bobRes] = await Promise.all([
         this.api.getHouseCount(this.toYMD(reportDate)),
         this.api.getTransactions(this.toYMD(reportDate), this.toYMD(reportDate)),
         this.api.getHouseCount(this.toYMD(lyDate)),
         this.api.getReservations(this.toYMD(lb(ms)),   this.toYMD(reportDate)),
         this.api.getReservations(this.toYMD(lb(ys)),   this.toYMD(reportDate)),
         this.api.getReservations(this.toYMD(lb(lyMs)), this.toYMD(lyDate)),
-        this.api.getReservations(this.toYMD(lb(lyYs)), this.toYMD(lyDate))
+        this.api.getReservations(this.toYMD(lb(lyYs)), this.toYMD(lyDate)),
+        this.api.getForecast(14),
+        this.api.getBusinessOnBooks(0)
     ]);
 
     const tdFilter = (tdTxns.data || []);
@@ -86,7 +88,9 @@ class NightAuditReport {
     const dataObj = {
       report_date: this.toYMD(reportDate), ly_date: this.toYMD(lyDate),
       month_name: this.fmtMonth(reportDate), ly_month: this.fmtMonth(lyDate),
-      td, mtd, ytd, ly, ly_m, ly_y
+      td, mtd, ytd, ly, ly_m, ly_y,
+      forecast: (forecastRes && forecastRes.success && forecastRes.data) ? forecastRes.data : null,
+      bob: (bobRes && bobRes.success && bobRes.data) ? bobRes.data : null
     };
 
     // 3. Inject into HTML
