@@ -130,7 +130,7 @@ class NightAuditReport {
   computeFromTransactions(txns, startDate, endDate) {
     const start = this.toYMD(startDate), end = this.toYMD(endDate);
     const active = txns.filter(t => t.transactionVoid !== '1' && t.transactionVoid !== true);
-    const roomRevTypes = ['Room Rate', 'Room Revenue - Manual'];
+    
     let rev = 0, items = 0, pay = 0, adj = 0;
     let rooms = new Set();
 
@@ -141,13 +141,25 @@ class NightAuditReport {
       const rvType = t.roomRevenueType || '';
       const desc = t.transactionCodeDescription || '';
 
-      if (roomRevTypes.includes(rvType)) {
+      // Gross Room Revenue
+      if (rvType === 'Room Rate') {
         rev += amt;
         if (t.roomNumber) rooms.add(t.transactionDate + '_' + t.roomNumber);
       }
+
+      // Room Rate Adjustments (Identify via 1000A code or description for Google Sheets historical data)
+      const isRoomRateAdjustment = 
+        (t.internalTransactionCode === '1000A') || 
+        (desc === 'Room Rate' && amt < 0 && rvType !== 'Room Rate') ||
+        (desc === 'Rate - Adjustment');
+
+      if (isRoomRateAdjustment) {
+        adj += amt;
+        rev += amt; // Subtract from Net Room Revenue to match Native Cloudbeds output
+      }
+
       if (['Items & Services','Add-On'].includes(type)) items += amt;
       if (type === 'Payment' && amt < 0) pay += Math.abs(amt);
-      if (desc === 'Rate - Adjustment') adj += amt;
     }
 
     const days = this.daysBetween(startDate, endDate);

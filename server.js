@@ -647,7 +647,7 @@ cron.schedule('0 2 * * *', async () => {
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled room assignment.');
   }
-});
+}, { timezone: "America/Chicago" });
 
 // 2. Night Audit at 4:00 AM
 cron.schedule('0 4 * * *', async () => {
@@ -660,7 +660,7 @@ cron.schedule('0 4 * * *', async () => {
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled night audit.');
   }
-});
+}, { timezone: "America/Chicago" });
 
 // 3. Housekeeping Assignment at 6:00 AM
 cron.schedule('0 6 * * *', async () => {
@@ -673,7 +673,7 @@ cron.schedule('0 6 * * *', async () => {
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled housekeeping assignment.');
   }
-});
+}, { timezone: "America/Chicago" });
 
 // BOOTSTRAP
 // =====================================
