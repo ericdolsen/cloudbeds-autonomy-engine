@@ -335,9 +335,39 @@
     .refresh-bar { flex-direction: column; align-items: flex-start; }
   }
 
+  /* Forecast + Business on the Books */
+  .forecast-wrap { overflow-x: auto; }
+  .forecast-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .forecast-table th, .forecast-table td {
+    padding: 6px 8px;
+    text-align: right;
+    border-bottom: 1px solid #E5E7EB;
+    white-space: nowrap;
+  }
+  .forecast-table th { background: var(--blue); color: #fff; font-weight: 600; font-size: 10px; }
+  .forecast-table th:first-child, .forecast-table td:first-child {
+    text-align: left;
+    font-weight: 600;
+    background: #F8FAFC;
+    position: sticky;
+    left: 0;
+  }
+  .forecast-table tr:nth-child(even) td:not(:first-child) { background: #FAFBFC; }
+  .forecast-weekend { background: #FFF7ED !important; }
+  .bob-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-top: 8px;
+  }
+  @media (max-width: 900px) {
+    .bob-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
   @media print {
     .refresh-bar { display: none !important; }
     .error-banner { display: none !important; }
+    .forecast-table { font-size: 9px; }
   }
 </style>
 </head>
@@ -464,6 +494,25 @@
         <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--muted);">Press "Update to Today's Numbers" to load the report.</td></tr>
       </tbody>
     </table>
+  </div>
+
+  <!-- 14-DAY FORECAST -->
+  <div class="section-label" style="margin-top:28px;">14-Day Forecast</div>
+  <div class="compare-table-wrap forecast-wrap">
+    <table class="forecast-table">
+      <thead><tr id="forecastHead"></tr></thead>
+      <tbody id="forecastBody"></tbody>
+    </table>
+  </div>
+
+  <!-- BUSINESS ON THE BOOKS -->
+  <div class="section-label" style="margin-top:28px;">Business on the Books — <span id="bob-month">—</span></div>
+  <div class="bob-grid">
+    <div class="kpi-card"><div class="kpi-label">Room Nights</div><div class="kpi-value" id="bob-rn">—</div><div class="kpi-sub" id="bob-rn-sub">&nbsp;</div></div>
+    <div class="kpi-card"><div class="kpi-label">Room Revenue</div><div class="kpi-value" id="bob-rev">—</div><div class="kpi-sub">on the books</div></div>
+    <div class="kpi-card"><div class="kpi-label">Occupancy</div><div class="kpi-value" id="bob-occ">—</div><div class="kpi-sub">forecast</div></div>
+    <div class="kpi-card"><div class="kpi-label">ADR</div><div class="kpi-value" id="bob-adr">—</div><div class="kpi-sub">average</div></div>
+    <div class="kpi-card"><div class="kpi-label">RevPAR</div><div class="kpi-value" id="bob-revpar">—</div><div class="kpi-sub">forecast</div></div>
   </div>
 
 </div>
@@ -680,7 +729,9 @@ const EMBEDDED = {
   ytd:  { occ:2672,occ_pct:0.5138,rev:271820.76,items:1429,  pay:284167.29, adj:-8325.64, total_rev:273249.76,adr:101.73, revpar:52.27,  ci:1349,co:1345,ns:2,wi:127,cx:9},
   ly:   { occ:21, occ_pct:0.42,   rev:2082.48, items:0,      pay:2796.26,   adj:0,        total_rev:2082.48,  adr:99.17,  revpar:41.65,  ci:11, co:10, ns:0, wi:2,  cx:0 },
   ly_m: { occ:386,occ_pct:0.5514, rev:46064.88,items:411,    pay:50451.45,  adj:-1108.5,  total_rev:46475.88, adr:119.34, revpar:65.81,  ci:173,co:170,ns:2, wi:14, cx:3 },
-  ly_y: { occ:2103,occ_pct:0.4038,rev:255194.37,items:2890,  pay:298772.11, adj:-9450,    total_rev:258084.37,adr:121.35, revpar:49.07,  ci:1180,co:1175,ns:8,wi:103,cx:22}
+  ly_y: { occ:2103,occ_pct:0.4038,rev:255194.37,items:2890,  pay:298772.11, adj:-9450,    total_rev:258084.37,adr:121.35, revpar:49.07,  ci:1180,co:1175,ns:8,wi:103,cx:22},
+  forecast: null,
+  bob: null
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -856,8 +907,73 @@ function renderReport(d) {
   });
   document.getElementById('tableBody').innerHTML = html;
 
+  // ── 14-DAY FORECAST ──
+  renderForecast(d.forecast);
+
+  // ── BUSINESS ON THE BOOKS ──
+  renderBob(d.bob, rd);
+
   document.getElementById('footerGenerated').textContent =
     `Data through ${fmtShort(rd)} · Loaded ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}`;
+}
+
+function renderForecast(fc) {
+  const head = document.getElementById('forecastHead');
+  const body = document.getElementById('forecastBody');
+  if (!head || !body) return;
+  if (!fc || !fc.forecast || !fc.forecast.length) {
+    head.innerHTML = '';
+    body.innerHTML = '<tr><td style="text-align:center;color:var(--muted);padding:18px;">Forecast unavailable.</td></tr>';
+    return;
+  }
+  const days = fc.forecast;
+  const dayHeader = days.map(d => {
+    const dt = new Date(d.date + 'T12:00:00');
+    const dow = dt.getDay();
+    const cls = (dow === 0 || dow === 6) ? 'forecast-weekend' : '';
+    return `<th class="${cls}">${dt.toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'})}</th>`;
+  }).join('');
+  head.innerHTML = '<th></th>' + dayHeader;
+
+  const cell = (d, val, fmt) => {
+    const dt = new Date(d.date + 'T12:00:00');
+    const dow = dt.getDay();
+    const cls = (dow === 0 || dow === 6) ? 'forecast-weekend' : '';
+    return `<td class="${cls}">${fmt(val)}</td>`;
+  };
+  const row = (label, key, fmt) =>
+    `<tr><td>${label}</td>${days.map(d => cell(d, d[key], fmt)).join('')}</tr>`;
+
+  body.innerHTML =
+    row('OCC',         'occupancy',     fmtPct) +
+    row('ADR',         'adr',           fmtDollar2) +
+    row('REVPAR',      'revpar',        fmtDollar2) +
+    row('Room Rev.',   'roomRevenue',   fmtDollar);
+}
+
+function renderBob(b, rd) {
+  const monthSpan = document.getElementById('bob-month');
+  if (!b) {
+    if (monthSpan) monthSpan.textContent = fmtMonth(rd);
+    document.getElementById('bob-rn').textContent = '—';
+    document.getElementById('bob-rev').textContent = '—';
+    document.getElementById('bob-occ').textContent = '—';
+    document.getElementById('bob-adr').textContent = '—';
+    document.getElementById('bob-revpar').textContent = '—';
+    return;
+  }
+  if (monthSpan) {
+    const ms = new Date(b.monthStart + 'T12:00:00');
+    monthSpan.textContent = fmtMonth(ms);
+  }
+  const totalAvailable = (b.totalRooms || TOTAL_ROOMS) *
+    (Math.round((new Date(b.monthEnd) - new Date(b.monthStart)) / 86400000) + 1);
+  document.getElementById('bob-rn').textContent      = fmtInt(b.roomNights);
+  document.getElementById('bob-rn-sub').textContent  = `of ${fmtInt(totalAvailable)} available`;
+  document.getElementById('bob-rev').textContent     = fmtDollar(b.roomRevenue);
+  document.getElementById('bob-occ').textContent     = fmtPct(b.occupancy);
+  document.getElementById('bob-adr').textContent     = fmtDollar2(b.adr);
+  document.getElementById('bob-revpar').textContent  = fmtDollar2(b.revpar);
 }
 
 // ── Load embedded data immediately on page open ──

@@ -45,16 +45,24 @@ class NightAuditReport {
     const lyMs = this.monthStart(lyDate);
     const lyYs = this.yearStart(lyDate);
 
+    // Reservation queries filter on check-IN date. To capture every check-OUT
+    // that lands within the reporting window, look back 31 days before each
+    // window start so reservations with earlier check-ins but in-window
+    // check-outs are returned.
+    const ACTIVITY_LOOKBACK_DAYS = 31;
+    const lb = (d) => this.addDays(d, -ACTIVITY_LOOKBACK_DAYS);
+
     // 1. Fetch live data for TODAY only
-    const [tdOcc, tdTxns, lyOcc, tdRes, mtdRes, ytdRes, lyMtdRes, lyYtdRes] = await Promise.all([
+    const [tdOcc, tdTxns, lyOcc, mtdRes, ytdRes, lyMtdRes, lyYtdRes, forecastRes, bobRes] = await Promise.all([
         this.api.getHouseCount(this.toYMD(reportDate)),
         this.api.getTransactions(this.toYMD(reportDate), this.toYMD(reportDate)),
         this.api.getHouseCount(this.toYMD(lyDate)),
-        this.api.getReservations(this.toYMD(reportDate), this.toYMD(reportDate)),
-        this.api.getReservations(this.toYMD(ms),   this.toYMD(reportDate)),
-        this.api.getReservations(this.toYMD(ys),   this.toYMD(reportDate)),
-        this.api.getReservations(this.toYMD(lyMs), this.toYMD(lyDate)),
-        this.api.getReservations(this.toYMD(lyYs), this.toYMD(lyDate))
+        this.api.getReservations(this.toYMD(lb(ms)),   this.toYMD(reportDate)),
+        this.api.getReservations(this.toYMD(lb(ys)),   this.toYMD(reportDate)),
+        this.api.getReservations(this.toYMD(lb(lyMs)), this.toYMD(lyDate)),
+        this.api.getReservations(this.toYMD(lb(lyYs)), this.toYMD(lyDate)),
+        this.api.getForecast(14),
+        this.api.getBusinessOnBooks(0)
     ]);
 
     const tdFilter = (tdTxns.data || []);
@@ -68,17 +76,21 @@ class NightAuditReport {
     const lyFilter = lyMtdTxnsData.filter(t => t.transactionDate === this.toYMD(lyDate));
 
     // 2. Build the exact EMBEDDED json object
-    const td   = { ...(tdOcc.data || {}), ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...this.computeActivity(tdRes.data || [], reportDate) };
-    const mtd  = { ...this.computeFromTransactions(mtdTxnsData, ms, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate) };
-    const ytd  = { ...this.computeFromTransactions(ytdTxnsData, ys, reportDate), ...this.computeActivity(ytdRes.data || [], reportDate) };
-    const ly   = { ...(lyOcc.data || {}), ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
-    const ly_m = { ...this.computeFromTransactions(lyMtdTxnsData, lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate) };
-    const ly_y = { ...this.computeFromTransactions(lyYtdTxnsData, lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyDate) };
+    // Activity counters use date ranges so MTD/YTD reflect the full window, not just the report date.
+    // For TD we pass the wider mtdRes list because tdRes (check-in window only) misses today's check-outs.
+    const td   = { ...(tdOcc.data || {}), ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate, reportDate) };
+    const mtd  = { ...this.computeFromTransactions(mtdTxnsData, ms, reportDate), ...this.computeActivity(mtdRes.data || [], ms, reportDate) };
+    const ytd  = { ...this.computeFromTransactions(ytdTxnsData, ys, reportDate), ...this.computeActivity(ytdRes.data || [], ys, reportDate) };
+    const ly   = { ...(lyOcc.data || {}), ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate, lyDate) };
+    const ly_m = { ...this.computeFromTransactions(lyMtdTxnsData, lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyMs, lyDate) };
+    const ly_y = { ...this.computeFromTransactions(lyYtdTxnsData, lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyYs, lyDate) };
 
     const dataObj = {
       report_date: this.toYMD(reportDate), ly_date: this.toYMD(lyDate),
       month_name: this.fmtMonth(reportDate), ly_month: this.fmtMonth(lyDate),
-      td, mtd, ytd, ly, ly_m, ly_y
+      td, mtd, ytd, ly, ly_m, ly_y,
+      forecast: (forecastRes && forecastRes.success && forecastRes.data) ? forecastRes.data : null,
+      bob: (bobRes && bobRes.success && bobRes.data) ? bobRes.data : null
     };
 
     // 3. Inject into HTML
@@ -171,21 +183,26 @@ class NightAuditReport {
     return { rev, items, pay, adj, total_rev: rev + items, adr, revpar, occ_pct, occ: rn, rn };
   }
 
-  computeActivity(reservations, date) {
-    const ymd = this.toYMD(date);
+  computeActivity(reservations, startDate, endDate) {
+    // For backwards compat: a single date arg becomes a single-day range.
+    if (endDate === undefined) endDate = startDate;
+    const startYMD = this.toYMD(startDate);
+    const endYMD = this.toYMD(endDate);
     let ci=0, co=0, ns=0, wi=0, cx=0;
     const seenCI = new Set(), seenCO = new Set();
     for (const r of reservations) {
-      if (r.startDate === ymd && !seenCI.has(r.reservationID)) {
+      const sd = r.startDate || '';
+      const ed = r.endDate || '';
+      if (sd >= startYMD && sd <= endYMD && !seenCI.has(r.reservationID)) {
         seenCI.add(r.reservationID);
         const status = r.status || '';
         if (['checked_in','checked_out'].includes(status)) ci++;
         if (status === 'no_show') ns++;
-        if (status === 'cancelled') cx++;
+        if (status === 'canceled' || status === 'cancelled') cx++;
         const src = r.sourceID || r.source || '';
         if (src.toLowerCase().includes('walk')) wi++;
       }
-      if (r.endDate === ymd && !seenCO.has(r.reservationID)) {
+      if (ed >= startYMD && ed <= endYMD && !seenCO.has(r.reservationID)) {
         seenCO.add(r.reservationID);
         if ((r.status||'') === 'checked_out') co++;
       }
@@ -208,25 +225,31 @@ class NightAuditReport {
       const startStr = typeof startDate === 'string' ? startDate : this.toYMD(startDate);
       const endStr = typeof endDate === 'string' ? endDate : this.toYMD(endDate);
       
+      // Dedupe key strategy:
+      //   - Rows with a real transactionID (column M) — use that as the key.
+      //   - Legacy rows missing the ID — use a deterministic content composite
+      //     so an exact-row duplicate (e.g. from a script re-run before the
+      //     transactionID column existed) collapses into one entry. Two
+      //     legitimately-identical legacy fees would also collapse, but the
+      //     historical over-counting risk is the larger problem.
       const parsedMap = new Map();
-      let pseudoIdCount = 0;
       for (const r of rows) {
         if (!r[1] || r[1] === '-') continue;
         const tDate = r[1];
-        if (tDate >= startStr && tDate <= endStr) {
-          const tID = r[12] && r[12] !== '-' ? r[12] : `pseudo_${pseudoIdCount++}`;
-          parsedMap.set(tID, {
-            transactionDate: tDate,
-            transactionAmount: r[2],
-            transactionType: r[3],
-            roomRevenueType: r[4],
-            transactionCodeDescription: r[5],
-            roomNumber: r[6] === '-' ? '' : r[6],
-            reservationID: r[7] === '-' ? '' : r[7],
-            transactionVoid: r[8] === 'Yes',
-            transactionID: tID
-          });
-        }
+        if (tDate < startStr || tDate > endStr) continue;
+        const realId = r[12] && r[12] !== '-' ? r[12] : null;
+        const key = realId || `legacy|${r[1]}|${r[2]}|${r[3]}|${r[4]}|${r[5]}|${r[6]}|${r[7]}|${r[8]}`;
+        parsedMap.set(key, {
+          transactionDate: tDate,
+          transactionAmount: r[2],
+          transactionType: r[3],
+          roomRevenueType: r[4],
+          transactionCodeDescription: r[5],
+          roomNumber: r[6] === '-' ? '' : r[6],
+          reservationID: r[7] === '-' ? '' : r[7],
+          transactionVoid: r[8] === 'Yes',
+          transactionID: realId || key
+        });
       }
       return Array.from(parsedMap.values());
     } catch(e) {

@@ -502,7 +502,7 @@ class CloudbedsAPI {
         collected.push(...page);
         if (page.length < pageSize) break;
         offset += pageSize;
-        if (offset > 2000) break; // safety cap
+        if (offset > 10000) break; // safety cap; YTD with lookback can exceed 2000 for busy properties
         await sleep(250);
       }
       return { success: true, data: collected };
@@ -554,17 +554,170 @@ class CloudbedsAPI {
     return { success: true, data: matches };
   }
 
+  /**
+   * Synthesize a per-day forecast (OCC %, ADR, RevPAR, Room Revenue) by
+   * pulling reservations whose stays overlap the next `daysForward` nights and
+   * distributing each reservation's room total evenly across its nights.
+   *
+   * Cloudbeds doesn't expose a first-class daily-forecast endpoint, so this
+   * method composes one from /getReservations + /getRooms.
+   */
   async getForecast(daysForward = 14) {
-    logger.info(`[API CALL] GET /getForecast | +${daysForward} days`);
+    logger.info(`[API CALL] getForecast (synthesized) | +${daysForward} days`);
     if (this._isMock()) {
-      return this._mockReturn([
-        { date: "Tomorrow", occupancy: "82%", onTheBooksRev: "$2,400" },
-        { date: "+2 Days", occupancy: "85%", onTheBooksRev: "$2,600" },
-        { date: "+3 Days", occupancy: "60%", onTheBooksRev: "$1,800" },
-        { date: "Next Weekend", occupancy: "95%", onTheBooksRev: "$4,200" }
-      ]);
+      const today = new Date();
+      const days = [];
+      for (let i = 0; i < daysForward; i++) {
+        const d = new Date(today.getTime() + i * 86400000);
+        days.push({
+          date: d.toISOString().slice(0,10),
+          occupiedRooms: 30 + (i % 7),
+          occupancy: 0.6,
+          roomRevenue: 3000 + i * 50,
+          adr: 100,
+          revpar: 60
+        });
+      }
+      return this._mockReturn({ success: true, data: { forecast: days, totalRooms: 50 } });
     }
-    return { error: "Live forecast endpoint not mapped yet." };
+
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const end = new Date(start.getTime() + daysForward * 86400000);
+    const toYMD = d => d.toISOString().slice(0, 10);
+
+    const totalRooms = await this._resolveTotalRooms();
+    const buckets = {};
+    for (let i = 0; i < daysForward; i++) {
+      buckets[toYMD(new Date(start.getTime() + i * 86400000))] = { occupiedRooms: 0, roomRevenue: 0 };
+    }
+
+    const reservations = await this._collectStaysInRange(start, end);
+    for (const stay of reservations) {
+      for (const ymd of stay.nights) {
+        if (buckets[ymd]) {
+          buckets[ymd].occupiedRooms += 1;
+          buckets[ymd].roomRevenue += stay.perNight;
+        }
+      }
+    }
+
+    const forecast = Object.keys(buckets).sort().map(date => {
+      const b = buckets[date];
+      return {
+        date,
+        occupiedRooms: b.occupiedRooms,
+        occupancy: totalRooms > 0 ? b.occupiedRooms / totalRooms : 0,
+        roomRevenue: Math.round(b.roomRevenue * 100) / 100,
+        adr: b.occupiedRooms > 0 ? Math.round((b.roomRevenue / b.occupiedRooms) * 100) / 100 : 0,
+        revpar: totalRooms > 0 ? Math.round((b.roomRevenue / totalRooms) * 100) / 100 : 0
+      };
+    });
+    return { success: true, data: { forecast, totalRooms } };
+  }
+
+  /**
+   * Business on the books for a calendar month.
+   * Returns confirmed/in-house room nights and revenue for the requested
+   * month, including past nights (actuals) plus future nights (on the books).
+   * `monthOffset` 0 = current month, 1 = next month, -1 = previous month.
+   */
+  async getBusinessOnBooks(monthOffset = 0) {
+    logger.info(`[API CALL] getBusinessOnBooks | monthOffset=${monthOffset}`);
+    if (this._isMock()) {
+      return this._mockReturn({
+        success: true,
+        data: {
+          monthStart: '2026-04-01', monthEnd: '2026-04-30',
+          roomNights: 850, roomRevenue: 94500,
+          occupancy: 0.5667, adr: 111.18, revpar: 63.00, totalRooms: 50
+        }
+      });
+    }
+
+    const today = new Date();
+    const monthStart = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + monthOffset + 1, 0);
+    const toYMD = d => d.toISOString().slice(0, 10);
+
+    const totalRooms = await this._resolveTotalRooms();
+    // +1 day boundary so checkouts on the last of the month are captured
+    const reservations = await this._collectStaysInRange(monthStart, new Date(monthEnd.getTime() + 86400000));
+
+    const startYMD = toYMD(monthStart);
+    const endYMD = toYMD(monthEnd);
+    let roomNights = 0, roomRevenue = 0;
+    for (const stay of reservations) {
+      for (const ymd of stay.nights) {
+        if (ymd >= startYMD && ymd <= endYMD) {
+          roomNights += 1;
+          roomRevenue += stay.perNight;
+        }
+      }
+    }
+
+    const monthDays = Math.round((monthEnd.getTime() - monthStart.getTime()) / 86400000) + 1;
+    return {
+      success: true,
+      data: {
+        monthStart: startYMD,
+        monthEnd: endYMD,
+        roomNights,
+        roomRevenue: Math.round(roomRevenue * 100) / 100,
+        occupancy: totalRooms > 0 ? roomNights / (totalRooms * monthDays) : 0,
+        adr: roomNights > 0 ? Math.round((roomRevenue / roomNights) * 100) / 100 : 0,
+        revpar: totalRooms > 0 ? Math.round((roomRevenue / (totalRooms * monthDays)) * 100) / 100 : 0,
+        totalRooms
+      }
+    };
+  }
+
+  // Resolve the property's total room count via /getRooms with an env override.
+  async _resolveTotalRooms() {
+    const envOverride = parseInt(process.env.TOTAL_ROOMS || 0, 10);
+    if (envOverride > 0) return envOverride;
+    try {
+      const res = await this._getClient().get('/getRooms', {
+        params: this.propertyID ? { propertyID: this.propertyID } : {}
+      });
+      const rooms = res.data?.data?.[0]?.rooms || [];
+      if (rooms.length > 0) return rooms.length;
+    } catch (e) {
+      logger.warn(`_resolveTotalRooms: /getRooms failed (${e.message}); falling back to 50`);
+    }
+    return 50;
+  }
+
+  // Pull reservations whose stay overlaps [windowStart, windowEnd) and
+  // expand each into a list of nights with an even per-night allocation of
+  // the room total. Includes a 31-day check-in lookback so guests already
+  // staying when the window opens are captured.
+  async _collectStaysInRange(windowStart, windowEnd) {
+    const toYMD = d => d.toISOString().slice(0, 10);
+    const lookback = new Date(windowStart.getTime() - 31 * 86400000);
+    const list = await this.getReservations(toYMD(lookback), toYMD(windowEnd));
+    if (!list.success) return [];
+
+    const stays = [];
+    for (const r of (list.data || [])) {
+      const status = (r.status || '').toLowerCase();
+      if (status === 'canceled' || status === 'cancelled' || status === 'no_show') continue;
+      const sd = r.startDate;
+      const ed = r.endDate;
+      if (!sd || !ed) continue;
+      const startMs = new Date(sd + 'T00:00:00Z').getTime();
+      const endMs = new Date(ed + 'T00:00:00Z').getTime();
+      if (!(endMs > startMs)) continue;
+      const nightsCount = Math.max(1, Math.round((endMs - startMs) / 86400000));
+      const total = parseFloat(r.total || r.subtotal || r.balance || r.roomTotal || 0);
+      const perNight = total / nightsCount;
+      const nights = [];
+      for (let i = 0; i < nightsCount; i++) {
+        nights.push(toYMD(new Date(startMs + i * 86400000)));
+      }
+      stays.push({ reservationID: r.reservationID, nights, perNight, status });
+    }
+    return stays;
   }
 
   /**
