@@ -633,16 +633,34 @@ app.get('/api/kiosk/config', (req, res) => {
   });
 });
 
+// Helper to calculate the hotel's logical business day, factoring in the 2:00 AM rollover.
+function getHotelBusinessDate(offsetDays = 0) {
+  const d = new Date();
+  d.setHours(d.getHours() - 2);
+  d.setDate(d.getDate() + offsetDays);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(d);
+  
+  const m = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+  const y = parts.find(p => p.type === 'year').value;
+  return `${y}-${m}-${day}`;
+}
+
 // CRON SCHEDULER
 // =====================================
 
-// 1. Room Assignment Optimization at 2:00 AM
-cron.schedule('0 2 * * *', async () => {
-  logger.info('[CRON] 2:00 AM - Triggering Room Assignment Optimization task...');
+// 1. Room Assignment Optimization at 3:00 AM (After native Night Audit finishes at 2:00 AM)
+cron.schedule('0 3 * * *', async () => {
+  const todayStr = getHotelBusinessDate(0);
+  const tomorrowStr = getHotelBusinessDate(1);
+  logger.info(`[CRON] 3:00 AM - Triggering Room Assignment Optimization task for arriving date: ${todayStr}...`);
   if (agent.isRunning) {
     await agent.processIncomingMessage({
        source: 'cron',
-       text: 'It is 2:00 AM. Please run the nightly room assignment optimization algorithm. Look for unassigned rooms and optimize reservations.'
+       text: `It is 3:00 AM and Night Audit has completed. The new business date is ${todayStr}. Please run the nightly room assignment optimization algorithm. Look for unassigned rooms between ${todayStr} and ${tomorrowStr} and assign them to incoming reservations for today (${todayStr}).`
     });
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled room assignment.');
@@ -653,10 +671,12 @@ cron.schedule('0 2 * * *', async () => {
 cron.schedule('0 4 * * *', async () => {
   logger.info('[CRON] 4:00 AM - Triggering Night Audit Generation...');
   if (agent.isRunning) {
-    await agent.processIncomingMessage({
-       source: 'cron',
-       text: 'It is 4:00 AM. Please run the daily night audit report.'
-    });
+    try {
+      const reportEngine = new NightAuditReport(agent.engine.api);
+      await reportEngine.runDailyAudit();
+    } catch (e) {
+      logger.error(`[CRON] Night audit failed: ${e.message}`);
+    }
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled night audit.');
   }
@@ -666,10 +686,12 @@ cron.schedule('0 4 * * *', async () => {
 cron.schedule('0 6 * * *', async () => {
   logger.info('[CRON] 6:00 AM - Triggering Housekeeping Assignment task...');
   if (agent.isRunning) {
-    await agent.processIncomingMessage({
-       source: 'cron',
-       text: 'It is 6:00 AM. Please run the morning housekeeping assignment algorithm.'
-    });
+    try {
+      const housekeepingEngine = new HousekeepingAssigner(agent.engine.api);
+      await housekeepingEngine.run6AMAssignment();
+    } catch (e) {
+      logger.error(`[CRON] Housekeeping failed: ${e.message}`);
+    }
   } else {
     logger.warn('[CRON] Agent is not running. Skipping scheduled housekeeping assignment.');
   }

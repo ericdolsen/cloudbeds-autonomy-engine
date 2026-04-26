@@ -19,6 +19,20 @@ class HousekeepingAssigner {
     this.lastAssignmentDate = null;
   }
 
+  getHotelBusinessDate() {
+    const d = new Date();
+    d.setHours(d.getHours() - 2);
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(d);
+    
+    const m = parts.find(p => p.type === 'month').value;
+    const day = parts.find(p => p.type === 'day').value;
+    const y = parts.find(p => p.type === 'year').value;
+    return `${y}-${m}-${day}`;
+  }
+
   getGoogleAuth() {
     if (!this.serviceAccountEmail || !this.serviceAccountKey) return null;
     return new google.auth.GoogleAuth({
@@ -83,7 +97,7 @@ class HousekeepingAssigner {
       });
       
       const rows = response.data.values || [];
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.getHotelBusinessDate();
       
       let dateColIndex = -1;
       let dateRowIndex = -1;
@@ -128,7 +142,7 @@ class HousekeepingAssigner {
   }
 
   clusterRooms(rooms, housekeepers) {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = this.getHotelBusinessDate();
     if (this.lastAssignmentDate !== todayStr) {
       this.pinnedAssignments.clear();
       this.lastAssignmentDate = todayStr;
@@ -204,7 +218,7 @@ class HousekeepingAssigner {
 
     try {
       const sheets = google.sheets({ version: 'v4', auth });
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.getHotelBusinessDate();
       
       for (const bucket of assignments) {
         const roomsString = bucket.assignedRooms.map(r => `${r.roomID}(${r.reservationCondition})`).join(', ');
