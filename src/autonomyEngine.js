@@ -244,6 +244,26 @@ STANDARD WORKFLOW:
 4. Draft a clear, empathetic, and exceptionally helpful message back to the guest.`;
   }
 
+  async _sendMessageWithRetry(chat, payload) {
+    let attempt = 0;
+    const maxRetries = 3; // Try up to 3 times
+    while (attempt < maxRetries) {
+      try {
+        return await chat.sendMessage(payload);
+      } catch (e) {
+        // Check if it's a 503 (High Demand) or 429 (Rate Limit) error
+        const isTemporary = e.message && (e.message.includes('503') || e.message.includes('429') || e.message.includes('UNAVAILABLE'));
+        if (isTemporary && attempt < maxRetries - 1) {
+          attempt++;
+          logger.warn(`[AUTONOMY ENGINE] Temporary AI server error detected. Retrying attempt ${attempt}/${maxRetries - 1} in ${attempt * 3} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 3000));
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
   async executeTask(messagePayload) {
     logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
 
@@ -253,7 +273,7 @@ STANDARD WORKFLOW:
       // Send the initial user message with an explicit source tag so the model
       // can tell guest-facing chat (kiosk/whistle) from admin batch work (cron/system).
       const sourceTag = messagePayload.source ? `[source=${messagePayload.source}] ` : '';
-      let response = await chat.sendMessage({ message: `${sourceTag}${messagePayload.text}` });
+      let response = await this._sendMessageWithRetry(chat, { message: `${sourceTag}${messagePayload.text}` });
       logger.info(`[AUTONOMY ENGINE] Thinking...${messagePayload.sessionKey ? ` (session=${messagePayload.sessionKey})` : ''}`);
 
       // Handle function calls loop
@@ -362,7 +382,7 @@ STANDARD WORKFLOW:
         logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
 
         // Send tool output back to the model
-        response = await chat.sendMessage({
+        response = await this._sendMessageWithRetry(chat, {
           message: [{
             functionResponse: {
               name: name,
