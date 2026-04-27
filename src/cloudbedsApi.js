@@ -493,7 +493,7 @@ class CloudbedsAPI {
     try {
       const collected = [];
       const pageSize = 100;
-      let offset = 0;
+      let pageIndex = 1;
       while (true) {
         const response = await this._getClient().get('/getReservations', {
           params: {
@@ -501,15 +501,15 @@ class CloudbedsAPI {
             checkInTo,
             includeGuestsDetails: 'true',
             limit: pageSize,
-            offset: offset,
+            pageNumber: pageIndex,
             ...(this.propertyID ? { propertyID: this.propertyID } : {})
           }
         });
         const page = (response.data && response.data.data) || [];
         collected.push(...page);
         if (page.length < pageSize) break;
-        offset += pageSize;
-        if (offset > 10000) break; // safety cap; YTD with lookback can exceed 2000 for busy properties
+        pageIndex++;
+        if (pageIndex > 100) break; // safety cap; YTD with lookback can exceed 2000 for busy properties
         await sleep(250);
       }
       return { success: true, data: collected };
