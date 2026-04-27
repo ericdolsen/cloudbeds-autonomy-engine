@@ -100,11 +100,58 @@ class CloudbedsAPI {
       if (isName || isPhone) {
         logger.info(`[API CALL] Delegating search "${query}" to fast local ReservationCache...`);
         const { reservationCache } = require('./reservationCache');
-        const localMatch = reservationCache.search(query, mode);
         
-        if (localMatch) {
-          // It either found a match or definitively failed a date check
-          return localMatch;
+        // If the cache is fully empty, it means the background sync hasn't finished yet (e.g., just booted)
+        // In this rare case, we must gracefully fall back to the live API so the kiosk doesn't break.
+        if (reservationCache.cache.size === 0) {
+          logger.warn(`[API CALL] Local cache is empty! Falling back to live API scan while background sync finishes...`);
+          const today = new Date().toISOString().split('T')[0];
+          const past = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+          const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+
+          const resList = await this.getReservations(past, future);
+          if (resList.success && Array.isArray(resList.data)) {
+            let matches = [];
+            if (isName) {
+              const needle = query.toLowerCase();
+              matches = resList.data.filter(r =>
+                (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+                (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+                (r.guestLastName && r.guestLastName.toLowerCase() === needle)
+              );
+            } else if (isPhone) {
+              const needle = query.replace(/[^\d]/g, '');
+              matches = resList.data.filter(r => {
+                if (!r.guestList) return false;
+                return Object.values(r.guestList).some(g => {
+                  const cell = g.guestCellPhone ? g.guestCellPhone.toString().replace(/[^\d]/g, '') : '';
+                  const phone = g.guestPhone ? g.guestPhone.toString().replace(/[^\d]/g, '') : '';
+                  return (cell && cell.includes(needle)) || (phone && phone.includes(needle));
+                });
+              });
+            }
+
+            if (matches.length > 0) {
+              const exactMatch = matches.find(r => {
+                if (mode === 'checkin') return r.startDate === today;
+                if (mode === 'checkout') return r.endDate === today || r.status === 'checked_in';
+                if (mode === 'print') return r.startDate === today || r.endDate === today || r.status === 'checked_in' || r.status === 'checked_out';
+                return true;
+              });
+
+              if (exactMatch) {
+                const id = exactMatch.reservationID || exactMatch.reservationId;
+                logger.info(`[API CALL] Name resolved to ID: ${id}`);
+                return await this.getReservationById(id);
+              }
+            }
+          }
+        } else {
+          // Normal behavior: use the lightning-fast local cache
+          const localMatch = reservationCache.search(query, mode);
+          if (localMatch) {
+            return localMatch;
+          }
         }
         
         return { success: false, message: "Could not find an active reservation matching that name." };
