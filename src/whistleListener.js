@@ -33,6 +33,7 @@ class WhistleListener {
       // Clean up stale locks that cause Chrome to exit with code 0
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+      try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
       
       this.context = await chromium.launchPersistentContext(userDataDir, { 
           executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -42,7 +43,9 @@ class WhistleListener {
               '--disable-blink-features=AutomationControlled',
               '--window-size=1920,1080',
               '--disable-gpu',
-              '--disable-software-rasterizer'
+              '--disable-software-rasterizer',
+              '--disable-session-crashed-bubble',
+              '--hide-crash-restore-bubble'
           ],
           ignoreDefaultArgs: ['--enable-automation']
       });
