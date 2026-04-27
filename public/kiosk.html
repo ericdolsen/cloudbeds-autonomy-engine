@@ -693,6 +693,21 @@
         }
 
         // No polling needed, server execution blocks until terminal payment clears.
+
+        // Allow pressing "Enter" on the tablet keyboard to close it and auto-submit the next step
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputs = document.querySelectorAll('.kiosk-input[type="text"], .kiosk-input[type="tel"], .kiosk-input[type="email"]');
+            inputs.forEach(input => {
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.target.blur(); // Hides the virtual keyboard
+                        if (e.target.id === 'queryInput' || e.target.id === 'pinInput') {
+                            submitForm();
+                        }
+                    }
+                });
+            });
+        });
     </script>
 </body>
 </html>
