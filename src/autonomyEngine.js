@@ -1,19 +1,24 @@
-const { GoogleGenAI, Type } = require('@google/genai');
+const { Type } = require('@google/genai');
 const { CloudbedsAPI } = require('./cloudbedsApi');
 const { PaymentTerminal } = require('./paymentTerminal');
+const { modelRouter } = require('./modelRouter');
 const { logger } = require('./logger');
 
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30-minute rolling window for guest SMS threads
 
 class AutonomyEngine {
-  constructor() {
-    // Initialize the Gemini client
-    this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  constructor(router = modelRouter) {
+    // Text lane goes through the router (Gemini 2.5 Flash by default). The
+    // vision and voice lanes are owned by their dedicated modules and reach
+    // into the same router for their own clients.
+    this.router = router;
     this.api = new CloudbedsAPI();
     this.paymentTerminal = new PaymentTerminal();
-    // sessionKey -> { chat, lastSeen } — keeps Gemini chats warm so multi-turn
-    // guest conversations (e.g. texts) retain memory across webhook calls.
+    // sessionKey -> { chat, lastSeen } — keeps text-lane chats warm so
+    // multi-turn guest conversations (e.g. texts) retain memory across
+    // webhook calls.
     this.sessions = new Map();
+    logger.info(`[AUTONOMY ENGINE] Text lane → ${this.router.textModel()}`);
   }
 
   _pruneSessions() {
@@ -30,13 +35,10 @@ class AutonomyEngine {
       s.lastSeen = Date.now();
       return s.chat;
     }
-    const chat = this.ai.chats.create({
-      model: process.env.GEMINI_MODEL || 'gemini-1.5-pro',
-      config: {
-        systemInstruction: this.getSystemInstruction(),
-        tools: this.getTools(),
-        temperature: 0.1
-      }
+    const chat = this.router.createTextChat({
+      systemInstruction: this.getSystemInstruction(),
+      tools: this.getTools(),
+      temperature: 0.1
     });
     if (sessionKey) this.sessions.set(sessionKey, { chat, lastSeen: Date.now() });
     return chat;
@@ -264,6 +266,107 @@ STANDARD WORKFLOW:
     }
   }
 
+  /**
+   * Dispatches a single tool call. Shared by the text lane (Gemini 2.5 Flash
+   * function-calling loop) and the voice lane (Gemini 3.1 Live tool calls)
+   * so both surfaces hit the exact same Cloudbeds-side behavior.
+   */
+  async runTool(name, args) {
+    try {
+      if (name === 'getReservation') return await this.api.getReservation(args.query);
+      if (name === 'getUnassignedRooms') return await this.api.getUnassignedRooms(args.startDate, args.endDate);
+      if (name === 'getReservations') return await this.api.getReservations(args.checkInFrom, args.checkInTo);
+      if (name === 'updateReservation') return await this.api.updateReservation(args.reservationId, args.updates);
+      if (name === 'postFolioAdjustment') return await this.api.postCustomItem(args.reservationId, args.amount, args.description);
+      if (name === 'postPayment') return await this.api.postPayment(args.reservationId, args.amount, { type: args.type, description: args.description });
+      if (name === 'checkInReservation') return await this.api.checkInReservation(args.reservationId);
+
+      if (name === 'alertFrontDesk') {
+        logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
+        return { success: true, action: 'Front desk staff has been successfully pinged.' };
+      }
+
+      if (name === 'chargePhysicalTerminal') {
+        logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
+        return await this.paymentTerminal.chargePhysicalTerminal(args.reservationId, args.amount, args.terminalName);
+      }
+
+      if (name === 'processCheckout') {
+        logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
+        const resData = await this.api.getReservationById(args.reservationId);
+        if (!resData.success || !resData.data) {
+          return { success: false, error: 'Could not fetch reservation to process checkout.' };
+        }
+        const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
+        if (!updateRes.success) {
+          return { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };
+        }
+        return { success: true, message: 'Checkout processed successfully. Status updated to checked_out.' };
+      }
+
+      if (name === 'evaluateAndEmailInvoice') {
+        return await this._evaluateAndEmailInvoice(args.reservationId);
+      }
+
+      throw new Error(`Unknown tool call: ${name}`);
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  async _evaluateAndEmailInvoice(reservationId) {
+    logger.info(`[INVOICE GUARD] Evaluating invoice send for ${reservationId}`);
+    const resData = await this.api.getReservationById(reservationId);
+    if (!resData.success || !resData.data) {
+      return { success: false, error: 'Could not fetch reservation to evaluate invoice.' };
+    }
+
+    const source = (resData.data.source || '').toLowerCase();
+    const guestEmail = this._resolveGuestEmail(resData.data) || '';
+    const isMaskedEmail = guestEmail.includes('expediapartnercentral.com') || guestEmail.includes('guest.booking.com') || guestEmail.includes('agoda.com');
+    const isChannelCollect = isMaskedEmail || source.includes('expedia collect') || source.includes('booking.com collect');
+
+    if (isChannelCollect) {
+      logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${reservationId} - Identified as Channel Collect / OTA Masked Booking!`);
+      return { success: true, message: 'Invoice skipped due to Channel Collect policy.' };
+    }
+    if (!guestEmail) {
+      return { success: true, message: 'Invoice email skipped (missing guest email).' };
+    }
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+      return { success: false, error: 'SMTP credentials not configured in .env' };
+    }
+
+    try {
+      const { generateFolioPdf } = require('./printHandler');
+      const pdfBuffer = await generateFolioPdf(reservationId, resData.data);
+
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      });
+
+      await transporter.sendMail({
+        from: process.env.SMTP_ALIAS || process.env.SMTP_USER,
+        replyTo: process.env.SMTP_REPLY_TO || process.env.SMTP_USER,
+        to: guestEmail,
+        subject: `Your Receipt - ${reservationId} - Gateway Park Hotel`,
+        text: `Thank you for staying with us! Please find your final receipt attached.`,
+        attachments: [{
+          filename: `Receipt_${reservationId}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf'
+        }]
+      });
+      logger.info(`[INVOICE EMAIL] Sent local folio PDF to ${guestEmail}`);
+      return { success: true, message: `Invoice generated and emailed locally to ${guestEmail}.` };
+    } catch (err) {
+      logger.error(`[INVOICE EMAIL] Failed to send email: ${err.message}`);
+      return { success: false, error: `Failed to email invoice: ${err.message}` };
+    }
+  }
+
   async executeTask(messagePayload) {
     logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
 
@@ -283,101 +386,7 @@ STANDARD WORKFLOW:
 
         logger.info(`[AUTONOMY ENGINE] Wants to execute: ${name}(${JSON.stringify(args)})`);
 
-        let apiResult;
-        try {
-          if (name === 'getReservation') apiResult = await this.api.getReservation(args.query);
-          else if (name === 'getUnassignedRooms') apiResult = await this.api.getUnassignedRooms(args.startDate, args.endDate);
-          else if (name === 'getReservations') apiResult = await this.api.getReservations(args.checkInFrom, args.checkInTo);
-          else if (name === 'updateReservation') apiResult = await this.api.updateReservation(args.reservationId, args.updates);
-          else if (name === 'postFolioAdjustment') apiResult = await this.api.postCustomItem(args.reservationId, args.amount, args.description);
-          else if (name === 'postPayment') apiResult = await this.api.postPayment(args.reservationId, args.amount, { type: args.type, description: args.description });
-          else if (name === 'checkInReservation') apiResult = await this.api.checkInReservation(args.reservationId);
-          else if (name === 'alertFrontDesk') {
-            logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
-            // Hook for future integration (e.g. Twilio API, Siren, UI flash)
-            apiResult = { success: true, action: "Front desk staff has been successfully pinged." };
-          }
-          else if (name === 'chargePhysicalTerminal') {
-            logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
-            // This natively executes the Playwright script to click "Charge" on the terminal
-            apiResult = await this.paymentTerminal.chargePhysicalTerminal(args.reservationId, args.amount, args.terminalName);
-          }
-          else if (name === 'processCheckout') {
-            logger.info(`[CHECKOUT] Processing native checkout for ${args.reservationId}`);
-            const resData = await this.api.getReservationById(args.reservationId);
-            if (resData.success && resData.data) {
-              const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
-              if (!updateRes.success) {
-                apiResult = { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };
-              } else {
-                apiResult = { success: true, message: "Checkout processed successfully. Status updated to checked_out." };
-              }
-            } else {
-              apiResult = { success: false, error: "Could not fetch reservation to process checkout." };
-            }
-          }
-          else if (name === 'evaluateAndEmailInvoice') {
-            logger.info(`[INVOICE GUARD] Evaluating invoice send for ${args.reservationId}`);
-            const resData = await this.api.getReservationById(args.reservationId);
-            if (resData.success && resData.data) {
-              const source = (resData.data.source || '').toLowerCase();
-              const guestEmail = this._resolveGuestEmail(resData.data) || '';
-              
-              const isMaskedEmail = guestEmail.includes('expediapartnercentral.com') || guestEmail.includes('guest.booking.com') || guestEmail.includes('agoda.com');
-              const isChannelCollect = isMaskedEmail || source.includes('expedia collect') || source.includes('booking.com collect');
-              
-              if (isChannelCollect) {
-                logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${args.reservationId} - Identified as Channel Collect / OTA Masked Booking!`);
-                apiResult = { success: true, message: "Invoice skipped due to Channel Collect policy." };
-              } else {
-                if (!guestEmail) {
-                  apiResult = { success: true, message: `Invoice email skipped (missing guest email).` };
-                } else if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-                  apiResult = { success: false, error: "SMTP credentials not configured in .env" };
-                } else {
-                  try {
-                    const { generateFolioPdf } = require('./printHandler');
-                    const pdfBuffer = await generateFolioPdf(args.reservationId, resData.data);
-                    
-                    const nodemailer = require('nodemailer');
-                    const transporter = nodemailer.createTransport({
-                      service: 'gmail',
-                      auth: {
-                        user: process.env.SMTP_USER,
-                        pass: process.env.SMTP_PASS
-                      }
-                    });
-
-                    const mailOptions = {
-                      from: process.env.SMTP_ALIAS || process.env.SMTP_USER,
-                      replyTo: process.env.SMTP_REPLY_TO || process.env.SMTP_USER,
-                      to: guestEmail,
-                      subject: `Your Receipt - ${args.reservationId} - Gateway Park Hotel`,
-                      text: `Thank you for staying with us! Please find your final receipt attached.`,
-                      attachments: [{
-                        filename: `Receipt_${args.reservationId}.pdf`,
-                        content: pdfBuffer,
-                        contentType: 'application/pdf'
-                      }]
-                    };
-
-                    await transporter.sendMail(mailOptions);
-                    logger.info(`[INVOICE EMAIL] Sent local folio PDF to ${guestEmail}`);
-                    apiResult = { success: true, message: `Invoice generated and emailed locally to ${guestEmail}.` };
-                  } catch (err) {
-                    logger.error(`[INVOICE EMAIL] Failed to send email: ${err.message}`);
-                    apiResult = { success: false, error: `Failed to email invoice: ${err.message}` };
-                  }
-                }
-              }
-            } else {
-              apiResult = { success: false, error: "Could not fetch reservation to evaluate invoice." };
-            }
-          }
-          else throw new Error("Unknown tool call");
-        } catch (e) {
-          apiResult = { error: e.message };
-        }
+        const apiResult = await this.runTool(name, args);
 
         logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
 

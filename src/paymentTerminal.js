@@ -2,6 +2,7 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('./logger');
+const { VisionClicker } = require('./visionClicker');
 
 class PaymentTerminal {
   constructor() {
@@ -47,7 +48,8 @@ class PaymentTerminal {
       });
 
       const page = await context.newPage();
-      
+      const vision = new VisionClicker(page);
+
       // 1. Navigate straight to the reservation folio to check if we're already logged in
       logger.info(`[STRIPE TERMINAL] Checking session status / logging into Cloudbeds...`);
       const propertyPath = this.propertyId ? `${this.propertyId}` : '';
@@ -103,10 +105,22 @@ class PaymentTerminal {
       }
       await page.waitForTimeout(1000);
       
-      // 4. Click "ADD/REFUND PAYMENT" then "Add Payment"
+      // 4. Click "ADD/REFUND PAYMENT" then "Add Payment". If the DOM has
+      // shifted, fall back to Claude Sonnet 4.5 vision for a zero-mistake
+      // click on the right pixels.
       logger.info(`[STRIPE TERMINAL] Triggering 'Add Payment'...`);
-      await page.locator('text=/ADD\\/REFUND PAYMENT/i').click();
-      await page.locator('text="Add Payment"').first().click();
+      try {
+        await page.locator('text=/ADD\\/REFUND PAYMENT/i').click({ timeout: 5000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Selector for 'ADD/REFUND PAYMENT' missed; falling back to vision lane.`);
+        await vision.click("the 'ADD/REFUND PAYMENT' button on the folio toolbar");
+      }
+      try {
+        await page.locator('text="Add Payment"').first().click({ timeout: 5000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Selector for 'Add Payment' missed; falling back to vision lane.`);
+        await vision.click("the 'Add Payment' menu item that appeared after clicking ADD/REFUND PAYMENT");
+      }
       await page.waitForTimeout(1500); // Wait for side panel
       
       // 5. Select "Terminal" from the Payment method dropdown
@@ -117,9 +131,14 @@ class PaymentTerminal {
       await page.keyboard.press('Enter');
       await page.waitForTimeout(1000);
       
-      // 6. Click Process Payment
+      // 6. Click Process Payment (vision fallback for the Cloudbeds redesign)
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
-      await page.locator('text="Process Payment"').first().click();
+      try {
+        await page.locator('text="Process Payment"').first().click({ timeout: 5000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Selector for 'Process Payment' missed; falling back to vision lane.`);
+        await vision.click("the 'Process Payment' confirmation button on the side panel");
+      }
       
       // 7. Choose Terminal
       await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
