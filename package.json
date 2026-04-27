@@ -8,6 +8,7 @@
     "install-browser": "npx playwright install chromium"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
     "@google/genai": "^1.49.0",
     "axios": "^1.15.0",
     "dotenv": "^16.4.0",
