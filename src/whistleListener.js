@@ -88,6 +88,13 @@ class WhistleListener {
         context = this.page.frameLocator('iframe').first();
     }
 
+    try {
+        const html = await context.locator('body').innerHTML();
+        fs.writeFileSync(path.join(__dirname, '..', 'logs', 'whistle_dom.html'), html);
+    } catch (e) {
+        logger.error(`[WHISTLE RPA] Failed to dump DOM: ${e.message}`);
+    }
+
     // Use flexible semantic locators to find unread messages
     const unreadIndicator = context.locator('[aria-label*="unread" i], .unread, [class*="unread" i]').first();
     
