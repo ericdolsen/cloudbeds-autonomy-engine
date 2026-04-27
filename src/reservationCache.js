@@ -29,6 +29,10 @@ class ReservationCache {
   _saveToDisk() {
     try {
       const data = Array.from(this.cache.values());
+      const dir = path.dirname(CACHE_FILE);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
     } catch (e) {
       logger.error(`[CACHE] Failed to save cache to disk: ${e.message}`);
@@ -102,7 +106,7 @@ class ReservationCache {
     const allReservations = Array.from(this.cache.values());
 
     if (isName) {
-      const needle = query.toLowerCase();
+      const needle = query.trim().toLowerCase();
       matches = allReservations.filter(r =>
         (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
         (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||

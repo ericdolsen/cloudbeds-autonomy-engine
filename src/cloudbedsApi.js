@@ -113,7 +113,7 @@ class CloudbedsAPI {
           if (resList.success && Array.isArray(resList.data)) {
             let matches = [];
             if (isName) {
-              const needle = query.toLowerCase();
+              const needle = query.trim().toLowerCase();
               matches = resList.data.filter(r =>
                 (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
                 (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
