@@ -10,6 +10,7 @@ const { NightAuditReport } = require('./src/nightAuditReport');
 const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
 const { MessagingClient } = require('./src/messaging');
 const { WhistleListener } = require('./src/whistleListener');
+const { reservationCache } = require('./src/reservationCache');
 
 require('dotenv').config();
 
@@ -259,6 +260,13 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
   if (!agent.isRunning) {
     logger.warn(`[WEBHOOK] Engine stopped. Ignoring event.`);
     return;
+  }
+
+  // Update local reservation cache in the background
+  if (reservationID !== 'unknown' && event.startsWith('reservation/')) {
+    reservationCache.updateReservation(reservationID, agent.engine.api).catch(e => {
+      logger.error(`[WEBHOOK] Cache update failed for ${reservationID}: ${e.message}`);
+    });
   }
 
   try {
@@ -679,6 +687,16 @@ function getHotelBusinessDate(offsetDays = 0) {
 // CRON SCHEDULER
 // =====================================
 
+// 0. Daily Reservation Cache Hard Sync at 2:05 AM
+cron.schedule('5 2 * * *', async () => {
+  logger.info('[CRON] 2:05 AM - Triggering full background sync for Reservation Cache...');
+  if (agent.isRunning) {
+    reservationCache.syncFromCloudbeds(agent.engine.api).catch(e => {
+      logger.error(`[CRON] Nightly cache sync failed: ${e.message}`);
+    });
+  }
+}, { timezone: "America/Chicago" });
+
 // 1. Room Assignment Optimization at 3:00 AM (After native Night Audit finishes at 2:00 AM)
 cron.schedule('0 3 * * *', async () => {
   const todayStr = getHotelBusinessDate(0);
@@ -828,6 +846,11 @@ async function boot() {
   // Start the background scraping sentinel
   try {
     await agent.start();
+    
+    // Kick off background cache sync
+    reservationCache.syncFromCloudbeds(agent.engine.api).catch(e => {
+      logger.error(`[CACHE] Initial background sync failed: ${e.message}`);
+    });
     
     if (process.env.ENABLE_WHISTLE_RPA === 'true') {
       whistleListener = new WhistleListener(agent);
