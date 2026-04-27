@@ -21,6 +21,15 @@ class WhistleListener {
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
       
+      // Force-kill any lingering Chrome processes from previous aborted runs
+      // that might be holding a lock on the user data directory.
+      try {
+          logger.info('[WHISTLE RPA] Cleaning up any zombie Chrome processes...');
+          require('child_process').execSync('taskkill /IM chrome.exe /F /T', { stdio: 'ignore' });
+      } catch (e) {
+          // It will throw if no chrome.exe is found, which is fine.
+      }
+
       // Clean up stale locks that cause Chrome to exit with code 0
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
