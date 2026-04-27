@@ -80,26 +80,22 @@ class WhistleListener {
         return;
     }
 
-    // Handle potential iframe embedding (since Whistle is an acquired product)
-    let context = this.page;
-    const iframeCount = await this.page.locator('iframe').count();
-    if (iframeCount > 0) {
-        // If there's an iframe, we will search inside the first iframe (or one containing whistle/guest)
-        context = this.page.frameLocator('iframe').first();
+    // Search across the main page AND all iframes to find the unread message.
+    // This prevents the bot from getting stuck looking inside the Forethought help widget.
+    let targetContext = null;
+    let unreadIndicator = null;
+
+    for (const frame of this.page.frames()) {
+        const indicator = frame.locator('[aria-label*="unread" i], .unread, [class*="unread" i], [class*="badge" i], [class*="indicator" i]').first();
+        const isVis = await indicator.isVisible().catch(() => false);
+        if (isVis) {
+            targetContext = frame;
+            unreadIndicator = indicator;
+            break;
+        }
     }
 
-    try {
-        const html = await context.locator('body').innerHTML();
-        fs.writeFileSync(path.join(__dirname, '..', 'logs', 'whistle_dom.html'), html);
-    } catch (e) {
-        logger.error(`[WHISTLE RPA] Failed to dump DOM: ${e.message}`);
-    }
-
-    // Use flexible semantic locators to find unread messages
-    const unreadIndicator = context.locator('[aria-label*="unread" i], .unread, [class*="unread" i]').first();
-    
-    const isUnread = await unreadIndicator.isVisible().catch(() => false);
-    if (!isUnread) {
+    if (!unreadIndicator) {
         // Just quietly wait
         return; 
     }
@@ -110,13 +106,13 @@ class WhistleListener {
     await unreadIndicator.click();
     await this.page.waitForTimeout(2000); // Wait for chat to load
 
-    const chatRegion = this.page.getByRole('region', { name: /chat|messages|conversation/i }).first();
+    const chatRegion = targetContext.getByRole('region', { name: /chat|messages|conversation/i }).first();
     let textToProcess = '';
     
     if (await chatRegion.isVisible()) {
         textToProcess = await chatRegion.innerText();
     } else {
-        textToProcess = await this.page.locator('main, [role="main"], .chat-container, .messages-list').first().innerText();
+        textToProcess = await targetContext.locator('main, [role="main"], .chat-container, .messages-list').first().innerText();
     }
 
     if (!textToProcess) {
@@ -157,11 +153,11 @@ ${textToProcess.substring(0, 1500)}
 
     logger.info(`[WHISTLE RPA] Injecting AI response into UI...`);
     
-    const inputArea = this.page.getByPlaceholder(/type a message|reply|message/i).first();
+    const inputArea = targetContext.getByPlaceholder(/type a message|reply|message/i).first();
     if (await inputArea.isVisible()) {
         await inputArea.fill(aiResponseText);
         
-        const sendBtn = this.page.getByRole('button', { name: /send/i }).first();
+        const sendBtn = targetContext.getByRole('button', { name: /send/i }).first();
         if (await sendBtn.isVisible()) {
             await sendBtn.click();
             logger.info(`[WHISTLE RPA] Successfully sent response!`);
