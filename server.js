@@ -197,6 +197,103 @@ app.get('/api/employee/debug/report-shape', checkLocalNetwork, async (req, res) 
   }
 });
 
+// Per-day room-night audit. Pulls the same transactions the night-audit
+// pipeline sees (live API + Google Sheets), then bins them by category so
+// we can pinpoint exactly where the MTD room-night undercount is coming
+// from on a single date. Compare the output against Cloudbeds' native
+// "Total Rooms Sold" for that day; the gap should fall into one of the
+// buckets below (sourceId-empty rate rows, comp/block/zero-rate rows,
+// or sheet rows missing internalTransactionCode).
+//
+// Usage:
+//   GET /api/employee/debug/night-count?date=2026-04-18
+app.get('/api/employee/debug/night-count', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  const date = (req.query.date || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.date : null;
+  if (!date) return res.status(400).json({ error: "Pass ?date=YYYY-MM-DD" });
+
+  try {
+    const reportEngine = new NightAuditReport(agent.engine.api);
+    const [liveTxns, sheetTxns] = await Promise.all([
+      agent.engine.api.getTransactions(date, date),
+      reportEngine.getTransactionsFromSheets(date, date)
+    ]);
+
+    const breakdown = (txns) => {
+      const stats = {
+        total: txns.length,
+        active: 0,
+        voided: 0,
+        roomRate: 0,
+        roomRateZeroAmount: 0,
+        roomRateEmptySourceId: 0,
+        roomRateAdjustments: 0,
+        items: 0,
+        payments: 0,
+        other: 0,
+        uniqueRoomNights: 0,
+        sampleEmptySourceIdRoomRate: null,
+        sampleAdjustment: null,
+        sampleZeroRate: null
+      };
+      const rooms = new Set();
+
+      for (const t of txns) {
+        if (t.transactionVoid === true || t.transactionVoid === '1' || t.transactionVoid === 'Yes') {
+          stats.voided++;
+          continue;
+        }
+        stats.active++;
+        const amt = parseFloat(t.transactionAmount || 0);
+        const code = t.internalTransactionCode || '';
+        const desc = t.transactionCodeDescription || '';
+        const rvType = t.roomRevenueType || '';
+        const type = t.transactionType || '';
+
+        const isRateAdj = /^1\d*A$/.test(code) ||
+          (desc === 'Room Rate' && amt < 0 && rvType !== 'Room Rate') ||
+          (desc === 'Rate - Adjustment') ||
+          (desc === 'Room Rate - Adjustment');
+
+        if (rvType === 'Room Rate') {
+          stats.roomRate++;
+          if (amt === 0) {
+            stats.roomRateZeroAmount++;
+            if (!stats.sampleZeroRate) stats.sampleZeroRate = { code, desc, roomNumber: t.roomNumber, reservationID: t.reservationID };
+          }
+          if (!t.roomNumber) {
+            stats.roomRateEmptySourceId++;
+            if (!stats.sampleEmptySourceIdRoomRate) stats.sampleEmptySourceIdRoomRate = { code, desc, amount: amt, reservationID: t.reservationID };
+          } else {
+            rooms.add(`${t.transactionDate}_${t.roomNumber}`);
+          }
+        } else if (isRateAdj) {
+          stats.roomRateAdjustments++;
+          if (!stats.sampleAdjustment) stats.sampleAdjustment = { code, desc, amount: amt };
+        } else if (['Items & Services', 'Add-On'].includes(type)) {
+          stats.items++;
+        } else if (type === 'Payment') {
+          stats.payments++;
+        } else {
+          stats.other++;
+        }
+      }
+      stats.uniqueRoomNights = rooms.size;
+      return stats;
+    };
+
+    res.json({
+      date,
+      live: breakdown(liveTxns.data || []),
+      sheet: breakdown(sheetTxns),
+      hint: "uniqueRoomNights is what computeFromTransactions feeds into MTD/YTD math. Compare against Cloudbeds 'Total Rooms Sold' for this date. roomRateEmptySourceId / roomRateZeroAmount / sample* fields point at which transactions slip through. If sheet.roomRate < live.roomRate, the historical backfill missed rows; re-run scripts/backfillHistory.js --from <this date> --to <this date>."
+    });
+  } catch (err) {
+    logger.error(`[EMPLOYEE] debug/night-count failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // WEBHOOK ADMIN ENDPOINTS
 // (staff-only, gated by checkLocalNetwork)
