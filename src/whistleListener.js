@@ -184,6 +184,35 @@ class WhistleListener {
                 return out;
             }).catch((e) => ({ textHits: [], classHits: [], ariaHits: [], pseudoHits: [], err: String(e).substring(0, 80) }));
             logger.info(`[WHISTLE RPA DEBUG] unreadFinder=${JSON.stringify(findings).substring(0, 1200)}`);
+
+            // The unreadFinder returned all-empty hits, meaning "Unread" is
+            // not present in the bot's live DOM. Either (a) the bot's Chrome
+            // is showing a different inbox view than the user's regular
+            // browser (e.g. Whistle auto-marks messages as read when the
+            // inbox is the active view), or (b) the pills we saw in the
+            // screenshot are NOT chakra-badge elements at all and the four
+            // visible badges are the small icon chips next to names.
+            //
+            // This pageScan resolves both: it dumps the body's visible text
+            // (so we can see whether "Unread"/"Replied"/"Error" appear at
+            // all) plus the outerHTML of each chakra-badge so we can identify
+            // what they actually are.
+            const pageScan = await frame.evaluate(() => {
+                const body = document.body;
+                const innerText = body ? (body.innerText || '').replace(/\s+/g, ' ').trim() : '';
+                const sample = innerText.substring(0, 600);
+                const hasUnread = /unread/i.test(innerText);
+                const hasReplied = /replied/i.test(innerText);
+                const hasError = /\berror\b/i.test(innerText);
+                const badges = Array.from(document.querySelectorAll('span.chakra-badge'))
+                    .slice(0, 8)
+                    .map(el => ({
+                        outer: el.outerHTML.substring(0, 180),
+                        text: (el.textContent || '').trim().substring(0, 30),
+                    }));
+                return { sample, hasUnread, hasReplied, hasError, badges };
+            }).catch(e => ({ err: String(e).substring(0, 80) }));
+            logger.info(`[WHISTLE RPA DEBUG] pageScan=${JSON.stringify(pageScan).substring(0, 1500)}`);
         }
 
         for (let i = 0; i < total; i++) {
