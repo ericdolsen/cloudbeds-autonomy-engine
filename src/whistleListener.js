@@ -111,13 +111,20 @@ class WhistleListener {
       this._loggedOut = false;
     }
 
-    // Search across the main page AND all iframes to find the unread message.
-    // This prevents the bot from getting stuck looking inside the Forethought help widget.
+    // Whistle uses Chakra UI. The unread badge is `span.chakra-badge` with the
+    // exact text "Unread" (red pill, #F3565D). Other badges in the same list
+    // say "Replied" / "Error" / "Delivered" / "SMS" / "@" — so we MUST filter
+    // by text, otherwise .first() returns a non-unread badge (or a hidden one
+    // from somewhere else in the DOM) and isVisible() fails silently.
+    // The `:visible` pseudo skips off-screen / display:none badges that exist
+    // in the DOM but aren't actually rendered.
     let targetContext = null;
     let unreadIndicator = null;
 
     for (const frame of this.page.frames()) {
-        const indicator = frame.locator('[aria-label*="unread" i], .unread, [class*="unread" i], [class*="badge" i], [class*="indicator" i]').first();
+        const indicator = frame
+            .locator('span.chakra-badge:visible', { hasText: /^\s*unread\s*$/i })
+            .first();
         const isVis = await indicator.isVisible().catch(() => false);
         if (isVis) {
             targetContext = frame;
@@ -128,22 +135,38 @@ class WhistleListener {
 
     if (!unreadIndicator) {
         // Just quietly wait
-        return; 
+        return;
     }
 
     logger.info(`[WHISTLE RPA] Unread message detected! Extracting...`);
-    
-    // Click the unread thread
-    await unreadIndicator.click();
+
+    // The badge is a small span inside the conversation row. Clicking the badge
+    // itself doesn't always trigger the row's onClick — walk up to the nearest
+    // clickable ancestor (button / link / role=button / row with onclick).
+    const clickableRow = unreadIndicator.locator(
+        'xpath=ancestor::*[self::a or self::button or @role="button" or @role="listitem" or @role="link" or @onclick or @tabindex][1]'
+    );
+    if ((await clickableRow.count()) > 0) {
+        await clickableRow.first().click();
+    } else {
+        await unreadIndicator.click();
+    }
     await this.page.waitForTimeout(2000); // Wait for chat to load
 
-    const chatRegion = targetContext.getByRole('region', { name: /chat|messages|conversation/i }).first();
     let textToProcess = '';
-    
-    if (await chatRegion.isVisible()) {
+    const chatRegion = targetContext.getByRole('region', { name: /chat|messages|conversation/i }).first();
+    if (await chatRegion.isVisible().catch(() => false)) {
         textToProcess = await chatRegion.innerText();
     } else {
-        textToProcess = await targetContext.locator('main, [role="main"], .chat-container, .messages-list').first().innerText();
+        // Fallbacks, ordered most-specific to least: Chakra/Whistle conversation
+        // panels, then generic main element. We anchor on the input we just
+        // located if everything else fails, by walking up to its panel.
+        const fallback = targetContext.locator(
+            '[class*="conversation"], [class*="chat"], [class*="messages"], main, [role="main"]'
+        ).first();
+        if (await fallback.isVisible().catch(() => false)) {
+            textToProcess = await fallback.innerText();
+        }
     }
 
     if (!textToProcess) {
@@ -184,12 +207,19 @@ ${textToProcess.substring(0, 1500)}
 
     logger.info(`[WHISTLE RPA] Injecting AI response into UI...`);
     
-    const inputArea = targetContext.getByPlaceholder(/type a message|reply|message/i).first();
-    if (await inputArea.isVisible()) {
+    // Whistle's compose box has placeholder "Type your message..." — match the
+    // exact phrase first, then fall back to broader patterns in case the UI
+    // copy changes.
+    let inputArea = targetContext.getByPlaceholder(/type your message/i).first();
+    if (!(await inputArea.isVisible().catch(() => false))) {
+        inputArea = targetContext.getByPlaceholder(/type a message|reply|message/i).first();
+    }
+    if (await inputArea.isVisible().catch(() => false)) {
         await inputArea.fill(aiResponseText);
-        
-        const sendBtn = targetContext.getByRole('button', { name: /send/i }).first();
-        if (await sendBtn.isVisible()) {
+
+        // Send button is labeled "Send" (icon + text) in the bottom-right.
+        const sendBtn = targetContext.getByRole('button', { name: /^\s*send\s*$/i }).first();
+        if (await sendBtn.isVisible().catch(() => false)) {
             await sendBtn.click();
             logger.info(`[WHISTLE RPA] Successfully sent response!`);
         } else {
