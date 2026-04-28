@@ -103,6 +103,21 @@ app.get('/employee', checkLocalNetwork, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'employee.html'));
 });
 
+// Public liveness probe. Safe to expose through the Cloudflare tunnel —
+// returns no secrets, just enough state to confirm the process is up and
+// which messaging path is actually active. Curl this from outside the LAN
+// to verify the tunnel is routing to us.
+app.get('/api/health', (req, res) => {
+  const provider = (process.env.MESSAGING_PROVIDER || 'none').toLowerCase();
+  res.json({
+    status: agent.isRunning ? 'running' : 'stopped',
+    uptime: process.uptime(),
+    messagingProvider: provider,
+    messagingDryRun: provider === 'none',
+    whistleRpaEnabled: process.env.ENABLE_WHISTLE_RPA === 'true'
+  });
+});
+
 // Employee Portal API Routes
 app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
     res.json({
@@ -970,6 +985,23 @@ function validateStartupConfig() {
   if (process.env.GOOGLE_PRIVATE_KEY && !process.env.GOOGLE_PRIVATE_KEY.includes('BEGIN PRIVATE KEY')) {
     logger.warn('[CONFIG] GOOGLE_PRIVATE_KEY is set but does not look like a PEM key. Expected BEGIN PRIVATE KEY header.');
   }
+
+  // One-line at-a-glance summary so silent dry-runs and disabled subsystems
+  // can't hide inside the longer per-group OK lines above.
+  const live = [];
+  const dryRun = [];
+  const disabled = [];
+  if (messagingProvider === 'none') dryRun.push('Messaging(SMS replies suppressed)');
+  else live.push(`Messaging(${messagingProvider})`);
+  if (process.env.ENABLE_WHISTLE_RPA === 'true') live.push('WhistleRPA');
+  else disabled.push('WhistleRPA(set ENABLE_WHISTLE_RPA=true)');
+  if (process.env.WEBHOOK_PUBLIC_URL) live.push('CloudbedsWebhooks');
+  else disabled.push('CloudbedsWebhooks(set WEBHOOK_PUBLIC_URL)');
+  const parts = [];
+  if (live.length) parts.push(`Live: ${live.join(', ')}`);
+  if (dryRun.length) parts.push(`DryRun: ${dryRun.join(', ')}`);
+  if (disabled.length) parts.push(`Disabled: ${disabled.join(', ')}`);
+  logger.info(`[STARTUP] ${parts.join(' | ')}`);
 
   return allOk;
 }

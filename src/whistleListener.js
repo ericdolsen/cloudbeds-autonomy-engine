@@ -11,6 +11,8 @@ class WhistleListener {
     this.isRunning = false;
     this.context = null;
     this.page = null;
+    this._loggedOut = false;
+    this._lastLoginWarnAt = 0;
   }
 
   async start() {
@@ -58,8 +60,12 @@ class WhistleListener {
       });
 
       this.page = await this.context.newPage();
-      await this.page.goto(this.whistleUrl, { waitUntil: 'networkidle' });
-      
+      // domcontentloaded, not networkidle: Cloudbeds keeps long-poll/WebSocket
+      // connections open indefinitely, so 'networkidle' never fires and times
+      // out at 30s. domcontentloaded returns as soon as the SPA shell is up;
+      // the polling loop then waits for the inbox to hydrate on its own.
+      await this.page.goto(this.whistleUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
       this._startPollingLoop();
 
     } catch (err) {
@@ -77,8 +83,10 @@ class WhistleListener {
       } catch (err) {
         logger.error(`[WHISTLE RPA] Error during polling cycle: ${err.message}`);
       }
-      // Wait 10 seconds before next poll
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      // Back off to 60s when logged out — there's no point polling the OAuth
+      // page every 10s, and the warning spam fills the log.
+      const cooldownMs = this._loggedOut ? 60000 : 10000;
+      await new Promise(resolve => setTimeout(resolve, cooldownMs));
     }
   }
 
@@ -87,9 +95,20 @@ class WhistleListener {
 
     const currentUrl = this.page.url();
     if (currentUrl.includes('login') || currentUrl.includes('auth')) {
-        logger.warn(`[WHISTLE RPA] Warning: The browser appears to be stuck on a login page: ${currentUrl}. Please log in manually inside the popup window.`);
-        await this.page.waitForTimeout(5000);
+        this._loggedOut = true;
+        // Rate-limit to once every 5 minutes — without this, the warning
+        // (which includes the full OAuth URL) fires on every poll and
+        // dominates the log file.
+        const now = Date.now();
+        if (now - this._lastLoginWarnAt > 5 * 60 * 1000) {
+          this._lastLoginWarnAt = now;
+          logger.warn(`[WHISTLE RPA] Cloudbeds session expired — browser is on the OAuth login page. Log in manually in the visible Chrome window; cookies will persist in .cloudbeds_session/ for next time. URL: ${currentUrl.substring(0, 120)}`);
+        }
         return;
+    }
+    if (this._loggedOut) {
+      logger.info('[WHISTLE RPA] Login restored — resuming normal polling cadence.');
+      this._loggedOut = false;
     }
 
     // Search across the main page AND all iframes to find the unread message.
