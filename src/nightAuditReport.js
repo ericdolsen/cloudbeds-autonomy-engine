@@ -66,12 +66,19 @@ class NightAuditReport {
     ]);
 
     const tdFilter = (tdTxns.data || []);
-    
+
     // 1.5 Fetch Historical MTD/YTD data from Google Sheets database
     const mtdTxnsData = await this.getTransactionsFromSheets(ms, reportDate);
     const ytdTxnsData = await this.getTransactionsFromSheets(ys, reportDate);
     const lyMtdTxnsData = await this.getTransactionsFromSheets(lyMs, lyDate);
     const lyYtdTxnsData = await this.getTransactionsFromSheets(lyYs, lyDate);
+
+    // The sheet is appended *after* PDF generation (see runDailyAudit), so on
+    // any given run the report date's own transactions live in tdFilter but
+    // not yet in the MTD/YTD sheet pulls. Merge them in (deduped by
+    // transactionID) so the current day always rolls up into period totals.
+    const mtdMerged = this._mergeTxnsById(mtdTxnsData, tdFilter);
+    const ytdMerged = this._mergeTxnsById(ytdTxnsData, tdFilter);
 
     const lyFilter = lyMtdTxnsData.filter(t => t.transactionDate === this.toYMD(lyDate));
 
@@ -79,8 +86,8 @@ class NightAuditReport {
     // Activity counters use date ranges so MTD/YTD reflect the full window, not just the report date.
     // For TD we pass the wider mtdRes list because tdRes (check-in window only) misses today's check-outs.
     const td   = { ...(tdOcc.data || {}), ...this.computeFromTransactions(tdFilter, reportDate, reportDate), ...this.computeActivity(mtdRes.data || [], reportDate, reportDate) };
-    const mtd  = { ...this.computeFromTransactions(mtdTxnsData, ms, reportDate), ...this.computeActivity(mtdRes.data || [], ms, reportDate) };
-    const ytd  = { ...this.computeFromTransactions(ytdTxnsData, ys, reportDate), ...this.computeActivity(ytdRes.data || [], ys, reportDate) };
+    const mtd  = { ...this.computeFromTransactions(mtdMerged, ms, reportDate), ...this.computeActivity(mtdRes.data || [], ms, reportDate) };
+    const ytd  = { ...this.computeFromTransactions(ytdMerged, ys, reportDate), ...this.computeActivity(ytdRes.data || [], ys, reportDate) };
     const ly   = { ...(lyOcc.data || {}), ...this.computeFromTransactions(lyFilter, lyDate, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyDate, lyDate) };
     const ly_m = { ...this.computeFromTransactions(lyMtdTxnsData, lyMs, lyDate), ...this.computeActivity(lyMtdRes.data || [], lyMs, lyDate) };
     const ly_y = { ...this.computeFromTransactions(lyYtdTxnsData, lyYs, lyDate), ...this.computeActivity(lyYtdRes.data || [], lyYs, lyDate) };
@@ -137,6 +144,20 @@ class NightAuditReport {
     await this.sendPdfEmail(pdfBuffer, this.toYMD(reportDate));
   }
 
+
+  // Merge two transaction arrays, deduping by transactionID. Live API records
+  // win over sheet records when both exist (live data is freshest). Records
+  // without an ID fall back to a content composite so legacy sheet rows still
+  // dedupe deterministically.
+  _mergeTxnsById(base, incoming) {
+    const keyOf = t => t.transactionID && t.transactionID !== '-'
+      ? t.transactionID
+      : `legacy|${t.transactionDate}|${t.transactionAmount}|${t.transactionType}|${t.roomRevenueType}|${t.transactionCodeDescription}|${t.roomNumber}|${t.reservationID}|${t.transactionVoid}`;
+    const map = new Map();
+    for (const t of base) map.set(keyOf(t), t);
+    for (const t of incoming) map.set(keyOf(t), t);
+    return Array.from(map.values());
+  }
 
   // --- TRANSLATED MATH LOGIC REPLICAS ---
   computeFromTransactions(txns, startDate, endDate) {
@@ -199,8 +220,14 @@ class NightAuditReport {
         if (['checked_in','checked_out'].includes(status)) ci++;
         if (status === 'no_show') ns++;
         if (status === 'canceled' || status === 'cancelled') cx++;
-        const src = r.sourceID || r.source || '';
-        if (src.toLowerCase().includes('walk')) wi++;
+        // Cloudbeds reports walk-ins via sourceName ("Walk In"/"Walk-in")
+        // or sourceID ("WalkIn"). Normalize aggressively — just look for the
+        // "walk" substring across all the source-ish fields and let the
+        // status gate ensure we're not counting cancellations as walk-ins.
+        if (status === 'checked_in' || status === 'checked_out') {
+          const srcBlob = `${r.sourceID || ''}|${r.source || ''}|${r.sourceName || ''}`.toLowerCase();
+          if (/\bwalk[ -]?in\b|walkin/.test(srcBlob)) wi++;
+        }
       }
       if (ed >= startYMD && ed <= endYMD && !seenCO.has(r.reservationID)) {
         seenCO.add(r.reservationID);
@@ -258,6 +285,28 @@ class NightAuditReport {
     }
   }
 
+  // Read every transactionID currently on the sheet so writers can dedupe
+  // before appending. Lets the nightly cron and the historical backfill share
+  // the same write path safely — re-running either won't double-count.
+  async _existingTransactionIds(sheets) {
+    try {
+      const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: this.sheetId,
+        range: `${this.transactionsTab}!M:M`,
+        majorDimension: 'COLUMNS'
+      });
+      const col = (res.data.values && res.data.values[0]) || [];
+      const ids = new Set();
+      for (const v of col) {
+        if (v && v !== '-' && !v.startsWith('legacy|')) ids.add(v);
+      }
+      return ids;
+    } catch (e) {
+      logger.warn(`[NIGHT AUDIT] Could not read existing transactionIDs (${e.message}); proceeding without dedupe.`);
+      return new Set();
+    }
+  }
+
   async appendTransactionsToSheets(transactions, dateStr, sharedCache = {}) {
     const auth = this.getGoogleAuth();
     if (!auth || !this.sheetId) {
@@ -265,13 +314,28 @@ class NightAuditReport {
       return;
     }
     try {
-      logger.info(`[NIGHT AUDIT] Appending ${transactions.length} transaction records to Google Sheets for ${dateStr} (tab: ${this.transactionsTab})...`);
       const sheets = google.sheets({ version: 'v4', auth });
 
+      // Dedupe against the sheet so retries / overlapping backfill ranges
+      // don't pile duplicate rows. Caller can pass a pre-fetched id set in
+      // sharedCache.__existingIds to avoid re-reading column M every call.
+      let existingIds = sharedCache.__existingIds;
+      if (!existingIds) {
+        existingIds = await this._existingTransactionIds(sheets);
+        sharedCache.__existingIds = existingIds;
+      }
+
+      const fresh = transactions.filter(t => !(t.transactionID && existingIds.has(t.transactionID)));
+      const skipped = transactions.length - fresh.length;
+      if (skipped > 0) {
+        logger.info(`[NIGHT AUDIT] Dedupe: skipping ${skipped} already-on-sheet transactions for ${dateStr}.`);
+      }
+      logger.info(`[NIGHT AUDIT] Appending ${fresh.length} new transaction records to Google Sheets for ${dateStr} (tab: ${this.transactionsTab})...`);
+
       // Cache missing reservations
-      const uniqueResIds = [...new Set(transactions.map(t => t.reservationID).filter(id => id && id !== '-'))];
-      const missingIds = uniqueResIds.filter(id => !sharedCache[id]);
-      
+      const uniqueResIds = [...new Set(fresh.map(t => t.reservationID).filter(id => id && id !== '-'))];
+      const missingIds = uniqueResIds.filter(id => !(id in sharedCache));
+
       if (missingIds.length > 0) {
         logger.info(`[NIGHT AUDIT] Resolving ${missingIds.length} missing reservation profiles for ${dateStr}...`);
         for (const id of missingIds) {
@@ -289,7 +353,7 @@ class NightAuditReport {
         }
       }
 
-      const values = transactions.map(t => {
+      const values = fresh.map(t => {
         const c = sharedCache[t.reservationID] || { checkIn: '-', checkOut: '-', groupName: '-' };
         return [
           dateStr,
@@ -309,7 +373,16 @@ class NightAuditReport {
       });
 
       if (values.length === 0) {
-        values.push([dateStr, "NO_TRANSACTIONS_FOUND"]);
+        if (transactions.length === 0) {
+          values.push([dateStr, "NO_TRANSACTIONS_FOUND"]);
+        } else {
+          // All transactions were duplicates; nothing to write.
+          return;
+        }
+      } else {
+        // Update the in-memory id cache so subsequent calls in the same
+        // shared-cache run won't have to re-skip these rows.
+        for (const t of fresh) if (t.transactionID) existingIds.add(t.transactionID);
       }
 
       await sheets.spreadsheets.values.append({
@@ -318,7 +391,7 @@ class NightAuditReport {
          valueInputOption: 'USER_ENTERED',
          resource: { values }
       });
-      logger.info(`[NIGHT AUDIT] Successfully saved ${transactions.length} transactions for ${dateStr} to Google Sheets (tab: ${this.transactionsTab}).`);
+      logger.info(`[NIGHT AUDIT] Successfully saved ${values.length} rows for ${dateStr} to Google Sheets (tab: ${this.transactionsTab}).`);
     } catch(e) {
       logger.error(`[NIGHT AUDIT] *** SHEETS DB WRITE FAILED *** for ${dateStr} — ${e.message}. Verify the tab "${this.transactionsTab}" exists and the service account has Editor access to spreadsheet ID: ${this.sheetId}`);
     }

@@ -509,7 +509,13 @@ class CloudbedsAPI {
         collected.push(...page);
         if (page.length < pageSize) break;
         pageIndex++;
-        if (pageIndex > 100) break; // safety cap; YTD with lookback can exceed 2000 for busy properties
+        // 200 pages × 100/page = 20k reservations — enough for YTD plus a
+        // 31-day lookback at busy properties. Bumped from 100 because the
+        // 16-month historical backfill was hitting the cap.
+        if (pageIndex > 200) {
+          logger.warn(`getReservations: hit 200-page safety cap (${collected.length} records); window may be truncated.`);
+          break;
+        }
         await sleep(250);
       }
       return { success: true, data: collected };
@@ -601,12 +607,12 @@ class CloudbedsAPI {
 
     const reservations = await this._collectStaysInRange(start, end);
     for (const stay of reservations) {
-      for (const ymd of stay.nights) {
+      stay.nights.forEach((ymd, i) => {
         if (buckets[ymd]) {
           buckets[ymd].occupiedRooms += 1;
-          buckets[ymd].roomRevenue += stay.perNight;
+          buckets[ymd].roomRevenue += stay.nightlyRevenue[i] || 0;
         }
-      }
+      });
     }
 
     const forecast = Object.keys(buckets).sort().map(date => {
@@ -655,12 +661,12 @@ class CloudbedsAPI {
     const endYMD = toYMD(monthEnd);
     let roomNights = 0, roomRevenue = 0;
     for (const stay of reservations) {
-      for (const ymd of stay.nights) {
+      stay.nights.forEach((ymd, i) => {
         if (ymd >= startYMD && ymd <= endYMD) {
           roomNights += 1;
-          roomRevenue += stay.perNight;
+          roomRevenue += stay.nightlyRevenue[i] || 0;
         }
-      }
+      });
     }
 
     const monthDays = Math.round((monthEnd.getTime() - monthStart.getTime()) / 86400000) + 1;
@@ -680,6 +686,9 @@ class CloudbedsAPI {
   }
 
   // Resolve the property's total room count via /getRooms with an env override.
+  // /getRooms returns one entry per *room type*, each with a nested rooms[]
+  // array of physical units — sum across all types or we'll undercount badly
+  // (a property with 50 rooms across 5 types would otherwise read as 10).
   async _resolveTotalRooms() {
     const envOverride = parseInt(process.env.TOTAL_ROOMS || 0, 10);
     if (envOverride > 0) return envOverride;
@@ -687,28 +696,36 @@ class CloudbedsAPI {
       const res = await this._getClient().get('/getRooms', {
         params: this.propertyID ? { propertyID: this.propertyID } : {}
       });
-      const rooms = res.data?.data?.[0]?.rooms || [];
-      if (rooms.length > 0) return rooms.length;
+      const types = res.data?.data || [];
+      const total = types.reduce((sum, t) => sum + ((t.rooms && t.rooms.length) || 0), 0);
+      if (total > 0) return total;
     } catch (e) {
       logger.warn(`_resolveTotalRooms: /getRooms failed (${e.message}); falling back to 50`);
     }
     return 50;
   }
 
-  // Pull reservations whose stay overlaps [windowStart, windowEnd) and
-  // expand each into a list of nights with an even per-night allocation of
-  // the room total. Includes a 31-day check-in lookback so guests already
-  // staying when the window opens are captured.
+  // Pull reservations whose stay overlaps the window and expand each into a
+  // per-night list with the matching room rate. Forecast/BoB consumers care
+  // about *room revenue* only — Cloudbeds returns dailyRates per stay-night,
+  // which aligns 1:1 with how MTD/YTD historical room revenue is measured
+  // (transactions where roomRevenueType === 'Room Rate').
+  //
+  // Status filter is intentionally narrow: only confirmed/in-house/checked-out
+  // count as "on the books." Pending/held/unconfirmed bookings get excluded
+  // because they can vanish without notice and would inflate the forecast.
   async _collectStaysInRange(windowStart, windowEnd) {
     const toYMD = d => d.toISOString().slice(0, 10);
     const lookback = new Date(windowStart.getTime() - 31 * 86400000);
     const list = await this.getReservations(toYMD(lookback), toYMD(windowEnd));
     if (!list.success) return [];
 
+    const ON_BOOK_STATUSES = new Set(['confirmed', 'checked_in', 'checked_out', 'in_house']);
     const stays = [];
     for (const r of (list.data || [])) {
       const status = (r.status || '').toLowerCase();
-      if (status === 'canceled' || status === 'cancelled' || status === 'no_show') continue;
+      if (!ON_BOOK_STATUSES.has(status)) continue;
+
       const sd = r.startDate;
       const ed = r.endDate;
       if (!sd || !ed) continue;
@@ -716,15 +733,58 @@ class CloudbedsAPI {
       const endMs = new Date(ed + 'T00:00:00Z').getTime();
       if (!(endMs > startMs)) continue;
       const nightsCount = Math.max(1, Math.round((endMs - startMs) / 86400000));
-      const total = parseFloat(r.total || r.subtotal || r.balance || r.roomTotal || 0);
-      const perNight = total / nightsCount;
-      const nights = [];
-      for (let i = 0; i < nightsCount; i++) {
-        nights.push(toYMD(new Date(startMs + i * 86400000)));
+
+      const dailyRatesMap = this._normalizeDailyRates(r.dailyRates);
+
+      // Per-night fallback when dailyRates is missing. We deliberately do NOT
+      // fall back to r.total or r.balance: total includes tax/fees (mismatch
+      // vs MTD net room revenue), and balance is the unpaid amount.
+      let perNightFallback = 0;
+      const roomTotal = parseFloat(r.roomTotal || 0);
+      if (roomTotal > 0) {
+        perNightFallback = roomTotal / nightsCount;
+      } else if (r.subtotal != null) {
+        const subtotal = parseFloat(r.subtotal || 0);
+        const taxesTotal = parseFloat(r.taxesTotal || 0);
+        const feesTotal = parseFloat(r.feesTotal || 0);
+        const net = subtotal - taxesTotal - feesTotal;
+        perNightFallback = net > 0 ? net / nightsCount : 0;
       }
-      stays.push({ reservationID: r.reservationID, nights, perNight, status });
+
+      const nights = [];
+      const nightlyRevenue = [];
+      for (let i = 0; i < nightsCount; i++) {
+        const ymd = toYMD(new Date(startMs + i * 86400000));
+        nights.push(ymd);
+        const rate = dailyRatesMap[ymd];
+        nightlyRevenue.push(rate != null ? rate : perNightFallback);
+      }
+
+      stays.push({ reservationID: r.reservationID, nights, nightlyRevenue, status });
     }
     return stays;
+  }
+
+  // Cloudbeds returns dailyRates as either an object keyed by YYYY-MM-DD or as
+  // an array of { date, rate } records depending on endpoint. Normalize both
+  // shapes to a YMD->amount map so callers don't have to care.
+  _normalizeDailyRates(dailyRates) {
+    const out = {};
+    if (!dailyRates) return out;
+    if (Array.isArray(dailyRates)) {
+      for (const entry of dailyRates) {
+        if (!entry) continue;
+        const ymd = entry.date || entry.serviceDate || entry.day;
+        const amt = parseFloat(entry.rate ?? entry.amount ?? entry.value ?? 0);
+        if (ymd && Number.isFinite(amt)) out[ymd] = amt;
+      }
+    } else if (typeof dailyRates === 'object') {
+      for (const [ymd, val] of Object.entries(dailyRates)) {
+        const amt = parseFloat(typeof val === 'object' ? (val.rate ?? val.amount ?? val.value ?? 0) : val);
+        if (Number.isFinite(amt)) out[ymd] = amt;
+      }
+    }
+    return out;
   }
 
   /**
