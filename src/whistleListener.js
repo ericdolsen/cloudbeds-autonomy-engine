@@ -134,6 +134,56 @@ class WhistleListener {
                 sampleTexts.push(t.replace(/\s+/g, ' ').substring(0, 24));
             }
             logger.info(`[WHISTLE RPA DEBUG] frame=${frame.url().substring(0, 80)} unreadTextMatches=${total} chakraBadges=${badgeCount} sample=${JSON.stringify(sampleTexts)}`);
+
+            // Deep scan: getByText returns 0 even when "Unread" pills are
+            // visible, which means the label is rendered via something
+            // Playwright's text engine can't see (CSS ::before content, SVG
+            // <text>, or a non-textContent mechanism). Walk the whole DOM and
+            // log every visible element where textContent OR className OR
+            // aria-label OR a CSS ::before/::after `content` includes "unread".
+            // The output identifies the exact tag/class to target.
+            const findings = await frame.evaluate(() => {
+                const out = { textHits: [], classHits: [], ariaHits: [], pseudoHits: [] };
+                const all = document.querySelectorAll('body *');
+                for (const el of all) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) continue;
+                    const direct = Array.from(el.childNodes)
+                        .filter(n => n.nodeType === Node.TEXT_NODE)
+                        .map(n => n.textContent.trim())
+                        .join(' ');
+                    if (/unread/i.test(direct) && direct.length < 60) {
+                        out.textHits.push({
+                            tag: el.tagName.toLowerCase(),
+                            cls: String(el.className || '').substring(0, 60),
+                            text: direct.substring(0, 40),
+                        });
+                    }
+                    const cls = String(el.className || '');
+                    if (/unread/i.test(cls)) {
+                        out.classHits.push({ tag: el.tagName.toLowerCase(), cls: cls.substring(0, 60) });
+                    }
+                    const aria = el.getAttribute('aria-label') || '';
+                    if (/unread/i.test(aria)) {
+                        out.ariaHits.push({ tag: el.tagName.toLowerCase(), aria: aria.substring(0, 40) });
+                    }
+                    try {
+                        const before = window.getComputedStyle(el, '::before').content || '';
+                        const after = window.getComputedStyle(el, '::after').content || '';
+                        if (/unread/i.test(before) || /unread/i.test(after)) {
+                            out.pseudoHits.push({
+                                tag: el.tagName.toLowerCase(),
+                                cls: cls.substring(0, 60),
+                                before: before.substring(0, 30),
+                                after: after.substring(0, 30),
+                            });
+                        }
+                    } catch (e) { /* getComputedStyle can throw on detached nodes */ }
+                    if (out.textHits.length + out.classHits.length + out.ariaHits.length + out.pseudoHits.length >= 20) break;
+                }
+                return out;
+            }).catch((e) => ({ textHits: [], classHits: [], ariaHits: [], pseudoHits: [], err: String(e).substring(0, 80) }));
+            logger.info(`[WHISTLE RPA DEBUG] unreadFinder=${JSON.stringify(findings).substring(0, 1200)}`);
         }
 
         for (let i = 0; i < total; i++) {
