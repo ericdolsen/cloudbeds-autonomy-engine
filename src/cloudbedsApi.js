@@ -469,8 +469,16 @@ class CloudbedsAPI {
             transactionCategory: transactionCategory,
             transactionCodeDescription: t.description || '',
             transactionVoid: code.endsWith('V'),
-            roomNumber: t.sourceId || '', // use sourceId as unique identifier for room-night math
+            // Per-room sub-reservation ID. Multi-room reservations share one
+            // sourceId (the parent reservation) but have distinct subSourceId
+            // per room. Room-night counters MUST key on subSourceId or
+            // multi-room bookings collapse into a single night.
+            subSourceId: t.subSourceId || '',
+            // Kept for backwards-compat with existing sheet rows; new
+            // computations prefer subSourceId.
+            roomNumber: t.sourceId || '',
             reservationID: t.sourceId || '',
+            internalTransactionCode: code,
             transactionID: t.id || ''
           };
         }).filter(t => t.transactionDate >= startDate && t.transactionDate <= endDate);

@@ -174,10 +174,15 @@ class NightAuditReport {
       const rvType = t.roomRevenueType || '';
       const desc = t.transactionCodeDescription || '';
 
-      // Gross Room Revenue
+      // Gross Room Revenue. Room-night uniqueness keys on subSourceId
+      // (per-room sub-reservation) when available — multi-room bookings
+      // share one parent sourceId so keying on roomNumber alone collapses
+      // them into a single night. Falls back to roomNumber for legacy sheet
+      // rows that pre-date the column-N schema addition.
       if (rvType === 'Room Rate') {
         rev += amt;
-        if (t.roomNumber) rooms.add(t.transactionDate + '_' + t.roomNumber);
+        const unit = t.subSourceId || t.roomNumber;
+        if (unit) rooms.add(t.transactionDate + '_' + unit);
       }
 
       // Room Rate Adjustments: any '1*A' code (matches the Room Rate detector
@@ -272,6 +277,12 @@ class NightAuditReport {
         if (tDate < startStr || tDate > endStr) continue;
         const realId = r[12] && r[12] !== '-' ? r[12] : null;
         const key = realId || `legacy|${r[1]}|${r[2]}|${r[3]}|${r[4]}|${r[5]}|${r[6]}|${r[7]}|${r[8]}`;
+        // Columns N (subSourceId) and O (internalTransactionCode) were added
+        // after the original schema. Older rows have undefined values here;
+        // computeFromTransactions falls back to roomNumber / description-based
+        // detection in those cases, so the read is fully backward-compatible.
+        const subSourceId = (r[13] && r[13] !== '-') ? r[13] : '';
+        const internalTransactionCode = (r[14] && r[14] !== '-') ? r[14] : '';
         parsedMap.set(key, {
           transactionDate: tDate,
           transactionAmount: r[2],
@@ -281,7 +292,9 @@ class NightAuditReport {
           roomNumber: r[6] === '-' ? '' : r[6],
           reservationID: r[7] === '-' ? '' : r[7],
           transactionVoid: r[8] === 'Yes',
-          transactionID: realId || key
+          transactionID: realId || key,
+          subSourceId,
+          internalTransactionCode
         });
       }
       return Array.from(parsedMap.values());
@@ -362,19 +375,22 @@ class NightAuditReport {
       const values = fresh.map(t => {
         const c = sharedCache[t.reservationID] || { checkIn: '-', checkOut: '-', groupName: '-' };
         return [
-          dateStr,
-          t.transactionDate || '-',
-          t.transactionAmount || '0',
-          t.transactionType || '-',
-          t.roomRevenueType || '-',
-          t.transactionCodeDescription || '-',
-          t.roomNumber || '-',
-          t.reservationID || '-',
-          t.transactionVoid ? 'Yes' : 'No',
-          c.checkIn,
-          c.checkOut,
-          c.groupName,
-          t.transactionID || '-'
+          dateStr,                                  // A
+          t.transactionDate || '-',                 // B
+          t.transactionAmount || '0',               // C
+          t.transactionType || '-',                 // D
+          t.roomRevenueType || '-',                 // E
+          t.transactionCodeDescription || '-',      // F
+          t.roomNumber || '-',                      // G
+          t.reservationID || '-',                   // H
+          t.transactionVoid ? 'Yes' : 'No',         // I
+          c.checkIn,                                // J
+          c.checkOut,                               // K
+          c.groupName,                              // L
+          t.transactionID || '-',                   // M
+          // Schema additions for the multi-room bug fix:
+          t.subSourceId || '-',                     // N: per-room sub-reservation ID
+          t.internalTransactionCode || '-'          // O: precise adjustment / rate code
         ];
       });
 
