@@ -500,6 +500,14 @@ class CloudbedsAPI {
             checkInFrom,
             checkInTo,
             includeGuestsDetails: 'true',
+            // Cloudbeds returns a "lite" reservation by default — no
+            // dailyRates, no roomTotal, no subtotal. These flags pull the
+            // full rate breakdown into each reservation so forecast/BoB
+            // revenue can use real per-night rates instead of falling back
+            // to balance / total guesses.
+            includeAllRates: 'true',
+            includeRoomRates: 'true',
+            includeRateBreakdown: 'true',
             limit: pageSize,
             pageNumber: pageIndex,
             ...(this.propertyID ? { propertyID: this.propertyID } : {})
@@ -686,28 +694,29 @@ class CloudbedsAPI {
   }
 
   // Resolve the property's total room count via /getRooms with an env override.
-  // /getRooms returns one entry per *room type*, each with a nested rooms[]
-  // array of physical units — sum across all types or we'll undercount badly
-  // (a property with 50 rooms across 5 types would otherwise read as 10).
+  // Cloudbeds /getRooms paginates with a default page size of 20 and returns
+  // a top-level `total` field carrying the true physical room count across
+  // all pages. We trust `total` first; only fall back to summing rooms[] if
+  // the response shape predates that field.
   async _resolveTotalRooms() {
     const envOverride = parseInt(process.env.TOTAL_ROOMS || 0, 10);
     if (envOverride > 0) return envOverride;
     try {
       const res = await this._getClient().get('/getRooms', {
-        params: this.propertyID ? { propertyID: this.propertyID } : {}
+        params: { ...(this.propertyID ? { propertyID: this.propertyID } : {}), pageSize: 200 }
       });
-      const data = res.data?.data || [];
 
-      // Cloudbeds /getRooms is inconsistent in shape between properties:
+      // Authoritative: `total` is the cross-page count. Trust it when present.
+      const headlineTotal = parseInt(res.data?.total || 0, 10);
+      if (headlineTotal > 0) return headlineTotal;
+
+      // Legacy shape fallbacks for older responses:
       //   (a) Multiple data[] entries, each is a roomType with a rooms[] array.
       //   (b) Single data[0] with rooms[] of every physical room across all types.
       //   (c) Single data[0] with rooms[] = roomTypes, each carrying a quantity.
-      // Try each in order; whichever produces a positive total wins.
+      const data = res.data?.data || [];
       let total = data.reduce((sum, t) => sum + ((t.rooms && t.rooms.length) || 0), 0);
       if (total > 0) {
-        // Sanity check: if shape (c) hides quantities behind nested entries,
-        // the .length sum can underreport. Sum any roomTypeQuantity hints
-        // we find and prefer the larger of the two.
         const qtyTotal = data.reduce((sum, t) => {
           const nested = (t.rooms || []).reduce((s, r) => s + parseInt(r.roomTypeQuantity || r.quantity || 0, 10), 0);
           return sum + nested;
@@ -715,8 +724,6 @@ class CloudbedsAPI {
         if (qtyTotal > total) total = qtyTotal;
         return total;
       }
-
-      // Shape (c) at the top level: roomTypes with quantities.
       total = data.reduce((sum, t) => sum + parseInt(t.roomTypeQuantity || t.quantity || 0, 10), 0);
       if (total > 0) return total;
 
