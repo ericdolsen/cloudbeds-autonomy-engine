@@ -183,13 +183,30 @@ app.get('/api/employee/debug/report-shape', checkLocalNetwork, async (req, res) 
     ]);
     const sampleReservation = (resList.data || [])[0] || null;
     const sampleTransaction = (txnList.data || [])[0] || null;
+
+    // Also fetch the detail (singular) endpoint for the same reservation —
+    // /getReservations returns "lite" data on most accounts; /getReservation
+    // is where dailyRates / roomTotal live. Confirms the detail fallback in
+    // _collectStaysInRange has fields to work with.
+    let sampleReservationDetail = null;
+    let detailKeys = [];
+    if (sampleReservation && sampleReservation.reservationID) {
+      const detailRes = await agent.engine.api.getReservationById(sampleReservation.reservationID).catch(() => null);
+      if (detailRes && detailRes.success && detailRes.data) {
+        sampleReservationDetail = detailRes.data;
+        detailKeys = Object.keys(detailRes.data);
+      }
+    }
+
     res.json({
       sampleReservation,
       reservationKeys: sampleReservation ? Object.keys(sampleReservation) : [],
+      sampleReservationDetail,
+      detailKeys,
       sampleTransaction,
       transactionKeys: sampleTransaction ? Object.keys(sampleTransaction) : [],
       getRoomsRaw: roomsRaw,
-      hint: "Look for the field that holds net per-night room revenue. Set FORECAST_REVENUE_FIELD=<that name> in .env and TOTAL_ROOMS=<your physical count> if /getRooms isn't summing right."
+      hint: "detailKeys come from /getReservation (singular); reservationKeys come from /getReservations (lite). The detail endpoint should expose dailyRates / roomTotal which the lite version omits — _collectStaysInRange now falls through to detail when balance/subtotal yield zero. Set FORECAST_REVENUE_FIELD=<field> in .env to override."
     });
   } catch (err) {
     logger.error(`[EMPLOYEE] debug/report-shape failed: ${err.message}`);

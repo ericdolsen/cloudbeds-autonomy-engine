@@ -761,6 +761,8 @@ class CloudbedsAPI {
     const stays = [];
     let zeroRevenueStays = 0;
     let firstZeroSampleLogged = false;
+    let detailFetches = 0;
+    let detailRescues = 0;
 
     for (const r of (list.data || [])) {
       const status = (r.status || '').toLowerCase();
@@ -774,8 +776,34 @@ class CloudbedsAPI {
       if (!(endMs > startMs)) continue;
       const nightsCount = Math.max(1, Math.round((endMs - startMs) / 86400000));
 
-      const dailyRatesMap = this._normalizeDailyRates(r.dailyRates);
-      const perNightFallback = this._estimatePerNightRevenue(r, nightsCount);
+      let dailyRatesMap = this._normalizeDailyRates(r.dailyRates);
+      let perNightFallback = this._estimatePerNightRevenue(r, nightsCount);
+
+      // The /getReservations listing endpoint returns a "lite" payload that
+      // omits dailyRates/roomTotal/subtotal entirely on most accounts. When
+      // the listing produced no usable rate signal AND we'd otherwise emit
+      // zero revenue (typically: prepaid stays where balance has dropped to 0),
+      // fall through to /getReservation singular which does carry rate detail.
+      // Cached per reservationID for the request lifetime so a BoB recompute
+      // doesn't hammer the API.
+      const noRateSignal = Object.keys(dailyRatesMap).length === 0 && perNightFallback === 0;
+      if (noRateSignal && r.reservationID) {
+        const detail = await this._fetchReservationDetail(r.reservationID);
+        if (detail) {
+          detailFetches++;
+          const detailDailyRates = this._normalizeDailyRates(detail.dailyRates);
+          if (Object.keys(detailDailyRates).length > 0) {
+            dailyRatesMap = detailDailyRates;
+            detailRescues++;
+          } else {
+            const detailPerNight = this._estimatePerNightRevenue(detail, nightsCount);
+            if (detailPerNight > 0) {
+              perNightFallback = detailPerNight;
+              detailRescues++;
+            }
+          }
+        }
+      }
 
       const nights = [];
       const nightlyRevenue = [];
@@ -806,10 +834,41 @@ class CloudbedsAPI {
       stays.push({ reservationID: r.reservationID, nights, nightlyRevenue, status });
     }
 
+    if (detailFetches > 0) {
+      logger.info(`[STAYS] /getReservation detail fallback fetched ${detailFetches} reservations, ${detailRescues} produced revenue.`);
+    }
     if (zeroRevenueStays > 0) {
-      logger.warn(`[STAYS] ${zeroRevenueStays}/${stays.length} stays produced zero per-night revenue. If forecast/BoB look low, see the field dump above and consider setting FORECAST_REVENUE_FIELD in .env.`);
+      logger.warn(`[STAYS] ${zeroRevenueStays}/${stays.length} stays still zero-revenue after detail fallback. If forecast/BoB still look low, set FORECAST_REVENUE_FIELD or chase comp/block detection.`);
     }
     return stays;
+  }
+
+  // Per-reservation detail cache. /getReservation (singular) returns the
+  // full payload Cloudbeds withholds from the listing endpoint, including
+  // dailyRates and roomTotal. Cache TTL is short enough to refresh during
+  // a long-running cron but long enough that back-to-back BoB recomputes
+  // don't double-fetch.
+  async _fetchReservationDetail(reservationID) {
+    if (!this._detailCache) this._detailCache = new Map();
+    const cached = this._detailCache.get(reservationID);
+    const now = Date.now();
+    const TTL_MS = 5 * 60 * 1000;
+    if (cached && (now - cached.fetchedAt) < TTL_MS) {
+      return cached.data;
+    }
+    try {
+      // Be gentle on the rate limit — detail calls happen in a tight loop
+      // when a forecast or BoB recompute is iterating hundreds of stays.
+      await sleep(100);
+      const res = await this.getReservationById(reservationID);
+      const data = res && res.success ? res.data : null;
+      this._detailCache.set(reservationID, { data, fetchedAt: now });
+      return data;
+    } catch (e) {
+      logger.warn(`_fetchReservationDetail(${reservationID}) failed: ${e.message}`);
+      this._detailCache.set(reservationID, { data: null, fetchedAt: now });
+      return null;
+    }
   }
 
   // Best-effort net per-night room revenue when dailyRates is missing. Tries
