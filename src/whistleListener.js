@@ -111,26 +111,40 @@ class WhistleListener {
       this._loggedOut = false;
     }
 
-    // Whistle uses Chakra UI. The unread badge is `span.chakra-badge` with the
-    // exact text "Unread" (red pill, #F3565D). Other badges in the same list
-    // say "Replied" / "Error" / "Delivered" / "SMS" / "@" — so we MUST filter
-    // by text, otherwise .first() returns a non-unread badge (or a hidden one
-    // from somewhere else in the DOM) and isVisible() fails silently.
-    // The `:visible` pseudo skips off-screen / display:none badges that exist
-    // in the DOM but aren't actually rendered.
+    // Whistle's "Unread" pill is a red Chakra badge. Earlier attempts targeted
+    // span.chakra-badge filtered by hasText, but that failed to match in
+    // practice — likely because the visible text is rendered via a CSS pseudo-
+    // element, nested wrapper, or a non-textContent mechanism. getByText with
+    // exact: true is structure-agnostic: it matches any element whose
+    // accessible text is exactly "Unread", regardless of class hash or nesting.
     let targetContext = null;
     let unreadIndicator = null;
+    const debugRpa = process.env.WHISTLE_RPA_DEBUG === 'true';
 
     for (const frame of this.page.frames()) {
-        const indicator = frame
-            .locator('span.chakra-badge:visible', { hasText: /^\s*unread\s*$/i })
-            .first();
-        const isVis = await indicator.isVisible().catch(() => false);
-        if (isVis) {
-            targetContext = frame;
-            unreadIndicator = indicator;
-            break;
+        const candidates = frame.getByText('Unread', { exact: true });
+        const total = await candidates.count().catch(() => 0);
+
+        if (debugRpa) {
+            const sampleBadges = frame.locator('span.chakra-badge');
+            const badgeCount = await sampleBadges.count().catch(() => 0);
+            const sampleTexts = [];
+            for (let i = 0; i < Math.min(badgeCount, 10); i++) {
+                const t = await sampleBadges.nth(i).innerText().catch(() => '');
+                sampleTexts.push(t.replace(/\s+/g, ' ').substring(0, 24));
+            }
+            logger.info(`[WHISTLE RPA DEBUG] frame=${frame.url().substring(0, 80)} unreadTextMatches=${total} chakraBadges=${badgeCount} sample=${JSON.stringify(sampleTexts)}`);
         }
+
+        for (let i = 0; i < total; i++) {
+            const el = candidates.nth(i);
+            if (await el.isVisible().catch(() => false)) {
+                targetContext = frame;
+                unreadIndicator = el;
+                break;
+            }
+        }
+        if (unreadIndicator) break;
     }
 
     if (!unreadIndicator) {
@@ -172,6 +186,25 @@ class WhistleListener {
     if (!textToProcess) {
        logger.warn(`[WHISTLE RPA] Could not extract text from the chat area.`);
        return;
+    }
+
+    // Recency guard: don't auto-reply to a thread whose latest activity is
+    // older than RECENCY_CUTOFF. Protects against an outage backlog (e.g.
+    // server was offline for 4 hours; the agent should NOT wake up and
+    // mass-reply to every guest who messaged during the downtime).
+    const cutoffMs = Number(process.env.WHISTLE_RECENCY_CUTOFF_MS) || 60 * 60 * 1000;
+    const latestActivityAt = this._extractLatestTimestamp(textToProcess);
+    if (latestActivityAt) {
+        const ageMs = Date.now() - latestActivityAt;
+        if (ageMs > cutoffMs) {
+            const ageMin = Math.round(ageMs / 60000);
+            const cutoffMin = Math.round(cutoffMs / 60000);
+            logger.warn(`[WHISTLE RPA] Latest message is ${ageMin}min old (>${cutoffMin}min cutoff); skipping auto-reply. A human should respond.`);
+            await this.page.waitForTimeout(5000);
+            return;
+        }
+    } else if (debugRpa) {
+        logger.info(`[WHISTLE RPA DEBUG] No timestamp parsed from chat text; skipping recency guard for this thread.`);
     }
 
     logger.info(`[WHISTLE RPA] Sending extracted chat to Autonomy Engine...`);
@@ -231,6 +264,41 @@ ${textToProcess.substring(0, 1500)}
     }
 
     await this.page.waitForTimeout(5000);
+  }
+
+  /**
+   * Best-effort parser for the most recent timestamp in a Whistle chat scrape.
+   * Whistle renders timestamps in a few flavors:
+   *   - Today only:        "1:25 PM", "11:39 AM"
+   *   - With month/day:    "Apr 25 8:46 AM", "Apr 25, 2026 8:46 AM"
+   *   - Date headers:      "April 25, 2026"
+   * Returns the latest parseable timestamp as ms-since-epoch, or null if
+   * nothing parseable was found. Errs on the side of returning null rather
+   * than a wrong date — null disables the recency guard for that thread,
+   * which is the safer default than incorrectly skipping a fresh message.
+   */
+  _extractLatestTimestamp(text) {
+    if (!text) return null;
+    const todayPrefix = new Date().toDateString(); // e.g. "Tue Apr 28 2026"
+    const candidates = [];
+
+    // Combined pattern: optional month/day prefix, then HH:MM AM/PM.
+    const rx = /(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,\s*\d{4})?\s+)?\d{1,2}:\d{2}\s*(?:AM|PM)/gi;
+    const matches = text.match(rx) || [];
+    for (const raw of matches) {
+        const m = raw.trim();
+        let parsed = Date.parse(m);
+        if (isNaN(parsed)) {
+            // Bare time like "1:25 PM" — assume today.
+            parsed = Date.parse(`${todayPrefix} ${m}`);
+        }
+        if (!isNaN(parsed)) {
+            candidates.push(parsed);
+        }
+    }
+
+    if (!candidates.length) return null;
+    return Math.max(...candidates);
   }
 
   async stop() {
