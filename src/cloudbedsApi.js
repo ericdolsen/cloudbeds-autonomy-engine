@@ -791,15 +791,29 @@ class CloudbedsAPI {
         const detail = await this._fetchReservationDetail(r.reservationID);
         if (detail) {
           detailFetches++;
-          const detailDailyRates = this._normalizeDailyRates(detail.dailyRates);
+          // The /getReservation singular payload nests dailyRates/roomTotal
+          // inside detail.assigned[] and detail.unassigned[] (one entry per
+          // room of the reservation), NOT at the top level. Walk both arrays
+          // and sum per-night rates so multi-room bookings get full revenue.
+          const detailDailyRates = this._collectDailyRatesFromDetail(detail);
           if (Object.keys(detailDailyRates).length > 0) {
             dailyRatesMap = detailDailyRates;
             detailRescues++;
           } else {
-            const detailPerNight = this._estimatePerNightRevenue(detail, nightsCount);
+            // Fall back to the nested or balanceDetailed numbers.
+            const detailPerNight = this._estimatePerNightRevenueFromDetail(detail, nightsCount);
             if (detailPerNight > 0) {
               perNightFallback = detailPerNight;
               detailRescues++;
+            } else {
+              // Last resort: try the legacy estimator on the detail object
+              // itself in case Cloudbeds added a top-level alias on this
+              // account.
+              const legacy = this._estimatePerNightRevenue(detail, nightsCount);
+              if (legacy > 0) {
+                perNightFallback = legacy;
+                detailRescues++;
+              }
             }
           }
         }
@@ -869,6 +883,55 @@ class CloudbedsAPI {
       this._detailCache.set(reservationID, { data: null, fetchedAt: now });
       return null;
     }
+  }
+
+  // /getReservation (singular) nests dailyRates inside detail.assigned[] and
+  // detail.unassigned[] — one entry per physical/virtual room on the
+  // reservation. For a single-room booking the array has one entry with one
+  // dailyRates list; for multi-room it has multiple, and per-night revenue
+  // is the sum across rooms. This helper collapses both arrays into a
+  // YMD->amount map the existing dailyRatesMap consumer expects.
+  _collectDailyRatesFromDetail(detail) {
+    const map = {};
+    const rooms = [...(detail.assigned || []), ...(detail.unassigned || [])];
+    for (const room of rooms) {
+      const ratesPerNight = this._normalizeDailyRates(room.dailyRates);
+      for (const [ymd, rate] of Object.entries(ratesPerNight)) {
+        map[ymd] = (map[ymd] || 0) + rate;
+      }
+    }
+    return map;
+  }
+
+  // Detail-only fallback when nested dailyRates aren't usable. Pulls from
+  // the structures the singular endpoint actually populates:
+  //   - balanceDetailed.subTotal — net of taxes/fees, populated even pre-payment
+  //   - sum of room.roomTotal across detail.assigned/unassigned
+  // Both are net (not gross), so they align with how MTD/YTD measure room
+  // revenue. Falls through to balanceDetailed.grandTotal (gross) only as a
+  // last resort because that includes taxes/fees.
+  _estimatePerNightRevenueFromDetail(detail, nightsCount) {
+    if (nightsCount <= 0) return 0;
+
+    if (detail.balanceDetailed && detail.balanceDetailed.subTotal != null) {
+      const sub = parseFloat(detail.balanceDetailed.subTotal);
+      if (Number.isFinite(sub) && sub > 0) return sub / nightsCount;
+    }
+
+    const rooms = [...(detail.assigned || []), ...(detail.unassigned || [])];
+    let roomTotalSum = 0;
+    for (const room of rooms) {
+      const v = parseFloat(room.roomTotal || 0);
+      if (Number.isFinite(v) && v > 0) roomTotalSum += v;
+    }
+    if (roomTotalSum > 0) return roomTotalSum / nightsCount;
+
+    if (detail.balanceDetailed && detail.balanceDetailed.grandTotal != null) {
+      const gross = parseFloat(detail.balanceDetailed.grandTotal);
+      if (Number.isFinite(gross) && gross > 0) return gross / nightsCount;
+    }
+
+    return 0;
   }
 
   // Best-effort net per-night room revenue when dailyRates is missing. Tries
