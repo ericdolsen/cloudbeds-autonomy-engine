@@ -161,6 +161,42 @@ app.get('/api/employee/business-on-books', checkLocalNetwork, async (req, res) =
   }
 });
 
+// Diagnostic endpoint for the night audit pipeline. Returns the raw Cloudbeds
+// shapes that feed the report so we can confirm field names without guessing:
+//   - one sample reservation from /getReservations (today + 14 days)
+//   - one sample transaction from /accounting/transactions (today)
+//   - the /getRooms response shape used by _resolveTotalRooms
+// Local-network-gated (same as the other employee endpoints) and intended for
+// one-off debugging; remove or move behind an admin flag once the field names
+// are nailed down.
+app.get('/api/employee/debug/report-shape', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const future = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+    const [resList, txnList, roomsRaw] = await Promise.all([
+      agent.engine.api.getReservations(today, future),
+      agent.engine.api.getTransactions(today, today),
+      agent.engine.api._getClient().get('/getRooms', {
+        params: agent.engine.api.propertyID ? { propertyID: agent.engine.api.propertyID } : {}
+      }).then(r => r.data).catch(e => ({ error: e.message }))
+    ]);
+    const sampleReservation = (resList.data || [])[0] || null;
+    const sampleTransaction = (txnList.data || [])[0] || null;
+    res.json({
+      sampleReservation,
+      reservationKeys: sampleReservation ? Object.keys(sampleReservation) : [],
+      sampleTransaction,
+      transactionKeys: sampleTransaction ? Object.keys(sampleTransaction) : [],
+      getRoomsRaw: roomsRaw,
+      hint: "Look for the field that holds net per-night room revenue. Set FORECAST_REVENUE_FIELD=<that name> in .env and TOTAL_ROOMS=<your physical count> if /getRooms isn't summing right."
+    });
+  } catch (err) {
+    logger.error(`[EMPLOYEE] debug/report-shape failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ==========================================
 // WEBHOOK ADMIN ENDPOINTS
 // (staff-only, gated by checkLocalNetwork)

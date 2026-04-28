@@ -180,11 +180,17 @@ class NightAuditReport {
         if (t.roomNumber) rooms.add(t.transactionDate + '_' + t.roomNumber);
       }
 
-      // Room Rate Adjustments (Identify via 1000A code or description for Google Sheets historical data)
-      const isRoomRateAdjustment = 
-        (t.internalTransactionCode === '1000A') || 
+      // Room Rate Adjustments: any '1*A' code (matches the Room Rate detector
+      // in getTransactions, which treats codes starting with '1' and not
+      // ending in 'V'/'A' as Room Rate). We must detect ALL rate-adjustment
+      // codes (1000A, 1001A, 1002A, etc.), not just '1000A' — a property
+      // with multiple rate plans uses different code suffixes per plan.
+      const code = t.internalTransactionCode || '';
+      const isRoomRateAdjustment =
+        /^1\d*A$/.test(code) ||
         (desc === 'Room Rate' && amt < 0 && rvType !== 'Room Rate') ||
-        (desc === 'Rate - Adjustment');
+        (desc === 'Rate - Adjustment') ||
+        (desc === 'Room Rate - Adjustment');
 
       if (isRoomRateAdjustment) {
         adj += amt;

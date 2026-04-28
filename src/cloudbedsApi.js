@@ -696,11 +696,33 @@ class CloudbedsAPI {
       const res = await this._getClient().get('/getRooms', {
         params: this.propertyID ? { propertyID: this.propertyID } : {}
       });
-      const types = res.data?.data || [];
-      const total = types.reduce((sum, t) => sum + ((t.rooms && t.rooms.length) || 0), 0);
+      const data = res.data?.data || [];
+
+      // Cloudbeds /getRooms is inconsistent in shape between properties:
+      //   (a) Multiple data[] entries, each is a roomType with a rooms[] array.
+      //   (b) Single data[0] with rooms[] of every physical room across all types.
+      //   (c) Single data[0] with rooms[] = roomTypes, each carrying a quantity.
+      // Try each in order; whichever produces a positive total wins.
+      let total = data.reduce((sum, t) => sum + ((t.rooms && t.rooms.length) || 0), 0);
+      if (total > 0) {
+        // Sanity check: if shape (c) hides quantities behind nested entries,
+        // the .length sum can underreport. Sum any roomTypeQuantity hints
+        // we find and prefer the larger of the two.
+        const qtyTotal = data.reduce((sum, t) => {
+          const nested = (t.rooms || []).reduce((s, r) => s + parseInt(r.roomTypeQuantity || r.quantity || 0, 10), 0);
+          return sum + nested;
+        }, 0);
+        if (qtyTotal > total) total = qtyTotal;
+        return total;
+      }
+
+      // Shape (c) at the top level: roomTypes with quantities.
+      total = data.reduce((sum, t) => sum + parseInt(t.roomTypeQuantity || t.quantity || 0, 10), 0);
       if (total > 0) return total;
+
+      logger.warn(`_resolveTotalRooms: /getRooms returned an unrecognized shape. Set TOTAL_ROOMS=<your physical room count> in .env to override.`);
     } catch (e) {
-      logger.warn(`_resolveTotalRooms: /getRooms failed (${e.message}); falling back to 50`);
+      logger.warn(`_resolveTotalRooms: /getRooms failed (${e.message}); set TOTAL_ROOMS in .env. Falling back to 50.`);
     }
     return 50;
   }
@@ -722,6 +744,9 @@ class CloudbedsAPI {
 
     const ON_BOOK_STATUSES = new Set(['confirmed', 'checked_in', 'checked_out', 'in_house']);
     const stays = [];
+    let zeroRevenueStays = 0;
+    let firstZeroSampleLogged = false;
+
     for (const r of (list.data || [])) {
       const status = (r.status || '').toLowerCase();
       if (!ON_BOOK_STATUSES.has(status)) continue;
@@ -735,21 +760,7 @@ class CloudbedsAPI {
       const nightsCount = Math.max(1, Math.round((endMs - startMs) / 86400000));
 
       const dailyRatesMap = this._normalizeDailyRates(r.dailyRates);
-
-      // Per-night fallback when dailyRates is missing. We deliberately do NOT
-      // fall back to r.total or r.balance: total includes tax/fees (mismatch
-      // vs MTD net room revenue), and balance is the unpaid amount.
-      let perNightFallback = 0;
-      const roomTotal = parseFloat(r.roomTotal || 0);
-      if (roomTotal > 0) {
-        perNightFallback = roomTotal / nightsCount;
-      } else if (r.subtotal != null) {
-        const subtotal = parseFloat(r.subtotal || 0);
-        const taxesTotal = parseFloat(r.taxesTotal || 0);
-        const feesTotal = parseFloat(r.feesTotal || 0);
-        const net = subtotal - taxesTotal - feesTotal;
-        perNightFallback = net > 0 ? net / nightsCount : 0;
-      }
+      const perNightFallback = this._estimatePerNightRevenue(r, nightsCount);
 
       const nights = [];
       const nightlyRevenue = [];
@@ -760,9 +771,83 @@ class CloudbedsAPI {
         nightlyRevenue.push(rate != null ? rate : perNightFallback);
       }
 
+      // Diagnostic: surface the first zero-revenue stay's keys so the user
+      // can see exactly which fields Cloudbeds populated for their property.
+      // Solves the "forecast and BoB show $0" mystery without needing a
+      // separate debug script.
+      if (nightlyRevenue.every(v => !v)) {
+        zeroRevenueStays++;
+        if (!firstZeroSampleLogged) {
+          firstZeroSampleLogged = true;
+          const sampleKeys = Object.keys(r).slice(0, 40).join(', ');
+          const moneyHints = ['total', 'subtotal', 'subTotal', 'roomTotal', 'roomSubtotal',
+                              'grandTotal', 'taxesTotal', 'feesTotal', 'paid', 'balance']
+            .map(k => `${k}=${r[k]}`).join(' | ');
+          logger.warn(`[STAYS] Reservation ${r.reservationID} produced zero per-night revenue. Available keys: ${sampleKeys}`);
+          logger.warn(`[STAYS] Money-hint fields: ${moneyHints}`);
+        }
+      }
+
       stays.push({ reservationID: r.reservationID, nights, nightlyRevenue, status });
     }
+
+    if (zeroRevenueStays > 0) {
+      logger.warn(`[STAYS] ${zeroRevenueStays}/${stays.length} stays produced zero per-night revenue. If forecast/BoB look low, see the field dump above and consider setting FORECAST_REVENUE_FIELD in .env.`);
+    }
     return stays;
+  }
+
+  // Best-effort net per-night room revenue when dailyRates is missing. Tries
+  // every Cloudbeds field name we've seen in the wild before giving up — and
+  // crucially uses r.total as a last-ditch fallback (with tax included) so a
+  // missing subtotal/roomTotal doesn't zero out the whole forecast. Better to
+  // report 5-15% high than to report nothing.
+  _estimatePerNightRevenue(r, nightsCount) {
+    if (nightsCount <= 0) return 0;
+
+    // Optional explicit override if the user discovers a field that works.
+    const override = process.env.FORECAST_REVENUE_FIELD;
+    if (override && r[override] != null) {
+      const v = parseFloat(r[override]);
+      if (Number.isFinite(v) && v > 0) return v / nightsCount;
+    }
+
+    // Preferred: any of the room-level totals (already net of tax/fees).
+    const roomLevelTotals = ['roomTotal', 'roomSubtotal', 'roomsSubtotal', 'roomCharge', 'roomCharges'];
+    for (const k of roomLevelTotals) {
+      const v = parseFloat(r[k] || 0);
+      if (v > 0) return v / nightsCount;
+    }
+
+    // Synthesize: subtotal − taxes − fees. Cloudbeds varies field casing.
+    const subtotalKeys = ['subtotal', 'subTotal', 'sub_total', 'subtotalAmount'];
+    const taxesKeys    = ['taxesTotal', 'taxTotal', 'taxes_total', 'tax', 'totalTaxes'];
+    const feesKeys     = ['feesTotal', 'feeTotal', 'fees_total', 'fees', 'totalFees'];
+    const pickNumber = (obj, keys) => {
+      for (const k of keys) {
+        if (obj[k] == null) continue;
+        const v = parseFloat(obj[k]);
+        if (Number.isFinite(v)) return v;
+      }
+      return null;
+    };
+    const subtotal = pickNumber(r, subtotalKeys);
+    if (subtotal != null && subtotal > 0) {
+      const taxes = pickNumber(r, taxesKeys) || 0;
+      const fees  = pickNumber(r, feesKeys)  || 0;
+      const net = subtotal - taxes - fees;
+      if (net > 0) return net / nightsCount;
+    }
+
+    // Last-ditch: r.total (gross — includes tax/fees). Inflates by ~10–15%
+    // but beats zeroing out the entire forecast.
+    const totalKeys = ['total', 'grandTotal', 'totalAmount'];
+    for (const k of totalKeys) {
+      const v = parseFloat(r[k] || 0);
+      if (v > 0) return v / nightsCount;
+    }
+
+    return 0;
   }
 
   // Cloudbeds returns dailyRates as either an object keyed by YYYY-MM-DD or as
