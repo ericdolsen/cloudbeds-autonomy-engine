@@ -68,15 +68,19 @@ class PaymentTerminal {
       await page.waitForTimeout(3000);
       
       // Check if we got redirected to login
-      if (page.url().includes('login') || page.url().includes('signin')) {
-          // Handle either the old login form or the new Okta SSO login form
-      await page.waitForSelector('input[name="email"], input[name="user_email"]', { timeout: 15000 });
-      const newEmailInput = await page.$('input[name="email"]');
-      
+      if (page.url().includes('login') || page.url().includes('signin') || page.url().includes('okta')) {
+          // Handle either the old login form or the new Okta SSO login form.
+          // Okta has shipped multiple input names over the years
+          // (email, identifier, username); accept all of them so this
+          // doesn't break on every minor UI revision.
+          const emailSelector = 'input[name="email"], input[name="user_email"], input[name="identifier"], input[name="username"], input[type="email"]';
+          await page.waitForSelector(emailSelector, { timeout: 30000 });
+          const newEmailInput = await page.$('input[name="email"], input[name="identifier"], input[name="username"], input[type="email"]:not([name="user_email"])');
+
       if (newEmailInput) {
-          // New Okta Flow
-          await page.fill('input[name="email"]', this.email);
-          await page.click('button[type="submit"]');
+          // New Okta Flow — fill whichever variant is present
+          await newEmailInput.fill(this.email);
+          await page.click('button[type="submit"], input[type="submit"]');
           
           await page.waitForURL('**/authorize**', { timeout: 15000 }).catch(() => {});
           await page.waitForTimeout(2000);
