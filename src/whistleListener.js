@@ -297,7 +297,14 @@ class WhistleListener {
     // compose input also gives us a precise locator for the chat panel —
     // scraping the whole frame returns the conversation list (sidebar)
     // because that's what dominates the early DOM.
-    const composeInput = targetContext.getByPlaceholder(/type your message|type a message|reply|message/i).first();
+    //
+    // Whistle's compose is a Slate/ProseMirror-style contenteditable div
+    // with role="textbox" — NOT a native input or textarea. There's no
+    // placeholder attribute (the "Type your message…" hint is rendered
+    // via CSS), which is why every previous getByPlaceholder attempt
+    // failed silently. The diagnostic dump confirmed exactly one such
+    // element exists on the page.
+    const composeInput = targetContext.locator('div[contenteditable="true"][role="textbox"]').first();
     try {
         await composeInput.waitFor({ state: 'visible', timeout: 8000 });
     } catch (e) {
@@ -314,21 +321,23 @@ class WhistleListener {
         return;
     }
 
-    // Scrape the chat panel only — walk up from the input to its enclosing
-    // section/region/main. Without this, scraping a generic [class*="chat"]
-    // fallback pulls in the sidebar's 30+ conversation rows and the engine
-    // sees the conversation list instead of the actual messages.
-    let textToProcess = '';
-    const chatPanel = composeInput.locator(
-        'xpath=ancestor::*[self::section or self::main or @role="region" or @role="main" or contains(@class,"thread") or contains(@class,"conversation-detail") or contains(@class,"chat-detail") or contains(@class,"messageList")][1]'
-    );
-    if ((await chatPanel.count()) > 0) {
-        textToProcess = await chatPanel.first().innerText().catch(() => '');
-    }
-    if (!textToProcess) {
-        // Fallback: grab the input's parent panel a few levels up — still
-        // anchored on the input so we don't grab the entire frame.
-        textToProcess = await composeInput.locator('xpath=ancestor::*[4]').innerText().catch(() => '');
+    // Scrape the chat content. The structural walk-up from the compose
+    // (looking for section/main/region/etc.) doesn't reliably match
+    // because Whistle's compose is buried in deeply-nested chakra divs
+    // with empty/hashed classNames. Instead, use body.innerText and
+    // slice the segment immediately preceding "Type your message…" —
+    // the diagnostic showed the actual message bubbles are rendered
+    // there, just past the sidebar's ~1500-char dominance.
+    let textToProcess = await targetContext.locator('body').innerText().catch(() => '');
+    if (textToProcess) {
+        const composeMarker = textToProcess.search(/type your message|type a message/i);
+        if (composeMarker > 0) {
+            // Take the last 2000 chars before the marker — covers the
+            // chat header + recent message bubbles, drops most of the
+            // sidebar list.
+            const start = Math.max(0, composeMarker - 2000);
+            textToProcess = textToProcess.substring(start, composeMarker).trim();
+        }
     }
 
     if (!textToProcess) {
@@ -392,7 +401,18 @@ ${textToProcess.substring(0, 1500)}
     // we type into the right pane's textbox, not some other text field
     // elsewhere on the page.
     if (await composeInput.isVisible().catch(() => false)) {
-        await composeInput.fill(aiResponseText);
+        // Whistle's compose is a Slate/ProseMirror contenteditable, not a
+        // native input. .fill() doesn't always trigger the editor's input
+        // events; click-to-focus + pressSequentially mimics real typing
+        // and reliably populates rich-text editors.
+        await composeInput.click();
+        try {
+            await composeInput.fill(aiResponseText);
+        } catch (e) {
+            // .fill() can refuse to act on contenteditable in some
+            // Playwright/Chromium combos. Type the text instead.
+            await composeInput.pressSequentially(aiResponseText, { delay: 5 });
+        }
 
         // Send button is labeled "Send" (icon + text) in the bottom-right.
         const sendBtn = targetContext.getByRole('button', { name: /^\s*send\s*$/i }).first();
