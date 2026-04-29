@@ -100,74 +100,39 @@ class CloudbedsAPI {
       if (isName || isPhone) {
         logger.info(`[API CALL] Delegating search "${query}" to fast local ReservationCache...`);
         const { reservationCache } = require('./reservationCache');
-        
-        // If the cache is fully empty, it means the background sync hasn't finished yet (e.g., just booted)
-        // In this rare case, we must gracefully fall back to the live API so the kiosk doesn't break.
-        if (reservationCache.cache.size === 0) {
-          logger.warn(`[API CALL] Local cache is empty! Falling back to live API scan while background sync finishes...`);
-          const today = new Date().toISOString().split('T')[0];
-          const past = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-          const future = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
-          const resList = await this.getReservations(past, future);
-          if (resList.success && Array.isArray(resList.data)) {
-            let matches = [];
-            if (isName) {
-              const needle = query.trim().toLowerCase();
-              const matchesName = (r) => {
-                if ((r.guestName && r.guestName.toLowerCase().includes(needle)) ||
-                    (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
-                    (r.guestLastName && r.guestLastName.toLowerCase() === needle)) return true;
-                // Also check each entry in guestList — multi-room bookings
-                // attach individual guest profiles per sub-reservation, so a
-                // guest may type their own name even if the parent's main
-                // guestName is the booker's.
-                if (r.guestList && typeof r.guestList === 'object') {
-                  for (const g of Object.values(r.guestList)) {
-                    if (!g) continue;
-                    if ((g.guestName && g.guestName.toLowerCase().includes(needle)) ||
-                        (g.guestFirstName && g.guestFirstName.toLowerCase() === needle) ||
-                        (g.guestLastName && g.guestLastName.toLowerCase() === needle)) return true;
-                  }
-                }
-                return false;
-              };
-              matches = resList.data.filter(matchesName);
-            } else if (isPhone) {
-              const needle = query.replace(/[^\d]/g, '');
-              matches = resList.data.filter(r => {
-                if (!r.guestList) return false;
-                return Object.values(r.guestList).some(g => {
-                  const cell = g.guestCellPhone ? g.guestCellPhone.toString().replace(/[^\d]/g, '') : '';
-                  const phone = g.guestPhone ? g.guestPhone.toString().replace(/[^\d]/g, '') : '';
-                  return (cell && cell.includes(needle)) || (phone && phone.includes(needle));
-                });
-              });
-            }
-
-            if (matches.length > 0) {
-              const exactMatch = matches.find(r => {
-                if (mode === 'checkin') return r.startDate === today;
-                if (mode === 'checkout') return r.endDate === today || r.status === 'checked_in';
-                if (mode === 'print') return r.startDate === today || r.endDate === today || r.status === 'checked_in' || r.status === 'checked_out';
-                return true;
-              });
-
-              if (exactMatch) {
-                const id = exactMatch.reservationID || exactMatch.reservationId;
-                logger.info(`[API CALL] Name resolved to ID: ${id}`);
-                return await this.getReservationById(id);
-              }
-            }
-          }
-        } else {
-          // Normal behavior: use the lightning-fast local cache
-          const localMatch = reservationCache.search(query, mode);
-          if (localMatch) {
-            return localMatch;
+        // 1. Try the local cache first. It loads from disk on startup and is
+        //    updated by webhook on reservation changes.
+        let cacheResult = null;
+        if (reservationCache.cache.size > 0) {
+          cacheResult = reservationCache.search(query, mode);
+          if (cacheResult && cacheResult.success) {
+            return cacheResult;
           }
         }
-        
+
+        // 2. Cache miss OR cache thinks the only matches are for other dates
+        //    ("your check-in is 2026-05-01"). The most common reason: a
+        //    reservation was just booked in Cloudbeds and the webhook for it
+        //    hasn't propagated to our cache yet, so the search settles on an
+        //    older same-name booking. Fall back to a fresh live query scoped
+        //    to today so we can pick up brand-new arrivals without waiting
+        //    for the next cache sync.
+        logger.info(`[API CALL] Cache had no current-day match for "${query}" — checking live Cloudbeds for today's arrivals.`);
+        const liveResult = await this._searchLiveForCheckin({ query, mode, isName, isPhone });
+        if (liveResult && liveResult.success && liveResult.data) {
+          const id = liveResult.data.reservationID || liveResult.data.reservationId;
+          if (id) {
+            reservationCache.cache.set(id, liveResult.data);
+            logger.info(`[CACHE] Primed with live result ${id}.`);
+          }
+          return liveResult;
+        }
+
+        // 3. Both layers missed. Prefer the cache's specific message if it
+        //    had one (e.g. "your check-in is on 5/1") — it's more useful to
+        //    the guest than a generic "not found".
+        if (cacheResult) return cacheResult;
         return { success: false, message: "Could not find an active reservation matching that name." };
       }
 
@@ -176,6 +141,88 @@ class CloudbedsAPI {
     } catch (error) {
       logger.error(`getReservation failed: ${error.message}`);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Live-API fallback for the kiosk lookup path. Used when the local cache
+   * either is empty (cold boot) or has no current-day match (stale cache —
+   * a reservation was created today but the webhook hasn't propagated yet).
+   * Scoped to today's date range to keep the call cheap; on success we
+   * return the full reservation record so the caller can prime the cache.
+   */
+  async _searchLiveForCheckin({ query, mode, isName, isPhone }) {
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const resList = await this.getReservations(today, today);
+      if (!resList || !resList.success || !Array.isArray(resList.data)) return null;
+
+      // Prime the cache with the full today list. This matters for multi-
+      // room bookings: the kiosk identify route calls reservationCache
+      // .findSiblings(...) to build the chooser, which only works if every
+      // sibling is in the cache. Priming ALL of today's records (not just
+      // the matched one) ensures sub-reservations booked together show up
+      // together in the chooser even if no webhook fired.
+      try {
+        const { reservationCache } = require('./reservationCache');
+        for (const r of resList.data) {
+          const id = r.reservationID || r.reservationId;
+          if (id) reservationCache.cache.set(id, r);
+        }
+      } catch (e) { /* non-fatal: priming is an optimization */ }
+
+      let matches = [];
+      if (isName) {
+        const needle = query.trim().toLowerCase();
+        const matchesName = (r) => {
+          if ((r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+              (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+              (r.guestLastName && r.guestLastName.toLowerCase() === needle)) return true;
+          // Multi-room bookings: each sub-reservation may carry its own
+          // guest profile in guestList. Match those too so a guest who
+          // shows up under their own name finds their sub-reservation
+          // even when the parent's main guestName is the booker.
+          if (r.guestList && typeof r.guestList === 'object') {
+            for (const g of Object.values(r.guestList)) {
+              if (!g) continue;
+              if ((g.guestName && g.guestName.toLowerCase().includes(needle)) ||
+                  (g.guestFirstName && g.guestFirstName.toLowerCase() === needle) ||
+                  (g.guestLastName && g.guestLastName.toLowerCase() === needle)) return true;
+            }
+          }
+          return false;
+        };
+        matches = resList.data.filter(matchesName);
+      } else if (isPhone) {
+        const needle = query.replace(/[^\d]/g, '');
+        matches = resList.data.filter(r => {
+          if (!r.guestList) return false;
+          return Object.values(r.guestList).some(g => {
+            const cell = g.guestCellPhone ? g.guestCellPhone.toString().replace(/[^\d]/g, '') : '';
+            const phone = g.guestPhone ? g.guestPhone.toString().replace(/[^\d]/g, '') : '';
+            return (cell && cell.includes(needle)) || (phone && phone.includes(needle));
+          });
+        });
+      }
+
+      if (matches.length === 0) return null;
+
+      // For check-in mode, narrow to today's arrivals; for everything else
+      // accept any match the live query returned.
+      const exactMatch = matches.find(r => {
+        if (mode === 'checkin') return r.startDate === today;
+        if (mode === 'checkout') return r.endDate === today || r.status === 'checked_in';
+        if (mode === 'print') return r.startDate === today || r.endDate === today || r.status === 'checked_in' || r.status === 'checked_out';
+        return true;
+      });
+      if (!exactMatch) return null;
+
+      const id = exactMatch.reservationID || exactMatch.reservationId;
+      logger.info(`[API CALL] Live-API resolved "${query}" to ${id}.`);
+      return await this.getReservationById(id);
+    } catch (e) {
+      logger.warn(`[API CALL] Live fallback failed: ${e.message}`);
+      return null;
     }
   }
 
