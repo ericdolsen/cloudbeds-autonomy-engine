@@ -321,26 +321,43 @@ class WhistleListener {
         return;
     }
 
-    // Scrape the chat content. The structural walk-up from the compose
-    // (looking for section/main/region/etc.) doesn't reliably match
-    // because Whistle's compose is buried in deeply-nested chakra divs
-    // with empty/hashed classNames. Instead, use body.innerText and
-    // slice the segment immediately preceding "Type your message…" —
-    // the diagnostic confirmed the chat bubbles are rendered there, just
-    // past the sidebar in document order.
-    //
-    // Window size is 1500 chars rather than the previous 2000 + later
-    // substring(0, 1500): that combination took the OLDER half of the
-    // window (the sidebar tail) and dropped the chat messages at the end
-    // — which is why the engine got "Mary Jane and R..." sidebar text
-    // instead of "Hello, Testing notifications". Slicing exactly 1500
-    // chars right up to the marker keeps the most recent messages.
-    let textToProcess = await targetContext.locator('body').innerText().catch(() => '');
-    if (textToProcess) {
-        const composeMarker = textToProcess.search(/type your message|type a message/i);
-        if (composeMarker > 0) {
-            const start = Math.max(0, composeMarker - 1500);
-            textToProcess = textToProcess.substring(start, composeMarker).trim();
+    // Scrape the chat content. Two-pronged approach:
+    //   1) Walk up from the compose input through ancestors and pick the
+    //      smallest non-trivial one (between 100 and 4000 chars). The chat
+    //      panel typically has a fraction of the body's text — the whole
+    //      body includes the sidebar list, while the chat-only ancestor
+    //      doesn't.
+    //   2) Fall back to body.innerText sliced 1500 chars before "Type your
+    //      message…" if the ancestor walk doesn't yield anything sensible.
+    let textToProcess = '';
+    try {
+        textToProcess = await composeInput.evaluate((input) => {
+            let el = input.parentElement;
+            const candidates = [];
+            while (el && el !== document.body) {
+                const text = (el.innerText || '').trim();
+                if (text.length > 100 && text.length < 4000) {
+                    candidates.push({ len: text.length, text });
+                }
+                el = el.parentElement;
+            }
+            if (!candidates.length) return '';
+            // Pick the largest ancestor that's still smaller than 4000 chars
+            // — that's the chat panel including header + bubbles, but not
+            // the whole-page innerText that includes the sidebar list.
+            candidates.sort((a, b) => b.len - a.len);
+            return candidates[0].text;
+        }).catch(() => '');
+    } catch (e) { /* fall through to body slice */ }
+
+    if (!textToProcess) {
+        const bodyText = await targetContext.locator('body').innerText().catch(() => '');
+        if (bodyText) {
+            const composeMarker = bodyText.search(/type your message|type a message/i);
+            if (composeMarker > 0) {
+                const start = Math.max(0, composeMarker - 1500);
+                textToProcess = bodyText.substring(start, composeMarker).trim();
+            }
         }
     }
 
@@ -349,12 +366,26 @@ class WhistleListener {
        return;
     }
 
+    // Quality check: when the scrape grabs the sidebar conversation list
+    // instead of the actual chat, it's full of "Replied"/"Read"/"Error"/
+    // "Unread" status tokens (one per sidebar row). The real chat content
+    // never has more than 1-2 of those. If we see 5+ status pills AND
+    // can't parse a recent timestamp, the scrape is bad — bail rather
+    // than dispatch garbage to the engine and reply with nonsense.
+    const statusPillCount = (textToProcess.match(/\b(Replied|Read|Error|Unread)\b/g) || []).length;
+
     // Recency guard: don't auto-reply to a thread whose latest activity is
     // older than RECENCY_CUTOFF. Protects against an outage backlog (e.g.
     // server was offline for 4 hours; the agent should NOT wake up and
     // mass-reply to every guest who messaged during the downtime).
     const cutoffMs = Number(process.env.WHISTLE_RECENCY_CUTOFF_MS) || 60 * 60 * 1000;
     const latestActivityAt = this._extractLatestTimestamp(textToProcess);
+
+    if (statusPillCount >= 5 && !latestActivityAt) {
+        logger.warn(`[WHISTLE RPA] Scrape looks like the sidebar conversation list (${statusPillCount} status pills, no parseable timestamp); skipping rather than dispatching garbage. URL: ${this.page.url()}`);
+        return;
+    }
+
     if (latestActivityAt) {
         const ageMs = Date.now() - latestActivityAt;
         if (ageMs > cutoffMs) {
@@ -408,7 +439,17 @@ ${textToProcess}
 
     } catch(err) {
         logger.error(`[WHISTLE RPA] Autonomy Engine failed to generate response: ${err.message}`);
-        aiResponseText = "Sorry, our automated system is experiencing issues. A human will be with you shortly.";
+        // Do NOT send a canned "experiencing issues" reply to the guest.
+        // The conversation is already marked read (the click did that),
+        // so a human will see it next time they open the inbox. A real
+        // apology message confuses guests and looks worse than silence.
+        aiResponseText = '';
+    }
+
+    if (!aiResponseText || aiResponseText.length < 2) {
+        logger.warn(`[WHISTLE RPA] Engine returned empty/unusable response; skipping fill+send. The thread is marked read; a human should follow up.`);
+        await this.page.waitForTimeout(2000);
+        return;
     }
 
     logger.info(`[WHISTLE RPA] Injecting AI response into UI...`);
