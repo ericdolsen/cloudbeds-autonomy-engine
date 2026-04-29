@@ -266,6 +266,16 @@
             <div class="form-row" id="step2Row" style="display:none;">
                 <input type="text" id="pinInput" class="kiosk-input" placeholder="Enter last 4 digits of phone" maxlength="4" autocomplete="off" autocorrect="off">
             </div>
+
+            <!-- STEP 2.5: MULTI-ROOM CHOOSER (only when the booking has more than one sub-reservation arriving today) -->
+            <div id="chooserRow" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3 id="chooserTitle" style="color: #38bdf8; margin: 0;"></h3>
+                    <button type="button" onclick="hideForm()" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; font-weight: 500;">Done</button>
+                </div>
+                <p id="chooserSubtitle" style="margin: 0 0 5px; opacity: 0.85; font-size: 1rem;"></p>
+                <div id="chooserCards" style="display: flex; flex-direction: column; gap: 12px;"></div>
+            </div>
             
             <!-- STEP 3: REGISTRATION CARD -->
             <div id="step3Row" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px;">
@@ -349,6 +359,14 @@
 
         // Track the resolved reservation across multi-step identify -> verify -> register flow.
         let verifiedReservationId = null;
+        // Multi-room kiosk state. When /api/kiosk/identify returns a `group`
+        // (>1 sub-reservation arriving today), kioskGroup holds the summaries
+        // and kioskCompletedIds tracks which we've already checked in within
+        // this session — used to drive the chooser UI between verify and
+        // registration, and to loop back to the chooser after each successful
+        // check-in until everyone is done. Reset on every showForm()/hideForm().
+        let kioskGroup = [];
+        let kioskCompletedIds = new Set();
 
         function updateClock() {
             const now = new Date();
@@ -382,16 +400,23 @@
             document.getElementById('mainActions').style.display = 'none';
             document.getElementById('kioskForm').style.display = 'flex';
             document.getElementById('formMode').value = mode;
-            
+
             currentStep = 1;
             document.getElementById('step1Row').style.display = 'flex';
             document.getElementById('step2Row').style.display = 'none';
             document.getElementById('step3Row').style.display = 'none';
+            document.getElementById('chooserRow').style.display = 'none';
             document.getElementById('verifyPrompt').style.display = 'none';
             document.getElementById('queryInput').value = '';
             document.getElementById('pinInput').value = '';
+            document.getElementById('submitActionBtn').style.display = '';
             document.getElementById('qrWidget').style.display = 'none';
             document.querySelector('.footer').style.display = 'none';
+
+            // Brand-new login session — drop any prior multi-room group state.
+            kioskGroup = [];
+            kioskCompletedIds = new Set();
+            verifiedReservationId = null;
 
             const btn = document.getElementById('submitActionBtn');
             if (mode === 'print') btn.innerText = 'Find Reservation';
@@ -400,11 +425,102 @@
 
         function hideForm() {
             document.getElementById('kioskForm').style.display = 'none';
+            document.getElementById('chooserRow').style.display = 'none';
             document.getElementById('mainActions').style.display = 'flex';
             document.getElementById('qrWidget').style.display = 'flex';
             document.querySelector('.footer').style.display = 'block';
             document.querySelector('.clock-widget').style.display = 'flex';
             document.querySelector('.header').style.display = 'block';
+            kioskGroup = [];
+            kioskCompletedIds = new Set();
+            verifiedReservationId = null;
+        }
+
+        // Render the chooser between verify and registration when the booking
+        // has more than one sub-reservation today. Each card represents one
+        // sibling reservation; tapping it loads that sub's guest data and
+        // jumps to the registration form for that room.
+        function showChooserStep() {
+            currentStep = 2.5;
+            document.getElementById('step1Row').style.display = 'none';
+            document.getElementById('step2Row').style.display = 'none';
+            document.getElementById('step3Row').style.display = 'none';
+            document.getElementById('verifyPrompt').style.display = 'none';
+            document.getElementById('chooserRow').style.display = 'flex';
+            // No standalone submit button — the cards themselves are the action.
+            document.getElementById('submitActionBtn').style.display = 'none';
+
+            const remaining = kioskGroup.filter(r => !kioskCompletedIds.has(r.reservationId));
+            const title = document.getElementById('chooserTitle');
+            const subtitle = document.getElementById('chooserSubtitle');
+            const completed = kioskCompletedIds.size;
+            if (completed === 0) {
+                title.innerText = `You have ${remaining.length} reservations to check in`;
+                subtitle.innerText = 'Tap a room to start. You can come back to do the others when you’re ready.';
+            } else if (remaining.length === 0) {
+                title.innerText = 'All checked in!';
+                subtitle.innerText = 'You can return to the main menu.';
+            } else {
+                title.innerText = `${remaining.length} more to go`;
+                subtitle.innerText = `Pick the next room — you’ve completed ${completed}.`;
+            }
+
+            const container = document.getElementById('chooserCards');
+            container.innerHTML = '';
+            remaining.forEach(r => {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'kiosk-input';
+                card.style.cssText = 'text-align: left; padding: 18px 22px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; width: 100%; min-height: 88px; font-family: inherit;';
+                const roomLabel = r.roomName ? `Room ${r.roomName}` : `Reservation ${r.reservationId}`;
+                const dateLabel = (r.startDate && r.endDate)
+                    ? `${r.startDate.replace(/^(\d{4})-/, '')} → ${r.endDate.replace(/^(\d{4})-/, '')}`
+                    : '';
+                const balanceLabel = (typeof r.balance === 'number' && r.balance > 0)
+                    ? `Balance $${r.balance.toFixed(2)}` : '';
+                card.innerHTML = `
+                    <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+                        <div style="font-size: 1.4rem; font-weight: 600; color: #f8fafc;">${roomLabel}</div>
+                        <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || 'Guest').toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
+                    </div>
+                    <div style="text-align: right; opacity: 0.85; white-space: nowrap;">
+                        ${balanceLabel ? `<div style="font-weight: 500;">${balanceLabel}</div>` : ''}
+                        <div style="opacity: 0.6; font-size: 0.95rem;">Tap to start →</div>
+                    </div>
+                `;
+                card.onclick = () => selectGroupReservation(r.reservationId);
+                container.appendChild(card);
+            });
+
+            if (remaining.length === 0) {
+                // Auto-return to main menu after a brief celebratory pause.
+                setTimeout(() => hideForm(), 4000);
+            }
+        }
+
+        async function selectGroupReservation(reservationId) {
+            setLoading(true, 'Loading your reservation details...', false);
+            try {
+                const res = await fetch('/api/kiosk/sub-reservation', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        verifiedReservationId,
+                        targetReservationId: reservationId
+                    })
+                });
+                const data = await res.json();
+                setLoading(false);
+                if (data.success && data.reservationId) {
+                    document.getElementById('chooserRow').style.display = 'none';
+                    document.getElementById('submitActionBtn').style.display = '';
+                    showRegistrationStep(data.guestData || {}, data.reservationId);
+                } else {
+                    showToast(data.message || 'Could not load that reservation. Please see front desk.');
+                }
+            } catch (e) {
+                setLoading(false);
+                showToast('Network error.');
+            }
         }
 
         function showToast(message) {
@@ -438,6 +554,10 @@
                     setLoading(false);
                       if (data.success && data.requiresVerification) {
                           verifiedReservationId = data.reservationId;
+                          // If the booking has multiple sub-reservations today, stash
+                          // them now so the chooser can render after PIN verify.
+                          kioskGroup = Array.isArray(data.group) ? data.group : [];
+                          kioskCompletedIds = new Set();
                           currentStep = 2;
                           document.getElementById('step1Row').style.display = 'none';
                           document.getElementById('step2Row').style.display = 'flex';
@@ -460,7 +580,15 @@
 
                           document.getElementById('submitActionBtn').innerText = (mode === 'print') ? 'Print Receipt' : ((mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out');
                       } else if (data.success && !data.requiresVerification) {
-                          if (mode === 'checkin') {
+                          // Bypassed PIN (typed exact reservation ID). Same routing
+                          // logic as post-verify: chooser if multi-room, else jump
+                          // straight to registration / receipt.
+                          verifiedReservationId = data.reservationId;
+                          kioskGroup = Array.isArray(data.group) ? data.group : [];
+                          kioskCompletedIds = new Set();
+                          if (kioskGroup.length > 1 && mode === 'checkin') {
+                              showChooserStep();
+                          } else if (mode === 'checkin') {
                               showRegistrationStep(data.guestData || {}, data.reservationId);
                           } else {
                               proceedWithValidatedId(data.reservationId, mode);
@@ -483,7 +611,13 @@
                     const data = await res.json();
                     setLoading(false);
                     if (data.success && data.reservationId) {
-                        if (mode === 'checkin') {
+                        if (kioskGroup.length > 1 && mode === 'checkin') {
+                            // Multi-room: now that we've verified once, hand control
+                            // to the chooser. Each subsequent room in this session
+                            // skips PIN — the chooser → registration → checkin loop
+                            // re-uses the verifiedReservationId for authorization.
+                            showChooserStep();
+                        } else if (mode === 'checkin') {
                             showRegistrationStep(data.guestData || {}, data.reservationId);
                         } else {
                             proceedWithValidatedId(data.reservationId, mode);
@@ -674,12 +808,33 @@
                 const data = await response.json();
 
                 if (data.status === 'complete') {
+                    // Multi-room loop-back: if this booking had siblings and any
+                    // are still un-checked-in, return to the chooser instead of
+                    // closing the form. Verification persists for the session,
+                    // so the next room skips PIN entry.
+                    if (mode === 'checkin' && kioskGroup.length > 1) {
+                        kioskCompletedIds.add(resId);
+                        const remaining = kioskGroup.filter(r => !kioskCompletedIds.has(r.reservationId));
+                        if (remaining.length > 0) {
+                            setLoading(true, `Check-in complete! ${remaining.length} more room${remaining.length === 1 ? '' : 's'} to go.`, false);
+                            setTimeout(() => {
+                                setLoading(false);
+                                // Reset registration state for the next room.
+                                document.getElementById('step3Row').style.display = 'none';
+                                document.getElementById('regTerms').checked = false;
+                                togglePetWaiver(false);
+                                clearSignature();
+                                showChooserStep();
+                            }, 4000);
+                            return;
+                        }
+                    }
                     setLoading(true, data.message, false);
                     setTimeout(() => {
                         setLoading(false);
                         hideForm();
                     }, 8000);
-                } 
+                }
                 else {
                     setLoading(false);
                     showToast(data.message || ((mode === 'checkin') ? "Check-in failed. Please see front desk." : "Checkout failed. Please see front desk."));

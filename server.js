@@ -860,6 +860,45 @@ app.post('/api/kiosk/identify', async (req, res) => {
   res.json({ success: false, message: result.message || "Could not locate a reservation with that information." });
 });
 
+// Fetch contact details for a sibling sub-reservation in a multi-room
+// booking, anchored to a reservation that already passed PIN verification
+// in this session. The caller proves they're authorized for the group by
+// presenting the verifiedReservationId (returned by /api/kiosk/verify).
+// We confirm both share a parent ID prefix before disclosing the target's
+// guest data — no cross-group lookups.
+app.post('/api/kiosk/sub-reservation', async (req, res) => {
+  const { verifiedReservationId, targetReservationId } = req.body;
+  if (!verifiedReservationId || !targetReservationId) {
+    return res.status(400).json({ success: false, message: "Missing reservation IDs" });
+  }
+  const verifiedPrefix = reservationCache._parentPrefix(verifiedReservationId);
+  const targetPrefix = reservationCache._parentPrefix(targetReservationId);
+  if (!verifiedPrefix || verifiedPrefix !== targetPrefix) {
+    logger.warn(`[KIOSK SUBRES] Refused cross-group lookup: ${verifiedReservationId} → ${targetReservationId}`);
+    return res.status(403).json({ success: false, message: "That reservation isn't part of your booking." });
+  }
+  logger.info(`[KIOSK SUBRES] Loading sub-reservation ${targetReservationId} (verified via ${verifiedReservationId})`);
+  const result = await agent.engine.api.getReservationById(targetReservationId);
+  if (result.success && result.data) {
+    const contact = extractGuestContact(result.data);
+    return res.json({
+      success: true,
+      reservationId: targetReservationId,
+      guestData: {
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email.toLowerCase(),
+        phone: contact.phone,
+        address: contact.address,
+        city: contact.city,
+        state: contact.state,
+        zip: contact.zip
+      }
+    });
+  }
+  res.json({ success: false, message: "Could not load that reservation. Please see the front desk." });
+});
+
 app.post('/api/kiosk/verify', async (req, res) => {
   const { reservationId, pin } = req.body;
   if (!reservationId || !pin) return res.status(400).json({ success: false });
