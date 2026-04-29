@@ -554,7 +554,9 @@ ${textToProcess}
    */
   _extractLatestTimestamp(text) {
     if (!text) return null;
-    const todayPrefix = new Date().toDateString(); // e.g. "Tue Apr 28 2026"
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const todayPrefix = now.toDateString(); // e.g. "Tue Apr 28 2026"
     const candidates = [];
 
     // Combined pattern: optional month/day prefix, then HH:MM AM/PM.
@@ -568,6 +570,23 @@ ${textToProcess}
             parsed = Date.parse(`${todayPrefix} ${m}`);
         }
         if (!isNaN(parsed)) {
+            // V8's Date.parse defaults missing years to 2001 (e.g. "Apr 28
+            // 8:21 PM" -> Apr 28, 2001). That made every chat timestamp
+            // look ~25 years old and the recency guard tripped on every
+            // poll. If the parsed year is more than 1 year from now,
+            // normalize to the current year — but if that pushes the
+            // result more than a day into the future (e.g., a Dec date
+            // parsed in early Jan), fall back to last year.
+            const dt = new Date(parsed);
+            if (Math.abs(dt.getFullYear() - currentYear) > 1) {
+                dt.setFullYear(currentYear);
+                let adjusted = dt.getTime();
+                if (adjusted > now.getTime() + 24 * 60 * 60 * 1000) {
+                    dt.setFullYear(currentYear - 1);
+                    adjusted = dt.getTime();
+                }
+                parsed = adjusted;
+            }
             candidates.push(parsed);
         }
     }
