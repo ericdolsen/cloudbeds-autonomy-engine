@@ -63,6 +63,7 @@ class PaymentTerminal {
     killChromesUsingDir(path.basename(this._userDataDir));
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+    try { fs.rmSync(path.join(this._userDataDir, 'lockfile'), { force: true }); } catch (e) {}
 
     try {
       const launchOpts = {
@@ -74,7 +75,9 @@ class PaymentTerminal {
           '--window-position=-32000,-32000', // off-screen, NOT headless
           '--window-size=1920,1080',
           '--disable-gpu',
-          '--disable-software-rasterizer'
+          '--disable-software-rasterizer',
+          '--disable-session-crashed-bubble',
+          '--hide-crash-restore-bubble'
         ],
         ignoreDefaultArgs: ['--enable-automation']
       };
