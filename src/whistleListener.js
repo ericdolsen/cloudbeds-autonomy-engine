@@ -326,16 +326,20 @@ class WhistleListener {
     // because Whistle's compose is buried in deeply-nested chakra divs
     // with empty/hashed classNames. Instead, use body.innerText and
     // slice the segment immediately preceding "Type your message…" —
-    // the diagnostic showed the actual message bubbles are rendered
-    // there, just past the sidebar's ~1500-char dominance.
+    // the diagnostic confirmed the chat bubbles are rendered there, just
+    // past the sidebar in document order.
+    //
+    // Window size is 1500 chars rather than the previous 2000 + later
+    // substring(0, 1500): that combination took the OLDER half of the
+    // window (the sidebar tail) and dropped the chat messages at the end
+    // — which is why the engine got "Mary Jane and R..." sidebar text
+    // instead of "Hello, Testing notifications". Slicing exactly 1500
+    // chars right up to the marker keeps the most recent messages.
     let textToProcess = await targetContext.locator('body').innerText().catch(() => '');
     if (textToProcess) {
         const composeMarker = textToProcess.search(/type your message|type a message/i);
         if (composeMarker > 0) {
-            // Take the last 2000 chars before the marker — covers the
-            // chat header + recent message bubbles, drops most of the
-            // sidebar list.
-            const start = Math.max(0, composeMarker - 2000);
+            const start = Math.max(0, composeMarker - 1500);
             textToProcess = textToProcess.substring(start, composeMarker).trim();
         }
     }
@@ -372,7 +376,7 @@ Identify the guest's latest message and generate a helpful, concise SMS response
 Do not include any formatting or markdown in your response, just the raw text you want to send.
 
 Raw Chat UI Text:
-${textToProcess.substring(0, 1500)}
+${textToProcess}
     `;
 
     let aiResponseText = "";
@@ -384,10 +388,22 @@ ${textToProcess.substring(0, 1500)}
             text: agentPrompt
         });
 
-        // Assume engineResult is a string, or contains the final output string.
-        aiResponseText = typeof engineResult === 'string' ? engineResult : JSON.stringify(engineResult);
+        // CloudbedsAgent.processIncomingMessage returns
+        // { success: true, agent_response: <string> }. Earlier this code
+        // JSON.stringify'd the whole envelope when engineResult wasn't a
+        // string — which sent the literal text {"success":true,
+        // "agent_response":"..."} as the SMS reply to the guest. Extract
+        // the agent_response field; fall back to String() only if the
+        // shape is something unexpected.
+        if (typeof engineResult === 'string') {
+            aiResponseText = engineResult;
+        } else if (engineResult && typeof engineResult.agent_response === 'string') {
+            aiResponseText = engineResult.agent_response;
+        } else {
+            aiResponseText = String(engineResult ?? '');
+        }
 
-        // Sanitize the response (remove quotes or thought blocks if Gemini leaks them)
+        // Sanitize the response (remove backticks/thought blocks if Gemini leaks them).
         aiResponseText = aiResponseText.replace(/`/g, '').trim();
 
     } catch(err) {
