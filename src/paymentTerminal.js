@@ -214,8 +214,8 @@ class PaymentTerminal {
     try {
       const vision = new VisionClicker(page);
       const propertyPath = this.propertyId ? `${this.propertyId}` : '';
-      const targetUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${reservationId}`;
-      await page.goto(targetUrl);
+      const dashboardUrl = `https://${this.uiHost}/connect/${propertyPath}#/dashboard`;
+      await page.goto(dashboardUrl);
       await page.waitForTimeout(3000);
 
       // Long-lived sessions can expire; if the navigation landed on the
@@ -223,8 +223,61 @@ class PaymentTerminal {
       if (this._isLoginPage(page.url())) {
         logger.info(`[STRIPE TERMINAL] Session expired mid-flight; re-logging in.`);
         await this._performLogin(page);
-        await page.goto(targetUrl);
-        await page.waitForTimeout(2000);
+        await page.goto(dashboardUrl);
+        await page.waitForTimeout(3000);
+      }
+
+      logger.info(`[STRIPE TERMINAL] Searching for reservation ${reservationId}...`);
+      let searchClicked = false;
+      const searchSelectors = [
+        'input[placeholder*="Search" i]',
+        'input[placeholder*="reservation" i]',
+        '[role="search"] input',
+        '[role="searchbox"]',
+        'input[type="search"]'
+      ];
+      for (const sel of searchSelectors) {
+        try {
+          const el = await page.$(sel);
+          if (el && await el.isVisible()) {
+            await el.click();
+            searchClicked = true;
+            break;
+          }
+        } catch (e) {}
+      }
+
+      if (!searchClicked) {
+        logger.warn(`[STRIPE TERMINAL] Search bar selector missed; falling back to vision lane.`);
+        await vision.click('the search bar at the top of the page. It is an input field that says "Search reservations, guests, and more"');
+      }
+
+      await page.waitForTimeout(500);
+      await page.keyboard.type(reservationId, { delay: 80 });
+      await page.waitForTimeout(3000);
+
+      logger.info(`[STRIPE TERMINAL] Clicking search result for ${reservationId}...`);
+      try {
+        await vision.click(`the exact search result or link containing the reservation ID ${reservationId} in the dropdown below the search bar. Do NOT click the search bar itself.`);
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Vision click failed on search result: ${e.message}`);
+      }
+      
+      await page.waitForTimeout(3000);
+      
+      let navigatedToReservation = false;
+      const currentUrl = page.url();
+      const match = currentUrl.match(/reservation[iI]d=(\d+)/);
+      
+      if (match && match[1]) {
+        const internalId = match[1];
+        logger.info(`[STRIPE TERMINAL] Found internal numeric reservation ID: ${internalId}`);
+        const explicitUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${internalId}`;
+        await page.goto(explicitUrl);
+        await page.waitForTimeout(3000);
+        navigatedToReservation = true;
+      } else {
+        logger.warn(`[STRIPE TERMINAL] Could not find internal reservationId in URL: ${currentUrl}. Proceeding anyway.`);
       }
 
       // Make sure the SPA actually routed to the reservation DETAIL view
@@ -237,9 +290,14 @@ class PaymentTerminal {
         await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
       } catch (e) {
         logger.warn(`[STRIPE TERMINAL] Folio tab didn't appear within 15s. URL: ${page.url()}. Re-navigating in case the SPA lost the hash route.`);
-        await page.goto(targetUrl);
+        if (navigatedToReservation) {
+            const internalId = currentUrl.match(/reservation[iI]d=(\d+)/)[1];
+            await page.goto(`https://${this.uiHost}/connect/${propertyPath}#/reservations/${internalId}`);
+        } else {
+            await page.goto(dashboardUrl); // Can't recover easily without internal ID
+        }
         await page.waitForTimeout(3000);
-        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
+        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       }
 
       // Switch to Folio tab
