@@ -177,6 +177,15 @@ class ReservationCache {
     }
 
     if (matches.length > 0) {
+      // Diagnostic: log every match the cache produced for this query so we
+      // can tell, when a kiosk lookup fails, whether the cache is missing
+      // a brand-new reservation or just has stale entries for the same name.
+      const matchSummary = matches
+        .slice(0, 6)
+        .map(r => `${r.reservationID || r.reservationId}/${r.startDate || '?'}`)
+        .join(', ');
+      logger.info(`[CACHE SEARCH] query="${query}" mode=${mode} today=${today} matches=${matches.length} [${matchSummary}${matches.length > 6 ? ', …' : ''}]`);
+
       // Find the most relevant match for today
       const exactMatch = matches.find(r => {
         if (mode === 'checkin') return r.startDate === today;
