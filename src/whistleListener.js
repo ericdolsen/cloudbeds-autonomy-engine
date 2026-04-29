@@ -111,6 +111,34 @@ class WhistleListener {
       this._loggedOut = false;
     }
 
+    // Whistle's hashed inbox URL (#/inbox/guest-chat) lands on a channel
+    // selector, NOT the conversation list. The body shows "Select a
+    // conversation" plus a sidebar of channels (Guest, Housekeeping, etc.),
+    // each with its own unread-count badge. We have to click the channel
+    // row to actually load the conversation list — without that, no
+    // "Unread" pills can ever appear because the list itself never renders.
+    //
+    // The unread-count badge uses a different Chakra class hash than the
+    // "New"/"Beta" feature flags (numeric content vs. word content), so we
+    // identify it by filtering chakra-badges to ones whose text is digits.
+    const emptyState = await this.page.locator('text=/Select a conversation/i').first()
+        .isVisible().catch(() => false);
+    if (emptyState) {
+        const channelCountBadge = this.page.locator('span.chakra-badge:visible')
+            .filter({ hasText: /^\s*\d+\s*$/ })
+            .first();
+        if (await channelCountBadge.isVisible().catch(() => false)) {
+            const channelRow = channelCountBadge.locator(
+                'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
+            );
+            if ((await channelRow.count()) > 0) {
+                logger.info('[WHISTLE RPA] Inbox is on the channel selector ("Select a conversation"); clicking the channel with unread count to load the conversation list.');
+                await channelRow.first().click();
+                await this.page.waitForTimeout(2500);
+            }
+        }
+    }
+
     // Whistle's "Unread" pill is a red Chakra badge. Earlier attempts targeted
     // span.chakra-badge filtered by hasText, but that failed to match in
     // practice — likely because the visible text is rendered via a CSS pseudo-
