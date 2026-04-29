@@ -114,11 +114,25 @@ class CloudbedsAPI {
             let matches = [];
             if (isName) {
               const needle = query.trim().toLowerCase();
-              matches = resList.data.filter(r =>
-                (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
-                (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
-                (r.guestLastName && r.guestLastName.toLowerCase() === needle)
-              );
+              const matchesName = (r) => {
+                if ((r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+                    (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+                    (r.guestLastName && r.guestLastName.toLowerCase() === needle)) return true;
+                // Also check each entry in guestList — multi-room bookings
+                // attach individual guest profiles per sub-reservation, so a
+                // guest may type their own name even if the parent's main
+                // guestName is the booker's.
+                if (r.guestList && typeof r.guestList === 'object') {
+                  for (const g of Object.values(r.guestList)) {
+                    if (!g) continue;
+                    if ((g.guestName && g.guestName.toLowerCase().includes(needle)) ||
+                        (g.guestFirstName && g.guestFirstName.toLowerCase() === needle) ||
+                        (g.guestLastName && g.guestLastName.toLowerCase() === needle)) return true;
+                  }
+                }
+                return false;
+              };
+              matches = resList.data.filter(matchesName);
             } else if (isPhone) {
               const needle = query.replace(/[^\d]/g, '');
               matches = resList.data.filter(r => {
