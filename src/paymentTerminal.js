@@ -21,6 +21,12 @@ class PaymentTerminal {
     this.email = process.env.CLOUDBEDS_EMAIL;
     this.password = process.env.CLOUDBEDS_PASSWORD;
     this.context = null;
+    // Single long-lived "warm page" sitting on the Cloudbeds dashboard.
+    // Each charge navigates this same page to the reservation URL via SPA
+    // hash routing — no Chrome cold-start, no full SPA bootstrap, just a
+    // route change. After the charge it goes back to the dashboard ready
+    // for the next one.
+    this.warmPage = null;
     // Dedup concurrent start() calls — if two callers race, only one
     // actual launch happens; the second awaits the first's promise.
     this._startPromise = null;
@@ -74,30 +80,25 @@ class PaymentTerminal {
         Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
       });
 
-      // Pre-navigate to the dashboard so the SPA shell is parsed and any
-      // session refresh happens up-front, not while a guest is waiting at
-      // the kiosk. If the cached cookies have expired, this is also where
-      // we run the auto-login flow.
-      const page = await this.context.newPage();
-      try {
-        const propertyPath = this.propertyId ? `${this.propertyId}` : '';
-        const dashboardUrl = `https://${this.uiHost}/connect/${propertyPath}`;
-        await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(3000);
+      // Pre-navigate the long-lived warm page to the dashboard so the SPA
+      // shell is parsed, the session is refreshed (or auto-login ran), and
+      // every subsequent charge can hash-route into the reservation
+      // without paying for a full bootstrap.
+      this.warmPage = await this.context.newPage();
+      const propertyPath = this.propertyId ? `${this.propertyId}` : '';
+      const dashboardUrl = `https://${this.uiHost}/connect/${propertyPath}`;
+      await this.warmPage.goto(dashboardUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await this.warmPage.waitForTimeout(3000);
 
-        if (this._isLoginPage(page.url())) {
-          if (this.email && this.password) {
-            logger.info(`[STRIPE TERMINAL] Pre-warm hit login page; running auto-login.`);
-            await this._performLogin(page);
-          } else {
-            logger.warn(`[STRIPE TERMINAL] Pre-warm hit login page and CLOUDBEDS_EMAIL/PASSWORD are not set. Run scripts/setupLogin.js to log in manually; charges will retry on demand.`);
-          }
+      if (this._isLoginPage(this.warmPage.url())) {
+        if (this.email && this.password) {
+          logger.info(`[STRIPE TERMINAL] Pre-warm hit login page; running auto-login.`);
+          await this._performLogin(this.warmPage);
+        } else {
+          logger.warn(`[STRIPE TERMINAL] Pre-warm hit login page and CLOUDBEDS_EMAIL/PASSWORD are not set. Run scripts/setupLogin.js to log in manually; charges will retry on demand.`);
         }
-        logger.info(`[STRIPE TERMINAL] Browser pre-warmed. Final URL: ${page.url().substring(0, 80)}`);
-      } finally {
-        // Close the warm-up page; we open a fresh one per charge.
-        try { await page.close(); } catch (e) {}
       }
+      logger.info(`[STRIPE TERMINAL] Browser pre-warmed. Final URL: ${this.warmPage.url().substring(0, 80)}`);
     } catch (e) {
       logger.error(`[STRIPE TERMINAL] Pre-warm failed: ${e.message}`);
       if (this.context) {
@@ -111,6 +112,7 @@ class PaymentTerminal {
     if (this.context) {
       try { await this.context.close(); } catch (e) {}
       this.context = null;
+      this.warmPage = null;
       logger.info(`[STRIPE TERMINAL] Browser stopped.`);
     }
   }
@@ -168,11 +170,20 @@ class PaymentTerminal {
     }
 
     logger.info(`[STRIPE TERMINAL] Charging $${amount} on ${terminalName} for ${reservationId}`);
-    let page;
-    try {
+    // Reuse the long-lived warm page if available — its SPA shell is
+    // already booted, so navigating to the reservation hash is just a
+    // route change, not a full reload. Open a fresh page only as a
+    // fallback if the warm page was somehow lost.
+    let page = this.warmPage;
+    let usingWarmPage = !!page && !page.isClosed();
+    if (!usingWarmPage) {
       page = await this.context.newPage();
-      const vision = new VisionClicker(page);
+      this.warmPage = page;
+      usingWarmPage = true;
+    }
 
+    try {
+      const vision = new VisionClicker(page);
       const propertyPath = this.propertyId ? `${this.propertyId}` : '';
       const targetUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${reservationId}`;
       await page.goto(targetUrl);
@@ -187,13 +198,32 @@ class PaymentTerminal {
         await page.waitForTimeout(2000);
       }
 
+      // Make sure the SPA actually routed to the reservation DETAIL view
+      // and not the reservations LIST. The detail view exposes a Folio
+      // role=tab; the list only has a Folio <th> column header. Without
+      // this guard, the click below would resolve to the wrong element
+      // and time out for ~60s.
+      logger.info(`[STRIPE TERMINAL] Waiting for reservation detail view to load...`);
+      try {
+        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Folio tab didn't appear within 15s. URL: ${page.url()}. Re-navigating in case the SPA lost the hash route.`);
+        await page.goto(targetUrl);
+        await page.waitForTimeout(3000);
+        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
+      }
+
       // Switch to Folio tab
       logger.info(`[STRIPE TERMINAL] Switching to Folio tab...`);
-      await page.waitForTimeout(2000);
       try {
-        await page.getByRole('tab', { name: 'Folio' }).click();
+        await page.getByRole('tab', { name: 'Folio' }).click({ timeout: 5000 });
       } catch (e) {
-        await page.locator('text="Folio"').first().click();
+        // Visible-only fallback — explicitly excludes <th>Folio</th> on
+        // the reservations LIST view. Without :visible, locator('text="Folio"')
+        // matches the table header and Playwright spins for 30s waiting
+        // for it to be clickable.
+        logger.warn(`[STRIPE TERMINAL] Role-based Folio click failed; falling back to visible-only locator.`);
+        await page.locator('[role="tab"]:visible', { hasText: 'Folio' }).first().click({ timeout: 5000 });
       }
       await page.waitForTimeout(1000);
 
@@ -239,14 +269,22 @@ class PaymentTerminal {
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
       await page.waitForTimeout(5000);
-      try { await page.close(); } catch (e) {}
+
+      // Park the warm page back on the dashboard so the next charge has
+      // a fresh, settled SPA state to hash-route from. Don't close it.
+      try {
+        const propertyPath = this.propertyId ? `${this.propertyId}` : '';
+        await page.goto(`https://${this.uiHost}/connect/${propertyPath}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      } catch (parkErr) {
+        logger.warn(`[STRIPE TERMINAL] Could not park warm page back at dashboard: ${parkErr.message}`);
+      }
 
       return { success: true, message: 'Terminal charge requested' };
     } catch (e) {
       logger.error(`[STRIPE TERMINAL] Failed to process physical charge: ${e.message}`);
-      if (page) {
-        try { await page.close(); } catch {}
-      }
+      // Don't close the warm page on failure — keep it alive for the
+      // next attempt. If the page itself is wedged, the next charge's
+      // navigate / Folio-tab guard will detect that and recover.
       throw e;
     }
   }
