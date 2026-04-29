@@ -20,8 +20,15 @@ class PaymentTerminal {
     logger.info(`[STRIPE TERMINAL] Firing up headless browser for WisePOS E...`);
     let context;
     try {
-      const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
-      
+      // Separate user-data-dir from the WhistleListener's `.cloudbeds_session`.
+      // Chrome enforces single-instance-per-profile: when both processes try
+      // to launchPersistentContext on the same dir, the second launch sees
+      // "Opening in existing browser session" and exits, killing the
+      // payment flow. Each component gets its own profile; both auto-log
+      // into Cloudbeds via CLOUDBEDS_EMAIL/PASSWORD on first use and cache
+      // the session for subsequent calls.
+      const userDataDir = path.join(__dirname, '..', '.cloudbeds_payment_session');
+
       // Clean up stale locks that cause Chrome to exit with code 0
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
