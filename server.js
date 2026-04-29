@@ -552,7 +552,7 @@ app.post('/api/kiosk/checkout', async (req, res) => {
 
   try {
     // We send a specific intent prompt to the Autonomy Engine mimicking the kiosk request
-    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to check out of reservation ${reservationId}. Please process their checkout completely by verifying their balance. If they owe a balance, direct them to the front desk. Otherwise, execute a checkout and communicate success back. Do NOT attempt to process payments.`;
+    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to check out of reservation ${reservationId}. Process their checkout completely by verifying their balance. If they owe a balance, direct them to the front desk and STOP. Otherwise: (1) execute the checkout, then (2) IMMEDIATELY call evaluateAndEmailInvoice with reservationId="${reservationId}" — do not ask the guest whether they want a receipt, always email it. Then communicate success back in one short sentence (e.g. "You're checked out — a receipt has been emailed to you."). Do NOT attempt to process payments.`;
     
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
     
@@ -788,19 +788,79 @@ app.post('/api/kiosk/identify', async (req, res) => {
   if (!query) return res.status(400).json({ success: false });
 
   logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query} (Mode: ${mode})`);
+
+  const today = new Date().toISOString().split('T')[0];
+
+  // Multi-top-level disambiguation. When a guest's last name appears on
+  // more than one of today's bookings (e.g. "Olsen" is a sub-guest on a
+  // multi-room booking AND also a separate solo Olsen reservation), the
+  // old single-best-match path silently picked one and PIN-verified
+  // against the wrong contact. Here we pull EVERY today match, group by
+  // parent prefix, and if more than one group exists we send the kiosk
+  // a top-level chooser so the guest picks before PIN.
+  if (mode === 'checkin') {
+    const allToday = reservationCache.searchAllToday(query);
+    const actionable = allToday.filter(r => {
+      const status = (r.status || '').toLowerCase();
+      return status !== 'checked_in' && status !== 'checked_out' && status !== 'cancelled' && status !== 'no_show';
+    });
+    // Group by parent prefix
+    const byParent = new Map();
+    for (const r of actionable) {
+      const id = r.reservationID || r.reservationId;
+      const prefix = reservationCache._parentPrefix(id);
+      if (!byParent.has(prefix)) byParent.set(prefix, []);
+      byParent.get(prefix).push(r);
+    }
+
+    if (byParent.size > 1) {
+      // Build top-level chooser cards. Each card represents one parent
+      // group; the anchor is the parent reservation (no -N suffix) if
+      // present in the group, otherwise the lowest-suffix entry.
+      const topLevelGroups = [];
+      for (const [prefix, members] of byParent.entries()) {
+        const sorted = members.slice().sort((a, b) => {
+          const aSuffix = ((a.reservationID || a.reservationId).match(/-(\d+)$/) || [, '0'])[1];
+          const bSuffix = ((b.reservationID || b.reservationId).match(/-(\d+)$/) || [, '0'])[1];
+          return Number(aSuffix) - Number(bSuffix);
+        });
+        const anchor = sorted[0];
+        const anchorId = anchor.reservationID || anchor.reservationId;
+        const contact = extractGuestContact(anchor);
+        const subRooms = sorted.map(summarizeReservationForKiosk).filter(Boolean);
+
+        let verifyType = null, masked = null;
+        if (contact.phone && contact.phone.length >= 4) {
+          verifyType = 'phone';
+          masked = `***-***-${contact.phone.slice(-4)}`;
+        } else if (contact.email) {
+          const parts = contact.email.split('@');
+          verifyType = 'email';
+          masked = parts.length === 2 ? `${parts[0].charAt(0)}***@${parts[1]}` : 'your email address';
+        }
+
+        topLevelGroups.push({
+          anchorReservationId: anchorId,
+          displayName: anchor.guestName || `${contact.firstName} ${contact.lastName}`.trim() || 'Guest',
+          startDate: anchor.startDate,
+          endDate: anchor.endDate,
+          roomCount: subRooms.length,
+          verifyType,
+          masked,
+          subRooms
+        });
+      }
+      return res.json({ success: true, multiTopLevel: true, topLevelGroups });
+    }
+  }
+
+  // Single top-level (or non-checkin mode) — original flow.
   const result = await agent.engine.api.getReservation(query, mode);
 
   if (result.success && result.data) {
     const contact = extractGuestContact(result.data);
     const reservationId = result.data.reservationID || result.data.reservationId;
 
-    // Multi-room expansion: find every sibling sharing the same parent
-    // prefix, then filter to today's actionable items only. Per product:
-    // hide already-checked-in / checked-out / cancelled rooms entirely
-    // (they're not actionable at the kiosk), and hide rooms arriving on a
-    // different day (a guest checking in for tomorrow's room shouldn't
-    // appear in today's chooser).
-    const today = new Date().toISOString().split('T')[0];
     let group = [];
     if (mode === 'checkin') {
       const siblings = reservationCache.findSiblings(reservationId);
@@ -812,7 +872,6 @@ app.post('/api/kiosk/identify', async (req, res) => {
         })
         .map(summarizeReservationForKiosk)
         .filter(Boolean)
-        // Stable order: parent (no suffix) first, then -2, -3, ... by suffix number.
         .sort((a, b) => {
           const aSuffix = (a.reservationId.match(/-(\d+)$/) || [, '0'])[1];
           const bSuffix = (b.reservationId.match(/-(\d+)$/) || [, '0'])[1];
@@ -821,7 +880,6 @@ app.post('/api/kiosk/identify', async (req, res) => {
     }
     const isMultiRoom = group.length > 1;
 
-    // Check if they typed the exact reservation ID to bypass PIN
     if (query.trim().toUpperCase() === reservationId.toUpperCase()) {
       return res.json({
         success: true,
@@ -832,13 +890,12 @@ app.post('/api/kiosk/identify', async (req, res) => {
     }
 
     if (contact.phone && contact.phone.length >= 4) {
-      const last4 = contact.phone.slice(-4);
       return res.json({
         success: true,
         requiresVerification: true,
         verifyType: 'phone',
         reservationId,
-        maskedPhone: `***-***-${last4}`,
+        maskedPhone: `***-***-${contact.phone.slice(-4)}`,
         ...(isMultiRoom ? { group } : {})
       });
     }
