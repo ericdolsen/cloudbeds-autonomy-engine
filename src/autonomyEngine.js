@@ -338,8 +338,25 @@ STANDARD WORKFLOW:
     }
 
     try {
+      // Pull payments tied to this reservation so the PDF can itemize each
+      // charge (card brand + last 4, payment date) instead of showing a
+      // single lump "Payment on file" line. Window covers pre-stay deposits
+      // through today; the printHandler filters down to this reservation.
+      let transactions = [];
+      try {
+        const start = resData.data.startDate || new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
+        const end = new Date().toISOString().split('T')[0];
+        const earliest = new Date(new Date(start).getTime() - 60 * 86400000).toISOString().split('T')[0];
+        const txRes = await this.api.getTransactions(earliest, end);
+        if (txRes.success && Array.isArray(txRes.data)) {
+          transactions = txRes.data.filter(t => t && (t.sourceId === reservationId || t.reservationID === reservationId));
+        }
+      } catch (txErr) {
+        logger.warn(`[INVOICE EMAIL] Could not fetch transactions for itemization: ${txErr.message}`);
+      }
+
       const { generateFolioPdf } = require('./printHandler');
-      const pdfBuffer = await generateFolioPdf(reservationId, resData.data);
+      const pdfBuffer = await generateFolioPdf(reservationId, resData.data, transactions);
 
       const nodemailer = require('nodemailer');
       const transporter = nodemailer.createTransport({
