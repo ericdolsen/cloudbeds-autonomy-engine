@@ -47,16 +47,23 @@ class WhistleListener {
       // The targeted PowerShell kill below scrubs only chrome.exe
       // processes whose command line references THIS user-data-dir, so
       // the operator's Chrome and PaymentTerminal's profile are untouched.
-      const { killChromesUsingDir } = require('./chromeCleanup');
+      const { killChromesUsingDir, logChromeLandscape } = require('./chromeCleanup');
+      logChromeLandscape('[WHISTLE RPA]');
       killChromesUsingDir(path.basename(userDataDir));
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
-      
-      this.context = await chromium.launchPersistentContext(userDataDir, { 
+
+      // Retry the launch a few times — Chrome occasionally exits with
+      // code 0 on the first attempt ("Opening in existing browser
+      // session") even after the targeted kill, which surfaces as
+      // Playwright's "Browser window not found". A short pause + retry
+      // usually succeeds. Each retry re-runs the targeted kill in case
+      // a subprocess clung on after the previous attempt.
+      const launchOpts = {
           executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           channel: 'chrome',
-          headless: false, // Run headlessly? User might want to see it, or keep it hidden. Set to false for "-32000" position trick
+          headless: false,
           args: [
               '--disable-blink-features=AutomationControlled',
               '--window-size=1920,1080',
@@ -66,7 +73,22 @@ class WhistleListener {
               '--hide-crash-restore-bubble'
           ],
           ignoreDefaultArgs: ['--enable-automation']
-      });
+      };
+      let lastErr;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          this.context = await chromium.launchPersistentContext(userDataDir, launchOpts);
+          break;
+        } catch (e) {
+          lastErr = e;
+          logger.warn(`[WHISTLE RPA] Launch attempt ${attempt}/4 failed: ${e.message.substring(0, 120)}`);
+          if (attempt < 4) {
+            killChromesUsingDir(path.basename(userDataDir));
+            await new Promise(r => setTimeout(r, attempt * 1500));
+          }
+        }
+      }
+      if (!this.context) throw lastErr;
 
       await this.context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
