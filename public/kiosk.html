@@ -416,6 +416,7 @@
             // Brand-new login session — drop any prior multi-room group state.
             kioskGroup = [];
             kioskCompletedIds = new Set();
+            kioskTopLevelGroups = [];
             verifiedReservationId = null;
 
             const btn = document.getElementById('submitActionBtn');
@@ -433,7 +434,88 @@
             document.querySelector('.header').style.display = 'block';
             kioskGroup = [];
             kioskCompletedIds = new Set();
+            if (typeof kioskTopLevelGroups !== 'undefined') kioskTopLevelGroups = [];
             verifiedReservationId = null;
+        }
+
+        // Top-level chooser — runs BEFORE PIN entry when the search query
+        // matched more than one of today's bookings (e.g. "Olsen" appears
+        // both as a sub-guest on a multi-room booking AND as the main
+        // guest on a separate solo reservation). Guest picks which one
+        // is theirs; we then PIN-verify against THAT booking's contact,
+        // not whichever the cache happened to return first.
+        let kioskTopLevelGroups = [];
+
+        function showTopLevelChooserStep(groups) {
+            kioskTopLevelGroups = groups || [];
+            currentStep = 1.5;
+            document.getElementById('step1Row').style.display = 'none';
+            document.getElementById('step2Row').style.display = 'none';
+            document.getElementById('step3Row').style.display = 'none';
+            document.getElementById('verifyPrompt').style.display = 'none';
+            document.getElementById('chooserRow').style.display = 'flex';
+            document.getElementById('submitActionBtn').style.display = 'none';
+
+            document.getElementById('chooserTitle').innerText = `We found ${kioskTopLevelGroups.length} bookings under that name`;
+            document.getElementById('chooserSubtitle').innerText = 'Tap the booking that’s yours so we can verify your identity.';
+
+            const container = document.getElementById('chooserCards');
+            container.innerHTML = '';
+            kioskTopLevelGroups.forEach((g, idx) => {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'kiosk-input';
+                card.style.cssText = 'text-align: left; padding: 18px 22px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; width: 100%; min-height: 88px; font-family: inherit;';
+                const dateLabel = (g.startDate && g.endDate)
+                    ? `${g.startDate.replace(/^(\d{4})-/, '')} → ${g.endDate.replace(/^(\d{4})-/, '')}`
+                    : '';
+                const roomCountLabel = g.roomCount > 1 ? `${g.roomCount} rooms` : '1 room';
+                card.innerHTML = `
+                    <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+                        <div style="font-size: 1.4rem; font-weight: 600; color: #f8fafc;">${(g.displayName || 'Guest').toString().replace(/[<>]/g, '')}</div>
+                        <div style="opacity: 0.85; font-size: 1rem;">${roomCountLabel}${dateLabel ? ' · ' + dateLabel : ''}</div>
+                    </div>
+                    <div style="text-align: right; opacity: 0.85;">
+                        <div style="opacity: 0.6; font-size: 0.95rem;">Tap to verify →</div>
+                    </div>
+                `;
+                card.onclick = () => selectTopLevelGroup(idx);
+                container.appendChild(card);
+            });
+        }
+
+        function selectTopLevelGroup(idx) {
+            const g = kioskTopLevelGroups[idx];
+            if (!g) return;
+            // Adopt this group's anchor + sub-rooms as the active session
+            // state, then drop into the standard PIN step.
+            verifiedReservationId = g.anchorReservationId;
+            kioskGroup = Array.isArray(g.subRooms) ? g.subRooms : [];
+            kioskCompletedIds = new Set();
+
+            currentStep = 2;
+            document.getElementById('chooserRow').style.display = 'none';
+            document.getElementById('step2Row').style.display = 'flex';
+            document.getElementById('verifyPrompt').style.display = 'block';
+            document.getElementById('submitActionBtn').style.display = '';
+
+            const pinInput = document.getElementById('pinInput');
+            if (g.verifyType === 'email') {
+                document.getElementById('verifyPrompt').innerText = `Please enter your full email address (e.g. ${g.masked}) to verify your identity.`;
+                pinInput.placeholder = "Enter your email address";
+                pinInput.type = "email";
+                pinInput.inputMode = "email";
+                pinInput.maxLength = 100;
+            } else {
+                document.getElementById('verifyPrompt').innerText = `Please enter the last 4 digits of your phone number to verify.`;
+                pinInput.placeholder = "Enter last 4 digits of phone";
+                pinInput.type = "tel";
+                pinInput.inputMode = "numeric";
+                pinInput.maxLength = 4;
+            }
+            pinInput.value = '';
+            document.getElementById('submitActionBtn').innerText = 'Go to Digital Check-In';
+            setTimeout(() => pinInput.focus(), 50);
         }
 
         // Render the chooser between verify and registration when the booking
@@ -552,7 +634,12 @@
                     });
                     const data = await res.json();
                     setLoading(false);
-                      if (data.success && data.requiresVerification) {
+                      if (data.success && data.multiTopLevel && Array.isArray(data.topLevelGroups) && data.topLevelGroups.length > 1) {
+                          // Multiple bookings under the same name — make
+                          // the guest disambiguate before we PIN-verify
+                          // against the wrong contact.
+                          showTopLevelChooserStep(data.topLevelGroups);
+                      } else if (data.success && data.requiresVerification) {
                           verifiedReservationId = data.reservationId;
                           // If the booking has multiple sub-reservations today, stash
                           // them now so the chooser can render after PIN verify.

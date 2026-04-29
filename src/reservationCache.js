@@ -209,6 +209,40 @@ class ReservationCache {
 
     return { success: false, message: "Could not find an active reservation matching that name." };
   }
+
+  /**
+   * Like search() but returns ALL today-matching reservations under a name
+   * or phone, not just the first. Used by the kiosk to disambiguate when
+   * a guest's last name appears on more than one of today's bookings
+   * (e.g. an "Olsen" sub-guest on a multi-room booking AND a separate
+   * solo Olsen reservation also arriving today).
+   */
+  searchAllToday(query) {
+    const isName = /^[a-zA-Z\s'\-]+$/.test(query) && query.length >= 2;
+    const isPhone = /^\+?[\d\s\-\(\)]{7,20}$/.test(query) && query.replace(/[^\d]/g, '').length >= 4;
+    if (!isName && !isPhone) return [];
+
+    const today = new Date().toISOString().split('T')[0];
+    const allReservations = Array.from(this.cache.values());
+    let matches = [];
+
+    if (isName) {
+      const needle = query.trim().toLowerCase();
+      matches = allReservations.filter(r => this._reservationMatchesName(r, needle));
+    } else if (isPhone) {
+      const needle = query.replace(/[^\d]/g, '');
+      matches = allReservations.filter(r => {
+        if (!r.guestList) return false;
+        return Object.values(r.guestList).some(g => {
+          const cell = g.guestCellPhone ? g.guestCellPhone.toString().replace(/[^\d]/g, '') : '';
+          const phone = g.guestPhone ? g.guestPhone.toString().replace(/[^\d]/g, '') : '';
+          return (cell && cell.includes(needle)) || (phone && phone.includes(needle));
+        });
+      });
+    }
+
+    return matches.filter(r => r.startDate === today);
+  }
 }
 
 // Export as a singleton
