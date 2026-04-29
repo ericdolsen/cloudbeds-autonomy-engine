@@ -1149,10 +1149,21 @@ async function boot() {
     // charge doesn't pay the 2-4s Chrome cold-start. Mirrors how
     // WhistleListener launches at boot — separate Chrome user-data-dir,
     // long-lived for the process lifetime.
+    //
+    // CRITICAL: await this BEFORE starting WhistleListener. Even though
+    // they use separate user-data-dirs, Chrome on Windows uses an
+    // installation-level singleton — two Playwright launches firing within
+    // a few milliseconds race that lock and both crash with
+    // "Protocol error (Browser.getWindowForTarget): Browser window not found"
+    // (the Chrome process exits cleanly with code 0 before it can produce
+    // a window). Sequencing eliminates the race entirely. Trade is ~10s
+    // of boot time.
     if (agent.engine && agent.engine.paymentTerminal) {
-      agent.engine.paymentTerminal.start().catch(e =>
-        logger.error(`[STRIPE TERMINAL] Pre-warm failed (charges will retry on demand): ${e.message}`)
-      );
+      try {
+        await agent.engine.paymentTerminal.start();
+      } catch (e) {
+        logger.error(`[STRIPE TERMINAL] Pre-warm failed (charges will retry on demand): ${e.message}`);
+      }
     }
 
     if (process.env.ENABLE_WHISTLE_RPA === 'true') {
