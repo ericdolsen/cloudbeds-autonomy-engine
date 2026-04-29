@@ -13,6 +13,15 @@ class WhistleListener {
     this.page = null;
     this._loggedOut = false;
     this._lastLoginWarnAt = 0;
+    // Per-conversation duplicate-reply guard. Whistle does NOT auto-mark a
+    // conversation as read after the bot sends a reply via the contenteditable
+    // — the sidebar's "Unread" badge stays on for the same row through the
+    // next polling cycle. Without this guard, every cycle re-fires the same
+    // engine call against the same chat (now including our own reply) and the
+    // bot would reply repeatedly to one guest message. Map of url → wall-clock
+    // ms of the last successful send; skip the cycle if the parsed latest
+    // chat-content timestamp is older than that.
+    this._lastReplyAtByUrl = new Map();
     // Circuit breaker: once true, the listener stops clicking unread rows.
     // Clicking marks the conversation as read in Whistle, so if we can't
     // actually compose+send a reply we silently consume the unread state
@@ -399,6 +408,20 @@ class WhistleListener {
         logger.info(`[WHISTLE RPA DEBUG] No timestamp parsed from chat text; skipping recency guard for this thread.`);
     }
 
+    // Duplicate-reply guard. Whistle's sidebar keeps showing "Unread" for
+    // the same row even after we send a reply, so the next cycle would
+    // re-detect, re-scrape (now with our own reply included), and dispatch
+    // the engine again. Skip if the latest chat-content timestamp is older
+    // than wall clock at the moment we last sent a reply on this URL.
+    const convUrl = this.page.url();
+    const lastReplyAt = this._lastReplyAtByUrl.get(convUrl);
+    if (lastReplyAt && latestActivityAt && latestActivityAt < lastReplyAt) {
+        const ageSec = Math.round((Date.now() - lastReplyAt) / 1000);
+        logger.info(`[WHISTLE RPA] Already replied to this conversation ${ageSec}s ago and no newer guest activity since; skipping to avoid duplicate replies.`);
+        await this.page.waitForTimeout(2000);
+        return;
+    }
+
     logger.info(`[WHISTLE RPA] Sending extracted chat to Autonomy Engine...`);
 
     const agentPrompt = `
@@ -475,9 +498,11 @@ ${textToProcess}
         const sendBtn = targetContext.getByRole('button', { name: /^\s*send\s*$/i }).first();
         if (await sendBtn.isVisible().catch(() => false)) {
             await sendBtn.click();
+            this._lastReplyAtByUrl.set(convUrl, Date.now());
             logger.info(`[WHISTLE RPA] Successfully sent response!`);
         } else {
             await composeInput.press('Enter');
+            this._lastReplyAtByUrl.set(convUrl, Date.now());
             logger.info(`[WHISTLE RPA] Successfully sent response via Enter key!`);
         }
     } else {
