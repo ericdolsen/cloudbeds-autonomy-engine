@@ -1126,22 +1126,35 @@ async function boot() {
   const gracefulShutdown = async () => {
     logger.info('Shutting down server and agent...');
     if (whistleListener) await whistleListener.stop();
+    if (agent.engine && agent.engine.paymentTerminal) {
+      try { await agent.engine.paymentTerminal.stop(); } catch (e) {}
+    }
     await agent.stop();
     process.exit(0);
   };
-  
+
   process.on('SIGINT', gracefulShutdown);
   process.on('SIGTERM', gracefulShutdown);
 
   // Start the background scraping sentinel
   try {
     await agent.start();
-    
+
     // Kick off background cache sync
     reservationCache.syncFromCloudbeds(agent.engine.api).catch(e => {
       logger.error(`[CACHE] Initial background sync failed: ${e.message}`);
     });
-    
+
+    // Pre-warm the kiosk payment-terminal browser so the first kiosk
+    // charge doesn't pay the 2-4s Chrome cold-start. Mirrors how
+    // WhistleListener launches at boot — separate Chrome user-data-dir,
+    // long-lived for the process lifetime.
+    if (agent.engine && agent.engine.paymentTerminal) {
+      agent.engine.paymentTerminal.start().catch(e =>
+        logger.error(`[STRIPE TERMINAL] Pre-warm failed (charges will retry on demand): ${e.message}`)
+      );
+    }
+
     if (process.env.ENABLE_WHISTLE_RPA === 'true') {
       whistleListener = new WhistleListener(agent);
       whistleListener.start().catch(e => logger.error(`[WHISTLE RPA] Fatal error: ${e.message}`));
