@@ -272,22 +272,38 @@ class WhistleListener {
     } else {
         await unreadIndicator.click();
     }
-    await this.page.waitForTimeout(2000); // Wait for chat to load
 
+    // After clicking the unread row, the URL hash changes immediately to
+    // .../guest-chat/<convId>, but the right-pane chat content takes a
+    // moment to render. The reliable signal that the chat is actually
+    // loaded is the compose textbox becoming visible. Anchoring on the
+    // compose input also gives us a precise locator for the chat panel —
+    // scraping the whole frame returns the conversation list (sidebar)
+    // because that's what dominates the early DOM.
+    const composeInput = targetContext.getByPlaceholder(/type your message|type a message|reply|message/i).first();
+    try {
+        await composeInput.waitFor({ state: 'visible', timeout: 8000 });
+    } catch (e) {
+        logger.warn(`[WHISTLE RPA] Compose box did not appear within 8s after opening conversation; skipping cycle. URL: ${this.page.url()}`);
+        await this.page.waitForTimeout(2000);
+        return;
+    }
+
+    // Scrape the chat panel only — walk up from the input to its enclosing
+    // section/region/main. Without this, scraping a generic [class*="chat"]
+    // fallback pulls in the sidebar's 30+ conversation rows and the engine
+    // sees the conversation list instead of the actual messages.
     let textToProcess = '';
-    const chatRegion = targetContext.getByRole('region', { name: /chat|messages|conversation/i }).first();
-    if (await chatRegion.isVisible().catch(() => false)) {
-        textToProcess = await chatRegion.innerText();
-    } else {
-        // Fallbacks, ordered most-specific to least: Chakra/Whistle conversation
-        // panels, then generic main element. We anchor on the input we just
-        // located if everything else fails, by walking up to its panel.
-        const fallback = targetContext.locator(
-            '[class*="conversation"], [class*="chat"], [class*="messages"], main, [role="main"]'
-        ).first();
-        if (await fallback.isVisible().catch(() => false)) {
-            textToProcess = await fallback.innerText();
-        }
+    const chatPanel = composeInput.locator(
+        'xpath=ancestor::*[self::section or self::main or @role="region" or @role="main" or contains(@class,"thread") or contains(@class,"conversation-detail") or contains(@class,"chat-detail") or contains(@class,"messageList")][1]'
+    );
+    if ((await chatPanel.count()) > 0) {
+        textToProcess = await chatPanel.first().innerText().catch(() => '');
+    }
+    if (!textToProcess) {
+        // Fallback: grab the input's parent panel a few levels up — still
+        // anchored on the input so we don't grab the entire frame.
+        textToProcess = await composeInput.locator('xpath=ancestor::*[4]').innerText().catch(() => '');
     }
 
     if (!textToProcess) {
@@ -315,9 +331,9 @@ class WhistleListener {
     }
 
     logger.info(`[WHISTLE RPA] Sending extracted chat to Autonomy Engine...`);
-    
+
     const agentPrompt = `
-You are reading a raw scrape of an SMS chat window. 
+You are reading a raw scrape of an SMS chat window.
 Identify the guest's latest message and generate a helpful, concise SMS response.
 Do not include any formatting or markdown in your response, just the raw text you want to send.
 
@@ -327,16 +343,16 @@ ${textToProcess.substring(0, 1500)}
 
     let aiResponseText = "";
     try {
-        // processIncomingMessage expects an object with source and text, and optionally uses tools. 
+        // processIncomingMessage expects an object with source and text, and optionally uses tools.
         // We bypass the JSON payload constraint by sending it as raw text and instructing the engine to just reply.
         const engineResult = await this.agent.processIncomingMessage({
             source: 'whistle_rpa',
             text: agentPrompt
         });
-        
+
         // Assume engineResult is a string, or contains the final output string.
         aiResponseText = typeof engineResult === 'string' ? engineResult : JSON.stringify(engineResult);
-        
+
         // Sanitize the response (remove quotes or thought blocks if Gemini leaks them)
         aiResponseText = aiResponseText.replace(/`/g, '').trim();
 
@@ -346,16 +362,12 @@ ${textToProcess.substring(0, 1500)}
     }
 
     logger.info(`[WHISTLE RPA] Injecting AI response into UI...`);
-    
-    // Whistle's compose box has placeholder "Type your message..." — match the
-    // exact phrase first, then fall back to broader patterns in case the UI
-    // copy changes.
-    let inputArea = targetContext.getByPlaceholder(/type your message/i).first();
-    if (!(await inputArea.isVisible().catch(() => false))) {
-        inputArea = targetContext.getByPlaceholder(/type a message|reply|message/i).first();
-    }
-    if (await inputArea.isVisible().catch(() => false)) {
-        await inputArea.fill(aiResponseText);
+
+    // Reuse the composeInput we already located and waited on — guarantees
+    // we type into the right pane's textbox, not some other text field
+    // elsewhere on the page.
+    if (await composeInput.isVisible().catch(() => false)) {
+        await composeInput.fill(aiResponseText);
 
         // Send button is labeled "Send" (icon + text) in the bottom-right.
         const sendBtn = targetContext.getByRole('button', { name: /^\s*send\s*$/i }).first();
@@ -363,7 +375,7 @@ ${textToProcess.substring(0, 1500)}
             await sendBtn.click();
             logger.info(`[WHISTLE RPA] Successfully sent response!`);
         } else {
-            await inputArea.press('Enter');
+            await composeInput.press('Enter');
             logger.info(`[WHISTLE RPA] Successfully sent response via Enter key!`);
         }
     } else {
