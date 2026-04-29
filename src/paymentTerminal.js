@@ -10,10 +10,10 @@ const { VisionClicker } = require('./visionClicker');
 // lifetime, hand out a fresh page per charge. This eliminates the 2-4s Chrome
 // cold-start that used to be paid on every kiosk visit.
 //
-// The browser runs at window-position -32000,-32000 (off-screen, fully
-// rendered) — visible to the OS and Playwright, invisible to the operator and
-// guest standing at the kiosk. Despite the misleading log line of yore, this
-// is NOT headless mode; running headlessly trips Cloudbeds' bot detection.
+// Runs headed by default (the host is a single-purpose box that nobody else
+// uses) and falls back to true headless if a headed launch can't acquire a
+// window — that fallback path is slower on initial SPA bootstrap but keeps
+// charges flowing without operator intervention.
 class PaymentTerminal {
   constructor() {
     this.uiHost = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com';
@@ -71,7 +71,6 @@ class PaymentTerminal {
         headless: false,
         args: [
           '--disable-blink-features=AutomationControlled',
-          '--window-position=-32000,-32000', // off-screen, NOT headless
           '--window-size=1920,1080',
           '--disable-gpu',
           '--disable-software-rasterizer'
@@ -82,7 +81,10 @@ class PaymentTerminal {
       // code 0 on the first attempt ("Opening in existing browser
       // session") even after the targeted kill, surfacing as Playwright's
       // "Browser window not found". A short pause + re-kill + retry
-      // usually clears it.
+      // usually clears it. If all headed attempts still fail (e.g. the
+      // Windows session can't materialize a window for some reason), we
+      // fall back once to true headless — slower for SPA bootstrap but
+      // doesn't need an interactive desktop.
       let lastErr;
       for (let attempt = 1; attempt <= 4; attempt++) {
         try {
@@ -97,7 +99,18 @@ class PaymentTerminal {
           }
         }
       }
-      if (!this.context) throw lastErr;
+      if (!this.context) {
+        logger.warn(`[STRIPE TERMINAL] All headed launches failed; falling back to true headless.`);
+        killChromesUsingDir(path.basename(this._userDataDir));
+        try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
+        try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+        try {
+          this.context = await chromium.launchPersistentContext(this._userDataDir, { ...launchOpts, headless: true });
+          logger.info(`[STRIPE TERMINAL] Headless fallback succeeded.`);
+        } catch (e) {
+          throw lastErr;
+        }
+      }
 
       await this.context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
