@@ -454,7 +454,12 @@ ${textToProcess}
         } else if (engineResult && typeof engineResult.agent_response === 'string') {
             aiResponseText = engineResult.agent_response;
         } else {
-            aiResponseText = String(engineResult ?? '');
+            // Unexpected shape — most commonly { success: true,
+            // agent_response: undefined } when the engine ran a tool but
+            // produced no follow-up text. Don't coerce: String({...}) yields
+            // the literal "[object Object]" which we'd then SMS to the guest.
+            // Set empty and let the empty-response guard below skip the send.
+            aiResponseText = '';
         }
 
         // Sanitize the response (remove backticks/thought blocks if Gemini leaks them).
