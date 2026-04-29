@@ -13,6 +13,13 @@ class WhistleListener {
     this.page = null;
     this._loggedOut = false;
     this._lastLoginWarnAt = 0;
+    // Circuit breaker: once true, the listener stops clicking unread rows.
+    // Clicking marks the conversation as read in Whistle, so if we can't
+    // actually compose+send a reply we silently consume the unread state
+    // and the guest never hears back. Tripped after the first compose
+    // failure and only reset by restarting the process — by design, so a
+    // human investigates before we touch more guest threads.
+    this._composeBlocked = false;
   }
 
   async start() {
@@ -259,6 +266,16 @@ class WhistleListener {
         return;
     }
 
+    // SAFETY: opening a conversation marks it as read in Whistle. If a
+    // prior cycle already failed to find the compose box, refuse to click
+    // any more unread rows — otherwise we silently consume guest unread
+    // state without ever replying. Reset by restarting the process; by
+    // design, so a human investigates first.
+    if (this._composeBlocked) {
+        logger.warn(`[WHISTLE RPA] Skipping unread row click — compose box has not been located on this build, and clicking would mark the conversation read without sending a reply. Fix the compose selector and restart.`);
+        return;
+    }
+
     logger.info(`[WHISTLE RPA] Unread message detected! Extracting...`);
 
     // The badge is a small span inside the conversation row. Clicking the badge
@@ -285,6 +302,14 @@ class WhistleListener {
         await composeInput.waitFor({ state: 'visible', timeout: 8000 });
     } catch (e) {
         logger.warn(`[WHISTLE RPA] Compose box did not appear within 8s after opening conversation; skipping cycle. URL: ${this.page.url()}`);
+        // Trip the circuit breaker so further cycles don't keep clicking
+        // and silently marking unreads as read.
+        this._composeBlocked = true;
+        // Dump everything that could help locate the compose box: all
+        // input/textarea/contenteditable/role=textbox elements with their
+        // placeholders + body innerText length and the section past the
+        // sidebar (which we've been missing in the 600-char sample).
+        await this._dumpComposeFailure(targetContext);
         await this.page.waitForTimeout(2000);
         return;
     }
@@ -383,6 +408,60 @@ ${textToProcess.substring(0, 1500)}
     }
 
     await this.page.waitForTimeout(5000);
+  }
+
+  /**
+   * Dump every signal that could help identify the compose box. Called
+   * once when the placeholder-based locator fails to find a textbox after
+   * opening a conversation. Reports:
+   *   - all <input>, <textarea>, [contenteditable], and [role="textbox"]
+   *     elements with their placeholder, aria-label, name, and tag
+   *   - body innerText length + a sample from the middle of the document
+   *     (the existing 600-char head sample only shows the sidebar list)
+   *   - all <button> elements containing "send" in their text or
+   *     aria-label, so we can verify the Send button selector too
+   */
+  async _dumpComposeFailure(frame) {
+    try {
+        const findings = await frame.evaluate(() => {
+            const inputs = Array.from(document.querySelectorAll(
+                'input, textarea, [contenteditable="true"], [role="textbox"]'
+            )).map(el => ({
+                tag: el.tagName.toLowerCase(),
+                type: el.getAttribute('type') || null,
+                placeholder: el.getAttribute('placeholder') || null,
+                ariaLabel: el.getAttribute('aria-label') || null,
+                name: el.getAttribute('name') || null,
+                role: el.getAttribute('role') || null,
+                contentEditable: el.getAttribute('contenteditable') || null,
+                cls: String(el.className || '').substring(0, 60),
+                visible: !!(el.offsetParent || el.tagName === 'BODY'),
+            }));
+            const sendButtons = Array.from(document.querySelectorAll('button'))
+                .filter(b => /send/i.test((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')))
+                .slice(0, 8)
+                .map(b => ({
+                    text: (b.textContent || '').trim().substring(0, 30),
+                    ariaLabel: b.getAttribute('aria-label') || null,
+                    cls: String(b.className || '').substring(0, 60),
+                    visible: !!b.offsetParent,
+                }));
+            const innerText = (document.body && document.body.innerText) || '';
+            return {
+                inputs,
+                sendButtons,
+                bodyInnerTextLength: innerText.length,
+                bodyMidSample: innerText.substring(1500, 2500),
+                bodyTailSample: innerText.substring(Math.max(0, innerText.length - 600)),
+            };
+        });
+        logger.warn(`[WHISTLE RPA DEBUG] composeFailure inputs=${JSON.stringify(findings.inputs).substring(0, 1200)}`);
+        logger.warn(`[WHISTLE RPA DEBUG] composeFailure sendButtons=${JSON.stringify(findings.sendButtons).substring(0, 600)}`);
+        logger.warn(`[WHISTLE RPA DEBUG] composeFailure bodyLen=${findings.bodyInnerTextLength} mid=${JSON.stringify(findings.bodyMidSample).substring(0, 600)}`);
+        logger.warn(`[WHISTLE RPA DEBUG] composeFailure tail=${JSON.stringify(findings.bodyTailSample).substring(0, 600)}`);
+    } catch (e) {
+        logger.error(`[WHISTLE RPA DEBUG] composeFailure dump itself failed: ${e.message}`);
+    }
   }
 
   /**
