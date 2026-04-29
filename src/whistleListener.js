@@ -88,7 +88,23 @@ class WhistleListener {
           }
         }
       }
-      if (!this.context) throw lastErr;
+      // If all headed attempts fail (e.g. the Windows session can't
+      // materialize a window for some reason), fall back once to true
+      // headless. Slower SPA bootstrap, but doesn't need an interactive
+      // desktop and keeps the inbox monitor running.
+      if (!this.context) {
+        logger.warn(`[WHISTLE RPA] All headed launches failed; falling back to true headless.`);
+        killChromesUsingDir(path.basename(userDataDir));
+        try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
+        try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+        try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
+        try {
+          this.context = await chromium.launchPersistentContext(userDataDir, { ...launchOpts, headless: true });
+          logger.info(`[WHISTLE RPA] Headless fallback succeeded.`);
+        } catch (e) {
+          throw lastErr;
+        }
+      }
 
       await this.context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
