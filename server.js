@@ -743,6 +743,45 @@ function extractGuestContact(data) {
   };
 }
 
+// Build a compact, kiosk-display-friendly summary of a reservation. The chooser
+// UI needs the room name, dates, named guest, and balance — nothing else. Keeps
+// the wire payload small even for groups of 17 sub-reservations.
+function summarizeReservationForKiosk(r) {
+  if (!r) return null;
+  const id = r.reservationID || r.reservationId;
+  // Prefer the sub-reservation's own guestList main guest, since multi-room
+  // bookings attach individual profiles per sub. Fall back to the top-level
+  // guestName which may just be the booker.
+  let displayName = r.guestName || '';
+  if (r.guestList && typeof r.guestList === 'object') {
+    const guests = Object.values(r.guestList);
+    const main = guests.find(g => g && g.isMainGuest) || guests[0];
+    if (main && (main.guestFirstName || main.guestLastName)) {
+      displayName = [main.guestFirstName, main.guestLastName].filter(Boolean).join(' ').trim() || displayName;
+    }
+  }
+  // Room number is buried inside guestList[0].rooms[0].roomName in the
+  // Cloudbeds shape. Extract it if present so the chooser can label cards.
+  let roomName = '';
+  if (r.guestList && typeof r.guestList === 'object') {
+    for (const g of Object.values(r.guestList)) {
+      if (g && Array.isArray(g.rooms) && g.rooms[0] && g.rooms[0].roomName) {
+        roomName = g.rooms[0].roomName;
+        break;
+      }
+    }
+  }
+  return {
+    reservationId: id,
+    roomName,
+    guestName: displayName,
+    startDate: r.startDate,
+    endDate: r.endDate,
+    status: r.status,
+    balance: typeof r.balance === 'number' ? r.balance : null
+  };
+}
+
 // Identity verification for Kiosk (Search by Last Name or Reservation ID)
 app.post('/api/kiosk/identify', async (req, res) => {
   const { query, mode } = req.body;
@@ -755,12 +794,40 @@ app.post('/api/kiosk/identify', async (req, res) => {
     const contact = extractGuestContact(result.data);
     const reservationId = result.data.reservationID || result.data.reservationId;
 
+    // Multi-room expansion: find every sibling sharing the same parent
+    // prefix, then filter to today's actionable items only. Per product:
+    // hide already-checked-in / checked-out / cancelled rooms entirely
+    // (they're not actionable at the kiosk), and hide rooms arriving on a
+    // different day (a guest checking in for tomorrow's room shouldn't
+    // appear in today's chooser).
+    const today = new Date().toISOString().split('T')[0];
+    let group = [];
+    if (mode === 'checkin') {
+      const siblings = reservationCache.findSiblings(reservationId);
+      group = siblings
+        .filter(r => r.startDate === today)
+        .filter(r => {
+          const status = (r.status || '').toLowerCase();
+          return status !== 'checked_in' && status !== 'checked_out' && status !== 'cancelled' && status !== 'no_show';
+        })
+        .map(summarizeReservationForKiosk)
+        .filter(Boolean)
+        // Stable order: parent (no suffix) first, then -2, -3, ... by suffix number.
+        .sort((a, b) => {
+          const aSuffix = (a.reservationId.match(/-(\d+)$/) || [, '0'])[1];
+          const bSuffix = (b.reservationId.match(/-(\d+)$/) || [, '0'])[1];
+          return Number(aSuffix) - Number(bSuffix);
+        });
+    }
+    const isMultiRoom = group.length > 1;
+
     // Check if they typed the exact reservation ID to bypass PIN
     if (query.trim().toUpperCase() === reservationId.toUpperCase()) {
       return res.json({
         success: true,
         requiresVerification: false,
-        reservationId
+        reservationId,
+        ...(isMultiRoom ? { group } : {})
       });
     }
 
@@ -771,7 +838,8 @@ app.post('/api/kiosk/identify', async (req, res) => {
         requiresVerification: true,
         verifyType: 'phone',
         reservationId,
-        maskedPhone: `***-***-${last4}`
+        maskedPhone: `***-***-${last4}`,
+        ...(isMultiRoom ? { group } : {})
       });
     }
     if (contact.email) {
@@ -782,13 +850,53 @@ app.post('/api/kiosk/identify', async (req, res) => {
         requiresVerification: true,
         verifyType: 'email',
         reservationId,
-        maskedEmail
+        maskedEmail,
+        ...(isMultiRoom ? { group } : {})
       });
     }
     return res.json({ success: false, message: "We found your reservation, but it lacks contact details for secure verification. Please see the front desk." });
   }
 
   res.json({ success: false, message: result.message || "Could not locate a reservation with that information." });
+});
+
+// Fetch contact details for a sibling sub-reservation in a multi-room
+// booking, anchored to a reservation that already passed PIN verification
+// in this session. The caller proves they're authorized for the group by
+// presenting the verifiedReservationId (returned by /api/kiosk/verify).
+// We confirm both share a parent ID prefix before disclosing the target's
+// guest data — no cross-group lookups.
+app.post('/api/kiosk/sub-reservation', async (req, res) => {
+  const { verifiedReservationId, targetReservationId } = req.body;
+  if (!verifiedReservationId || !targetReservationId) {
+    return res.status(400).json({ success: false, message: "Missing reservation IDs" });
+  }
+  const verifiedPrefix = reservationCache._parentPrefix(verifiedReservationId);
+  const targetPrefix = reservationCache._parentPrefix(targetReservationId);
+  if (!verifiedPrefix || verifiedPrefix !== targetPrefix) {
+    logger.warn(`[KIOSK SUBRES] Refused cross-group lookup: ${verifiedReservationId} → ${targetReservationId}`);
+    return res.status(403).json({ success: false, message: "That reservation isn't part of your booking." });
+  }
+  logger.info(`[KIOSK SUBRES] Loading sub-reservation ${targetReservationId} (verified via ${verifiedReservationId})`);
+  const result = await agent.engine.api.getReservationById(targetReservationId);
+  if (result.success && result.data) {
+    const contact = extractGuestContact(result.data);
+    return res.json({
+      success: true,
+      reservationId: targetReservationId,
+      guestData: {
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email.toLowerCase(),
+        phone: contact.phone,
+        address: contact.address,
+        city: contact.city,
+        state: contact.state,
+        zip: contact.zip
+      }
+    });
+  }
+  res.json({ success: false, message: "Could not load that reservation. Please see the front desk." });
 });
 
 app.post('/api/kiosk/verify', async (req, res) => {

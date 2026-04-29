@@ -90,12 +90,68 @@ class ReservationCache {
   }
 
   /**
+   * Cloudbeds returns multi-room bookings as one parent reservation plus
+   * suffixed siblings: "42JVT4PXTB", "42JVT4PXTB-2", ..., "42JVT4PXTB-17".
+   * The parent has no suffix; siblings always end in `-\d+`. There's no
+   * explicit parentReservationID field in the API response, so we have
+   * to derive the group key from the ID itself.
+   */
+  _parentPrefix(reservationId) {
+    if (!reservationId) return null;
+    return String(reservationId).replace(/-\d+$/, '');
+  }
+
+  /**
+   * Return every cached reservation that shares a parent prefix with the
+   * given ID, including the input itself if present. Used by the kiosk's
+   * multi-room chooser. Caller is responsible for any further filtering
+   * (today-only, status, etc.).
+   */
+  findSiblings(reservationId) {
+    const prefix = this._parentPrefix(reservationId);
+    if (!prefix) return [];
+    const results = [];
+    for (const r of this.cache.values()) {
+      const id = r.reservationID || r.reservationId;
+      if (!id) continue;
+      if (this._parentPrefix(id) === prefix) results.push(r);
+    }
+    return results;
+  }
+
+  /**
+   * Match a name needle against a reservation's primary guest fields
+   * AND every entry in its guestList. The list-level check matters for
+   * multi-room bookings where Aunt Sue is the parent's main guest but
+   * each sub-reservation has its own guest profile attached — Nephew
+   * Joe should still find his room by typing "Smith".
+   */
+  _reservationMatchesName(r, needle) {
+    if ((r.guestName && r.guestName.toLowerCase().includes(needle)) ||
+        (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
+        (r.guestLastName && r.guestLastName.toLowerCase() === needle)) {
+      return true;
+    }
+    if (r.guestList && typeof r.guestList === 'object') {
+      for (const g of Object.values(r.guestList)) {
+        if (!g) continue;
+        if ((g.guestName && g.guestName.toLowerCase().includes(needle)) ||
+            (g.guestFirstName && g.guestFirstName.toLowerCase() === needle) ||
+            (g.guestLastName && g.guestLastName.toLowerCase() === needle)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Instantly queries the local cache by name or phone.
    */
   search(query, mode) {
     const isName = /^[a-zA-Z\s'\-]+$/.test(query) && query.length >= 2;
     const isPhone = /^\+?[\d\s\-\(\)]{7,20}$/.test(query) && query.replace(/[^\d]/g, '').length >= 4;
-    
+
     if (!isName && !isPhone) {
       return null;
     }
@@ -107,11 +163,7 @@ class ReservationCache {
 
     if (isName) {
       const needle = query.trim().toLowerCase();
-      matches = allReservations.filter(r =>
-        (r.guestName && r.guestName.toLowerCase().includes(needle)) ||
-        (r.guestFirstName && r.guestFirstName.toLowerCase() === needle) ||
-        (r.guestLastName && r.guestLastName.toLowerCase() === needle)
-      );
+      matches = allReservations.filter(r => this._reservationMatchesName(r, needle));
     } else if (isPhone) {
       const needle = query.replace(/[^\d]/g, '');
       matches = allReservations.filter(r => {
