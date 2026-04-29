@@ -39,16 +39,14 @@ class WhistleListener {
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
       
-      // Force-kill any lingering Chrome processes from previous aborted runs
-      // that might be holding a lock on the user data directory.
-      try {
-          logger.info('[WHISTLE RPA] Cleaning up any zombie Chrome processes...');
-          require('child_process').execSync('taskkill /IM chrome.exe /F /T', { stdio: 'ignore' });
-      } catch (e) {
-          // It will throw if no chrome.exe is found, which is fine.
-      }
-
-      // Clean up stale locks that cause Chrome to exit with code 0
+      // Previously this method ran `taskkill /IM chrome.exe /F /T` here to
+      // sweep up zombie Chrome processes from prior aborted runs. That
+      // turned out to be far too aggressive — at server boot it races
+      // PaymentTerminal's pre-warm (PR #37 onwards) and the operator's
+      // own visible Chrome window, force-killing all of them. Removed.
+      // The SingletonLock / SingletonCookie / lockfile cleanup below
+      // handles stale-state from prior crashes for our user-data-dir
+      // specifically, which is what we actually need.
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
