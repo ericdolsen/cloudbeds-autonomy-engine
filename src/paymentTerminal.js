@@ -53,8 +53,13 @@ class PaymentTerminal {
   async _launch() {
     logger.info(`[STRIPE TERMINAL] Pre-warming Chrome on ${path.basename(this._userDataDir)} ...`);
 
-    // Clean up stale locks that cause Chrome to exit with code 0 if the
-    // last process didn't shut down cleanly.
+    // If a prior run crashed, an actual chrome.exe process may still be
+    // alive holding this profile — Singleton* file cleanup alone doesn't
+    // help because the lock isn't filesystem-only. Target-kill any
+    // zombie chrome.exe whose command line references THIS dir; doesn't
+    // touch the operator's Chrome or WhistleListener's profile.
+    const { killChromesUsingDir } = require('./chromeCleanup');
+    killChromesUsingDir(path.basename(this._userDataDir));
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
 

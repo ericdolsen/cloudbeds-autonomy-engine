@@ -44,9 +44,11 @@ class WhistleListener {
       // turned out to be far too aggressive — at server boot it races
       // PaymentTerminal's pre-warm (PR #37 onwards) and the operator's
       // own visible Chrome window, force-killing all of them. Removed.
-      // The SingletonLock / SingletonCookie / lockfile cleanup below
-      // handles stale-state from prior crashes for our user-data-dir
-      // specifically, which is what we actually need.
+      // The targeted PowerShell kill below scrubs only chrome.exe
+      // processes whose command line references THIS user-data-dir, so
+      // the operator's Chrome and PaymentTerminal's profile are untouched.
+      const { killChromesUsingDir } = require('./chromeCleanup');
+      killChromesUsingDir(path.basename(userDataDir));
       try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
       try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
