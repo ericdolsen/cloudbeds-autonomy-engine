@@ -4,12 +4,152 @@ const fs = require('fs');
 const { logger } = require('./logger');
 const { VisionClicker } = require('./visionClicker');
 
+// PaymentTerminal owns a long-lived Chrome instance dedicated to the kiosk's
+// Stripe Terminal (WisePOS E) charge flow. Mirrors WhistleListener's lifecycle:
+// launch once at server boot, keep the browser context alive for the process
+// lifetime, hand out a fresh page per charge. This eliminates the 2-4s Chrome
+// cold-start that used to be paid on every kiosk visit.
+//
+// The browser runs at window-position -32000,-32000 (off-screen, fully
+// rendered) — visible to the OS and Playwright, invisible to the operator and
+// guest standing at the kiosk. Despite the misleading log line of yore, this
+// is NOT headless mode; running headlessly trips Cloudbeds' bot detection.
 class PaymentTerminal {
   constructor() {
-    this.host = process.env.CLOUDBEDS_UI_HOST || 'hotels.cloudbeds.com';
+    this.uiHost = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com';
     this.propertyId = process.env.CLOUDBEDS_PROPERTY_ID;
     this.email = process.env.CLOUDBEDS_EMAIL;
     this.password = process.env.CLOUDBEDS_PASSWORD;
+    this.context = null;
+    // Dedup concurrent start() calls — if two callers race, only one
+    // actual launch happens; the second awaits the first's promise.
+    this._startPromise = null;
+    this._userDataDir = path.join(__dirname, '..', '.cloudbeds_payment_session');
+  }
+
+  /**
+   * Pre-warm the browser: launch Chrome on the dedicated user-data-dir,
+   * navigate to the Cloudbeds dashboard, and run the auto-login flow if
+   * the cached session has expired. Idempotent — safe to call from server
+   * boot or lazily from chargePhysicalTerminal if start() was skipped.
+   */
+  async start() {
+    if (this.context) return;
+    if (this._startPromise) return this._startPromise;
+    this._startPromise = this._launch();
+    try {
+      await this._startPromise;
+    } finally {
+      this._startPromise = null;
+    }
+  }
+
+  async _launch() {
+    logger.info(`[STRIPE TERMINAL] Pre-warming Chrome on ${path.basename(this._userDataDir)} ...`);
+
+    // Clean up stale locks that cause Chrome to exit with code 0 if the
+    // last process didn't shut down cleanly.
+    try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
+    try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+
+    try {
+      this.context = await chromium.launchPersistentContext(this._userDataDir, {
+        executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        channel: 'chrome',
+        headless: false,
+        args: [
+          '--disable-blink-features=AutomationControlled',
+          '--window-position=-32000,-32000', // off-screen, NOT headless
+          '--window-size=1920,1080',
+          '--disable-gpu',
+          '--disable-software-rasterizer'
+        ],
+        ignoreDefaultArgs: ['--enable-automation']
+      });
+
+      await this.context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        window.navigator.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      });
+
+      // Pre-navigate to the dashboard so the SPA shell is parsed and any
+      // session refresh happens up-front, not while a guest is waiting at
+      // the kiosk. If the cached cookies have expired, this is also where
+      // we run the auto-login flow.
+      const page = await this.context.newPage();
+      try {
+        const propertyPath = this.propertyId ? `${this.propertyId}` : '';
+        const dashboardUrl = `https://${this.uiHost}/connect/${propertyPath}`;
+        await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
+
+        if (this._isLoginPage(page.url())) {
+          if (this.email && this.password) {
+            logger.info(`[STRIPE TERMINAL] Pre-warm hit login page; running auto-login.`);
+            await this._performLogin(page);
+          } else {
+            logger.warn(`[STRIPE TERMINAL] Pre-warm hit login page and CLOUDBEDS_EMAIL/PASSWORD are not set. Run scripts/setupLogin.js to log in manually; charges will retry on demand.`);
+          }
+        }
+        logger.info(`[STRIPE TERMINAL] Browser pre-warmed. Final URL: ${page.url().substring(0, 80)}`);
+      } finally {
+        // Close the warm-up page; we open a fresh one per charge.
+        try { await page.close(); } catch (e) {}
+      }
+    } catch (e) {
+      logger.error(`[STRIPE TERMINAL] Pre-warm failed: ${e.message}`);
+      if (this.context) {
+        try { await this.context.close(); } catch {}
+      }
+      this.context = null;
+    }
+  }
+
+  async stop() {
+    if (this.context) {
+      try { await this.context.close(); } catch (e) {}
+      this.context = null;
+      logger.info(`[STRIPE TERMINAL] Browser stopped.`);
+    }
+  }
+
+  _isLoginPage(url) {
+    return url.includes('login') || url.includes('signin') || url.includes('okta');
+  }
+
+  async _performLogin(page) {
+    // Okta has shipped multiple input names for the email field — accept
+    // every variation we've seen so a UI revision doesn't break us.
+    const emailSelector = 'input[name="email"], input[name="user_email"], input[name="identifier"], input[name="username"], input[type="email"]';
+    await page.waitForSelector(emailSelector, { timeout: 30000 });
+    const newEmailInput = await page.$('input[name="email"], input[name="identifier"], input[name="username"], input[type="email"]:not([name="user_email"])');
+
+    if (newEmailInput) {
+      await newEmailInput.fill(this.email);
+      await page.click('button[type="submit"], input[type="submit"]');
+
+      await page.waitForURL('**/authorize**', { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+
+      const idInput = await page.$('input[name="identifier"]');
+      if (idInput) {
+        await page.click('input[type="submit"], button[type="submit"]');
+        await page.waitForTimeout(2000);
+      }
+
+      await page.fill('input[name="credentials.passcode"]', this.password);
+      await page.click('input[type="submit"], button[type="submit"]');
+    } else {
+      // Legacy non-Okta flow
+      await page.fill('input[name="user_email"]', this.email);
+      await page.fill('input[name="user_password"]', this.password);
+      await page.click('button[type="submit"]');
+    }
+
+    await page.waitForURL(`https://${this.uiHost}/connect/*`, { timeout: 15000 })
+      .catch(() => logger.warn('[STRIPE TERMINAL] Login redirect took too long, proceeding anyway...'));
   }
 
   async chargePhysicalTerminal(reservationId, amount, terminalName) {
@@ -17,108 +157,47 @@ class PaymentTerminal {
       throw new Error("CLOUDBEDS_EMAIL and CLOUDBEDS_PASSWORD are required in .env for Playwright terminal access.");
     }
 
-    logger.info(`[STRIPE TERMINAL] Firing up headless browser for WisePOS E...`);
-    let context;
+    // Lazy-start in case server boot skipped the pre-warm (e.g. earlier
+    // crash) or the context closed itself unexpectedly.
+    if (!this.context) {
+      logger.info(`[STRIPE TERMINAL] No pre-warmed browser available; starting on-demand.`);
+      await this.start();
+    }
+    if (!this.context) {
+      throw new Error('Payment terminal browser is not available. Check CLOUDBEDS_UI_HOST, Chrome installation, and that scripts/setupLogin.js has been run for .cloudbeds_payment_session.');
+    }
+
+    logger.info(`[STRIPE TERMINAL] Charging $${amount} on ${terminalName} for ${reservationId}`);
+    let page;
     try {
-      // Separate user-data-dir from the WhistleListener's `.cloudbeds_session`.
-      // Chrome enforces single-instance-per-profile: when both processes try
-      // to launchPersistentContext on the same dir, the second launch sees
-      // "Opening in existing browser session" and exits, killing the
-      // payment flow. Each component gets its own profile; both auto-log
-      // into Cloudbeds via CLOUDBEDS_EMAIL/PASSWORD on first use and cache
-      // the session for subsequent calls.
-      const userDataDir = path.join(__dirname, '..', '.cloudbeds_payment_session');
-
-      // Clean up stale locks that cause Chrome to exit with code 0
-      try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
-      try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
-      
-      context = await chromium.launchPersistentContext(userDataDir, { 
-          executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-          channel: 'chrome',
-          headless: false,
-          args: [
-              '--disable-blink-features=AutomationControlled',
-              '--window-position=-32000,-32000',
-              '--window-size=1920,1080',
-              '--disable-gpu',
-              '--disable-software-rasterizer'
-          ],
-          ignoreDefaultArgs: ['--enable-automation']
-      });
-
-      await context.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        window.navigator.chrome = { runtime: {} };
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-      });
-
-      const page = await context.newPage();
+      page = await this.context.newPage();
       const vision = new VisionClicker(page);
 
-      // 1. Navigate straight to the reservation folio to check if we're already logged in
-      logger.info(`[STRIPE TERMINAL] Checking session status / logging into Cloudbeds...`);
       const propertyPath = this.propertyId ? `${this.propertyId}` : '';
-      const uiHost = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com'; // Default to us2 as requested
-      const targetUrl = `https://${uiHost}/connect/${propertyPath}#/reservations/${reservationId}`;
+      const targetUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${reservationId}`;
       await page.goto(targetUrl);
-      
-      // Wait for SPA to either load the reservation or redirect to login
       await page.waitForTimeout(3000);
-      
-      // Check if we got redirected to login
-      if (page.url().includes('login') || page.url().includes('signin') || page.url().includes('okta')) {
-          // Handle either the old login form or the new Okta SSO login form.
-          // Okta has shipped multiple input names over the years
-          // (email, identifier, username); accept all of them so this
-          // doesn't break on every minor UI revision.
-          const emailSelector = 'input[name="email"], input[name="user_email"], input[name="identifier"], input[name="username"], input[type="email"]';
-          await page.waitForSelector(emailSelector, { timeout: 30000 });
-          const newEmailInput = await page.$('input[name="email"], input[name="identifier"], input[name="username"], input[type="email"]:not([name="user_email"])');
 
-      if (newEmailInput) {
-          // New Okta Flow — fill whichever variant is present
-          await newEmailInput.fill(this.email);
-          await page.click('button[type="submit"], input[type="submit"]');
-          
-          await page.waitForURL('**/authorize**', { timeout: 15000 }).catch(() => {});
-          await page.waitForTimeout(2000);
-          
-          // Sometimes Okta asks to confirm the identifier first
-          const idInput = await page.$('input[name="identifier"]');
-          if (idInput) {
-              await page.click('input[type="submit"], button[type="submit"]');
-              await page.waitForTimeout(2000);
-          }
-          
-          await page.fill('input[name="credentials.passcode"]', this.password);
-          await page.click('input[type="submit"], button[type="submit"]');
-      } else {
-          // Legacy flow
-          await page.fill('input[name="user_email"]', this.email);
-          await page.fill('input[name="user_password"]', this.password);
-          await page.click('button[type="submit"]');
+      // Long-lived sessions can expire; if the navigation landed on the
+      // login screen, run auto-login and retry the goto.
+      if (this._isLoginPage(page.url())) {
+        logger.info(`[STRIPE TERMINAL] Session expired mid-flight; re-logging in.`);
+        await this._performLogin(page);
+        await page.goto(targetUrl);
+        await page.waitForTimeout(2000);
       }
 
-      // Wait for the connect dashboard to be loaded
-      await page.waitForURL(`https://${this.host}/connect/*`, { timeout: 15000 }).catch(() => logger.warn('[STRIPE TERMINAL] Login redirect took too long, proceeding anyway...'));
-      } // CLOSE THE IF BLOCK HERE
-
-      // 3. Switch to Folio tab
+      // Switch to Folio tab
       logger.info(`[STRIPE TERMINAL] Switching to Folio tab...`);
       await page.waitForTimeout(2000);
       try {
         await page.getByRole('tab', { name: 'Folio' }).click();
       } catch (e) {
-        // Fallback if role is not strictly defined
         await page.locator('text="Folio"').first().click();
       }
       await page.waitForTimeout(1000);
-      
-      // 4. Click "ADD/REFUND PAYMENT" then "Add Payment". If the DOM has
-      // shifted, fall back to Claude Sonnet 4.5 vision for a zero-mistake
-      // click on the right pixels.
+
+      // Click "ADD/REFUND PAYMENT" then "Add Payment"
       logger.info(`[STRIPE TERMINAL] Triggering 'Add Payment'...`);
       try {
         await page.locator('text=/ADD\\/REFUND PAYMENT/i').click({ timeout: 5000 });
@@ -132,17 +211,17 @@ class PaymentTerminal {
         logger.warn(`[STRIPE TERMINAL] Selector for 'Add Payment' missed; falling back to vision lane.`);
         await vision.click("the 'Add Payment' menu item that appeared after clicking ADD/REFUND PAYMENT");
       }
-      await page.waitForTimeout(1500); // Wait for side panel
-      
-      // 5. Select "Terminal" from the Payment method dropdown
+      await page.waitForTimeout(1500);
+
+      // Select "Terminal" payment method
       logger.info(`[STRIPE TERMINAL] Selecting 'Terminal' as payment method...`);
       await page.locator('text="Payment method"').locator('..').click();
       await page.keyboard.type('Terminal');
       await page.waitForTimeout(500);
       await page.keyboard.press('Enter');
       await page.waitForTimeout(1000);
-      
-      // 6. Click Process Payment (vision fallback for the Cloudbeds redesign)
+
+      // Click Process Payment
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
       try {
         await page.locator('text="Process Payment"').first().click({ timeout: 5000 });
@@ -150,24 +229,24 @@ class PaymentTerminal {
         logger.warn(`[STRIPE TERMINAL] Selector for 'Process Payment' missed; falling back to vision lane.`);
         await vision.click("the 'Process Payment' confirmation button on the side panel");
       }
-      
-      // 7. Choose Terminal
+
       await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
       await page.locator(`text="${terminalName}"`).first().click();
-      
-      // 8. Wait for the physical transaction to complete (auto-closes)
+
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
       await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 }).catch(() => {});
       await page.waitForSelector('text="Now processing with terminal"', { state: 'hidden', timeout: 90000 });
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
       await page.waitForTimeout(5000);
-      await context.close();
-      
+      try { await page.close(); } catch (e) {}
+
       return { success: true, message: 'Terminal charge requested' };
     } catch (e) {
       logger.error(`[STRIPE TERMINAL] Failed to process physical charge: ${e.message}`);
-      if (context) await context.close();
+      if (page) {
+        try { await page.close(); } catch {}
+      }
       throw e;
     }
   }
