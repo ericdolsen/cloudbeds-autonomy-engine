@@ -58,13 +58,14 @@ class PaymentTerminal {
     // help because the lock isn't filesystem-only. Target-kill any
     // zombie chrome.exe whose command line references THIS dir; doesn't
     // touch the operator's Chrome or WhistleListener's profile.
-    const { killChromesUsingDir } = require('./chromeCleanup');
+    const { killChromesUsingDir, logChromeLandscape } = require('./chromeCleanup');
+    logChromeLandscape('[STRIPE TERMINAL]');
     killChromesUsingDir(path.basename(this._userDataDir));
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
     try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
 
     try {
-      this.context = await chromium.launchPersistentContext(this._userDataDir, {
+      const launchOpts = {
         executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         channel: 'chrome',
         headless: false,
@@ -76,7 +77,27 @@ class PaymentTerminal {
           '--disable-software-rasterizer'
         ],
         ignoreDefaultArgs: ['--enable-automation']
-      });
+      };
+      // Retry the launch a few times — Chrome occasionally exits with
+      // code 0 on the first attempt ("Opening in existing browser
+      // session") even after the targeted kill, surfacing as Playwright's
+      // "Browser window not found". A short pause + re-kill + retry
+      // usually clears it.
+      let lastErr;
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+          this.context = await chromium.launchPersistentContext(this._userDataDir, launchOpts);
+          break;
+        } catch (e) {
+          lastErr = e;
+          logger.warn(`[STRIPE TERMINAL] Launch attempt ${attempt}/4 failed: ${e.message.substring(0, 120)}`);
+          if (attempt < 4) {
+            killChromesUsingDir(path.basename(this._userDataDir));
+            await new Promise(r => setTimeout(r, attempt * 1500));
+          }
+        }
+      }
+      if (!this.context) throw lastErr;
 
       await this.context.addInitScript(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
