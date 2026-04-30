@@ -462,9 +462,9 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
     let promptText = "";
 
     if (event === "reservation/created") {
-      promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Please review their details and determine if any proactive steps or folio adjustments are needed.`;
+      promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Look it up via 'getReservation' and surface a SHORT note for the staff log noting the guest name, dates, room type, and any flags worth a human glance (group/block code, large party, special source). Do NOT call 'postPayment', 'postFolioAdjustment', or any other money-moving tool — balances are handled at the kiosk or front desk only. If the room is unassigned, mention it but do not invent an assignment.`;
     } else if (event === "reservation/dates_changed") {
-      promptText = `The dates for reservation ${reservationID} just changed. Review the ledger to ensure we don't need to issue any fee adjustments.`;
+      promptText = `The dates for reservation ${reservationID} just changed. Surface a short note for the staff log with the new dates and any visible balance impact. Do NOT post payments or fee adjustments — date-change billing is reconciled at the desk or via night audit.`;
     } else if (event === "reservation/status_changed" && (payload.status === "checked_out" || payload.new_status === "checked_out")) {
       promptText = `Reservation ${reservationID} just checked out natively. Evaluate if an invoice should be emailed by checking the paymentType (skip if Channel Collect Booking). If safe, email the fiscal document. Do not attempt to update the checkout status.`;
     } else {
