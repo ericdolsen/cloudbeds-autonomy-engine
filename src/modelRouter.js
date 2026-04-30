@@ -84,7 +84,20 @@ class ModelRouter {
     const ai = this._googleAi();
     return ai.chats.create({
       model: lane.model,
-      config: { systemInstruction, tools, temperature }
+      config: {
+        systemInstruction,
+        tools,
+        temperature,
+        // Gemini 3.x models auto-attach a built-in tool (google_search)
+        // to every request. When that's combined with our
+        // functionDeclarations the API rejects with
+        // "Please enable tool_config.include_server_side_tool_invocations
+        // to use Built-in tools with Function calling." Setting this
+        // flag opts us in to the mixed mode — built-in invocations
+        // run server-side and we keep using our own function calls
+        // alongside. No-op on older models that don't auto-attach.
+        toolConfig: { includeServerSideToolInvocations: true }
+      }
     });
   }
 
