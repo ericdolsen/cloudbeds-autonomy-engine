@@ -602,6 +602,23 @@ ${textToProcess}
     }
 
     await this.page.waitForTimeout(5000);
+
+    // Navigate back to the inbox root so the next poll cycle re-fetches
+    // fresh chat content. Without this, the page stays on the conversation
+    // URL we just replied to. When a guest follows up, the sidebar gets
+    // a new "Unread" badge and the bot clicks it — but Whistle's React
+    // router short-circuits because the URL is already that conversation,
+    // so the right pane doesn't re-mount and we keep scraping the SAME
+    // pre-reply chat content. The recency dedup then correctly identifies
+    // "no newer guest activity since our reply" and the bot ignores the
+    // follow-up forever. Forcing the URL back to the inbox root makes
+    // the next conversation click a real route change → fresh fetch.
+    try {
+        await this.page.goto(this.whistleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await this.page.waitForTimeout(1500);
+    } catch (e) {
+        logger.warn(`[WHISTLE RPA] Post-reply nav back to inbox root failed: ${e.message.substring(0, 120)}`);
+    }
   }
 
   /**
