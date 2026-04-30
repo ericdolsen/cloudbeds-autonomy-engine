@@ -307,12 +307,32 @@ class PaymentTerminal {
       }
       await page.waitForTimeout(1500);
 
-      // Select "Terminal" payment method
+      // Select "Terminal" payment method.
+      // The trigger is a Chakra menu button:
+      //   <button class="chakra-menu__menu-button" aria-haspopup="menu">
+      //     <label>Payment method*</label><span>Select...</span>
+      //   </button>
+      // The options are role="menuitem" buttons inside the portal that
+      // opens when the trigger is clicked:
+      //   <button role="menuitem" class="chakra-menu__menuitem">Terminal</button>
+      // The previous approach (click 'Payment method' parent span, type
+      // "Terminal", press Enter) relied on Chakra's typeahead, which is
+      // flaky — got stuck twice in a row tonight on consecutive charges.
+      // Direct role-based targeting is reliable: open the menu, click
+      // the menuitem.
       logger.info(`[STRIPE TERMINAL] Selecting 'Terminal' as payment method...`);
-      await page.locator('text="Payment method"').locator('..').click();
-      await page.keyboard.type('Terminal');
-      await page.waitForTimeout(500);
-      await page.keyboard.press('Enter');
+      try {
+        await page.getByRole('button', { name: /Payment method/i }).first().click({ timeout: 5000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Role-based 'Payment method' trigger missed; falling back to class locator. ${e.message.substring(0, 80)}`);
+        await page.locator('button.chakra-menu__menu-button:visible', { hasText: 'Payment method' }).first().click({ timeout: 5000 });
+      }
+      try {
+        await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click({ timeout: 5000 });
+      } catch (e) {
+        logger.warn(`[STRIPE TERMINAL] Role-based 'Terminal' menuitem missed; falling back to class locator. ${e.message.substring(0, 80)}`);
+        await page.locator('button.chakra-menu__menuitem:visible', { hasText: 'Terminal' }).first().click({ timeout: 5000 });
+      }
       await page.waitForTimeout(1000);
 
       // Click Process Payment.
