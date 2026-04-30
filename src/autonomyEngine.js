@@ -439,7 +439,10 @@ STANDARD WORKFLOW:
           let summary;
           if (!apiResult) {
             summary = 'null';
-          } else if (apiResult.success === false) {
+          } else if (apiResult.success === false || apiResult.error) {
+            // runTool's catch returns `{error: ...}` (no success key) — treat
+            // that as a failure so the log line doesn't misleadingly show
+            // success=true on a thrown tool error.
             summary = `success=false error="${(apiResult.error || apiResult.message || '').toString().substring(0, 120)}"`;
           } else if (Array.isArray(apiResult.data)) {
             summary = `success=true records=${apiResult.data.length}`;

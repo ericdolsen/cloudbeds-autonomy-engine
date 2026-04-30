@@ -284,6 +284,14 @@ class PaymentTerminal {
       await page.waitForTimeout(1000);
 
       // Click "ADD/REFUND PAYMENT" then "Add Payment"
+      // The Folio toolbar's ADD/REFUND PAYMENT is a Bootstrap-era button;
+      // the dropdown's "Add Payment" entry is `<a class="add-payment-btn-new">`
+      // (per DOM dump line 21017). Two unrelated bulk-action menus on
+      // other views also have an "Add Payment" link, so the legacy
+      // text='Add Payment' .first() locator could land on the wrong one
+      // when the page has the bulk dropdown open. Class-based selector
+      // disambiguates and skips the hidden Handlebars template that has
+      // the same text but no class.
       logger.info(`[STRIPE TERMINAL] Triggering 'Add Payment'...`);
       try {
         await page.locator('text=/ADD\\/REFUND PAYMENT/i').click({ timeout: 5000 });
@@ -292,9 +300,9 @@ class PaymentTerminal {
         await vision.click("the 'ADD/REFUND PAYMENT' button on the folio toolbar");
       }
       try {
-        await page.locator('text="Add Payment"').first().click({ timeout: 5000 });
+        await page.locator('a.add-payment-btn-new:visible').first().click({ timeout: 5000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] Selector for 'Add Payment' missed; falling back to vision lane.`);
+        logger.warn(`[STRIPE TERMINAL] Class-based 'Add Payment' selector missed; falling back to vision lane. ${e.message.substring(0, 80)}`);
         await vision.click("the 'Add Payment' menu item that appeared after clicking ADD/REFUND PAYMENT");
       }
       await page.waitForTimeout(1500);
@@ -307,17 +315,47 @@ class PaymentTerminal {
       await page.keyboard.press('Enter');
       await page.waitForTimeout(1000);
 
-      // Click Process Payment
+      // Click Process Payment.
+      // The button on the new Chakra-based payment side panel is
+      // `<button type="button" class="chakra-button ...">Process Payment</button>`.
+      // The text-based locator was matching legacy Bootstrap anchors
+      // (`<a class="payment-processing-btns">Process Payment`) elsewhere
+      // on the page that aren't clickable when the Chakra modal is open;
+      // .first() landed on those, .click() timed out, and the vision-lane
+      // fallback got confused (it kept clicking the Terminal dropdown
+      // again). Role-based selector targets only the actual Chakra
+      // button — Chakra Buttons render with role=button correctly.
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
       try {
-        await page.locator('text="Process Payment"').first().click({ timeout: 5000 });
+        await page.getByRole('button', { name: 'Process Payment', exact: true }).click({ timeout: 5000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] Selector for 'Process Payment' missed; falling back to vision lane.`);
-        await vision.click("the 'Process Payment' confirmation button on the side panel");
+        logger.warn(`[STRIPE TERMINAL] Role-based 'Process Payment' selector missed; falling back to Chakra class locator. ${e.message.substring(0, 80)}`);
+        try {
+          await page.locator('button.chakra-button:visible', { hasText: 'Process Payment' }).first().click({ timeout: 5000 });
+        } catch (e2) {
+          logger.warn(`[STRIPE TERMINAL] Chakra class fallback also missed; falling back to vision lane. ${e2.message.substring(0, 80)}`);
+          await vision.click("the 'Process Payment' confirmation button on the side panel");
+        }
       }
 
       await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
-      await page.locator(`text="${terminalName}"`).first().click();
+      // The reader options are Chakra radios — `<label class="chakra-radio">
+      // ... <span class="chakra-radio__label">Reader 1</span></label>`. The
+      // visible label is a span, not the clickable target; clicking the
+      // bare text was working accidentally because Playwright walks up to
+      // the clickable ancestor, but role-based is the contract Chakra
+      // actually exposes and is what we want when there are multiple
+      // tablets in play (Reader 1, Reader 2). exact:true rules out a
+      // partial match like "Reader 12" if Cloudbeds ever introduces it.
+      try {
+        await page.getByRole('radio', { name: terminalName, exact: true }).click({ timeout: 5000 });
+      } catch (e) {
+        // Fallback to the visible label span — same target Playwright
+        // would walk up from, but explicit so we don't depend on the
+        // text-locator's ambiguity.
+        logger.warn(`[STRIPE TERMINAL] Role-based '${terminalName}' radio missed; falling back to label span. ${e.message.substring(0, 80)}`);
+        await page.locator('span.chakra-radio__label:visible', { hasText: terminalName }).first().click({ timeout: 5000 });
+      }
 
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
       await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 }).catch(() => {});
@@ -339,8 +377,22 @@ class PaymentTerminal {
     } catch (e) {
       logger.error(`[STRIPE TERMINAL] Failed to process physical charge: ${e.message}`);
       // Don't close the warm page on failure — keep it alive for the
-      // next attempt. If the page itself is wedged, the next charge's
-      // navigate / Folio-tab guard will detect that and recover.
+      // next attempt. BUT: if the failure left a Chakra modal open
+      // (very common when the click chain breaks mid-Add-Payment),
+      // the next charge's Folio click gets blocked by
+      // `<div class="chakra-modal__content-container"> ... intercepts
+      // pointer events`. Best-effort cleanup so the retry has a clean
+      // page: press Escape to dismiss the modal, then park the warm
+      // page back at the dashboard URL so the next charge starts fresh.
+      try {
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(300);
+        await page.keyboard.press('Escape').catch(() => {}); // some Chakra modals nest
+        const propertyPath = this.propertyId ? `${this.propertyId}` : '';
+        await page.goto(`https://${this.uiHost}/connect/${propertyPath}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      } catch (cleanupErr) {
+        logger.warn(`[STRIPE TERMINAL] Post-failure modal cleanup failed: ${cleanupErr.message.substring(0, 120)}`);
+      }
       throw e;
     }
   }
