@@ -1,0 +1,5 @@
+Frame 0: Name: , URL: https://us2.cloudbeds.com/connect/10074733072513#/reservations/226057194467520
+Frame 1: Name: , URL: about:blank
+Frame 2: Name: launcher, URL: about:blank
+Frame 3: Name: frame_for_table, URL: about:blank
+Frame 4: Name: , URL: 
