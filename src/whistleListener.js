@@ -168,27 +168,49 @@ class WhistleListener {
     // Whistle's hashed inbox URL (#/inbox/guest-chat) lands on a channel
     // selector, NOT the conversation list. The body shows "Select a
     // conversation" plus a sidebar of channels (Guest, Housekeeping, etc.),
-    // each with its own unread-count badge. We have to click the channel
-    // row to actually load the conversation list — without that, no
-    // "Unread" pills can ever appear because the list itself never renders.
+    // each as a collapsible row. We have to click the channel row to
+    // actually load the conversation list — without that, no "Unread"
+    // pills can ever appear because the list itself never renders.
     //
-    // The unread-count badge uses a different Chakra class hash than the
-    // "New"/"Beta" feature flags (numeric content vs. word content), so we
-    // identify it by filtering chakra-badges to ones whose text is digits.
+    // Older Whistle builds rendered a numeric chakra-badge next to each
+    // collapsed category (e.g. "Guest" with a "3" pill for unread count),
+    // which we used to identify the right row. Current builds don't show
+    // the per-category count until you hover, so that selector returns
+    // nothing and the bot just sits on the empty pane until a human
+    // clicks "Guest" manually. Since this listener is hard-wired to the
+    // guest-chat tab, we now just click the "Guest" row directly.
     const emptyState = await this.page.locator('text=/Select a conversation/i').first()
         .isVisible().catch(() => false);
     if (emptyState) {
-        const channelCountBadge = this.page.locator('span.chakra-badge:visible')
-            .filter({ hasText: /^\s*\d+\s*$/ })
-            .first();
-        if (await channelCountBadge.isVisible().catch(() => false)) {
-            const channelRow = channelCountBadge.locator(
-                'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
-            );
-            if ((await channelRow.count()) > 0) {
-                logger.info('[WHISTLE RPA] Inbox is on the channel selector ("Select a conversation"); clicking the channel with unread count to load the conversation list.');
-                await channelRow.first().click();
-                await this.page.waitForTimeout(2500);
+        let clicked = false;
+        // Primary: click the "Guest" category row by exact text match.
+        // exact:true rules out "Guest chat" (the tab) so we land on the
+        // sidebar category, not the tab strip.
+        const guestRow = this.page.getByText('Guest', { exact: true }).first()
+            .locator('xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]');
+        if ((await guestRow.count().catch(() => 0)) > 0) {
+            logger.info('[WHISTLE RPA] Inbox is on the channel selector; clicking the "Guest" category to load conversations.');
+            await guestRow.first().click().catch(() => {});
+            await this.page.waitForTimeout(2500);
+            clicked = true;
+        }
+        // Fallback: legacy numeric-badge approach. Kept in case Whistle
+        // restores the per-category unread count and the "Guest" row
+        // selector fails for some build-specific reason (e.g. the row
+        // text is rendered via a CSS pseudo-element).
+        if (!clicked) {
+            const channelCountBadge = this.page.locator('span.chakra-badge:visible')
+                .filter({ hasText: /^\s*\d+\s*$/ })
+                .first();
+            if (await channelCountBadge.isVisible().catch(() => false)) {
+                const channelRow = channelCountBadge.locator(
+                    'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
+                );
+                if ((await channelRow.count()) > 0) {
+                    logger.info('[WHISTLE RPA] Inbox is on the channel selector; falling back to numeric-badge channel pick.');
+                    await channelRow.first().click();
+                    await this.page.waitForTimeout(2500);
+                }
             }
         }
     }
