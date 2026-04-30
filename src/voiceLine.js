@@ -13,9 +13,9 @@ const { logger } = require('./logger');
  * Twilio sends μ-law 8kHz audio frames; Gemini Live expects 16-bit PCM 16kHz.
  * The transcoding hooks are stubbed below — wire them up once the Twilio
  * number and credentials are provisioned. AutonomyEngine tools (getReservation,
- * postPayment, alertFrontDesk, …) are exposed to Gemini Live via the same
- * function declarations the text lane uses, so a caller can reach the same
- * actions a guest SMS or kiosk visitor can.
+ * chargePhysicalTerminal, alertFrontDesk, …) are exposed to Gemini Live via
+ * the same function declarations the text lane uses, so a caller can reach
+ * the same actions a guest SMS or kiosk visitor can.
  */
 class VoiceLine {
   constructor(autonomyEngine, router = modelRouter) {
