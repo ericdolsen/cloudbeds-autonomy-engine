@@ -368,7 +368,7 @@ class PaymentTerminal {
       // tablets in play (Reader 1, Reader 2). exact:true rules out a
       // partial match like "Reader 12" if Cloudbeds ever introduces it.
       try {
-        await page.getByRole('radio', { name: terminalName, exact: true }).click({ timeout: 5000 });
+        await page.locator('label.chakra-radio', { hasText: terminalName }).first().click({ timeout: 5000 });
       } catch (e) {
         // Fallback to the visible label span — same target Playwright
         // would walk up from, but explicit so we don't depend on the

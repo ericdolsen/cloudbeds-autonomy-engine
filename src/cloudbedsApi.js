@@ -377,7 +377,7 @@ class CloudbedsAPI {
       }
       const body = this._encodeForm({
         reservationID: reservationId,
-        reservationStatus: 'checked_in'
+        status: 'checked_in'
       });
       const response = await this._getClient().put('/putReservation', body, { headers: this._formHeaders() });
       return response.data;
