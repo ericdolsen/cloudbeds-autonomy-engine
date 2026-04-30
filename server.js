@@ -20,7 +20,22 @@ const io = new Server(server, { cors: { origin: '*' } });
 const port = process.env.PORT || 3000;
 
 // Setup static files and APIs
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    // HTML shells (kiosk / chat / employee) must never be cached: the kiosk
+    // browser is long-running and we ship UI changes mid-day. If the cache
+    // serves stale HTML, the JS in it is also stale, so new server response
+    // shapes (e.g. PR #43's multiTopLevel) get handled by old code paths
+    // and the kiosk lands on the wrong screen until someone hits Ctrl+F5.
+    // Static assets (JS bundles, images, CSS files) keep their default
+    // caching since they're versioned by filename in practice.
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 app.use(express.json({ limit: '5mb' })); // large enough for signature PNGs from kiosk
 app.use(express.urlencoded({ extended: true })); // Required to parse incoming Twilio form payloads
 
@@ -37,6 +52,9 @@ app.use((req, res, next) => {
 
 // Serve the Kiosk UI on the root directory
 app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(path.join(__dirname, 'public', 'kiosk.html'));
 });
 
