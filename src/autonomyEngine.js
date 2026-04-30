@@ -394,7 +394,16 @@ STANDARD WORKFLOW:
   }
 
   async executeTask(messagePayload) {
-    logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
+    // The full inbound text is huge for Whistle scrapes (entire chat
+    // panel innerText). Default to a short preview at INFO and gate
+    // the full dump behind AUTONOMY_DEBUG=true.
+    if (process.env.AUTONOMY_DEBUG === 'true') {
+      logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
+    } else {
+      const text = (messagePayload && messagePayload.text) || '';
+      const preview = text.length > 160 ? `${text.substring(0, 160).replace(/\s+/g, ' ').trim()}…` : text.replace(/\s+/g, ' ').trim();
+      logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'} (${text.length} chars): "${preview}"`);
+    }
 
     try {
       const chat = this._getOrCreateChat(messagePayload.sessionKey);
@@ -414,7 +423,28 @@ STANDARD WORKFLOW:
 
         const apiResult = await this.runTool(name, args);
 
-        logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
+        // Full API result goes to debug; getReservations/getTransactions
+        // can return tens of KB of JSON which buries useful log signal.
+        // At INFO we log a short summary: success flag and either an
+        // error message or the array length / record count.
+        if (process.env.AUTONOMY_DEBUG === 'true') {
+          logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
+        } else {
+          let summary;
+          if (!apiResult) {
+            summary = 'null';
+          } else if (apiResult.success === false) {
+            summary = `success=false error="${(apiResult.error || apiResult.message || '').toString().substring(0, 120)}"`;
+          } else if (Array.isArray(apiResult.data)) {
+            summary = `success=true records=${apiResult.data.length}`;
+          } else if (apiResult.data && typeof apiResult.data === 'object') {
+            const keys = Object.keys(apiResult.data);
+            summary = `success=true keys=${keys.length}${keys.length ? ` (${keys.slice(0, 3).join(',')}${keys.length > 3 ? '…' : ''})` : ''}`;
+          } else {
+            summary = `success=${apiResult.success !== false}`;
+          }
+          logger.info(`[AUTONOMY ENGINE] API Result: ${summary}`);
+        }
 
         // Send tool output back to the model
         response = await this._sendMessageWithRetry(chat, {
