@@ -31,15 +31,6 @@ class PaymentTerminal {
     // actual launch happens; the second awaits the first's promise.
     this._startPromise = null;
     this._userDataDir = path.join(__dirname, '..', '.cloudbeds_payment_session');
-    // Cache the public → internal-numeric reservation ID mapping
-    // discovered via the search-bar dance. The first charge per
-    // reservation pays the ~15s search tax; every charge after that
-    // hits this cache and skips straight to the reservation URL,
-    // shaving ~12-15s off subsequent charges and retries. Survives
-    // for the lifetime of this PaymentTerminal singleton (i.e. until
-    // process restart) — the mapping is stable per reservation in
-    // Cloudbeds, so this is a write-once-read-many cache.
-    this._internalIdByPublic = new Map();
   }
 
   /**
@@ -238,128 +229,20 @@ class PaymentTerminal {
       const propertyPath = this.propertyId ? `${this.propertyId}` : '';
       const dashboardUrl = `https://${this.uiHost}/connect/${propertyPath}#/dashboard`;
 
-      let internalId = this._internalIdByPublic.get(reservationId) || null;
       let navigatedToReservation = false;
+      const explicitUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/r${reservationId}`;
 
-      if (internalId) {
-        // Fast path: we resolved this public ID before, jump straight to
-        // the reservation detail view and skip the dashboard / search /
-        // vision-click chain entirely. ~3s instead of ~15s.
-        logger.info(`[STRIPE TERMINAL] Cached internal ID ${internalId} for ${reservationId}; skipping search.`);
-        const explicitUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${internalId}`;
+      logger.info(`[STRIPE TERMINAL] Jumping straight to URL using alphanumeric prefix: ${explicitUrl}`);
+      await page.goto(explicitUrl);
+      await page.waitForTimeout(2000);
+      
+      if (this._isLoginPage(page.url())) {
+        logger.info(`[STRIPE TERMINAL] Session expired mid-flight; re-logging in.`);
+        await this._performLogin(page);
         await page.goto(explicitUrl);
         await page.waitForTimeout(2000);
-        if (this._isLoginPage(page.url())) {
-          logger.info(`[STRIPE TERMINAL] Session expired mid-flight; re-logging in.`);
-          await this._performLogin(page);
-          await page.goto(explicitUrl);
-          await page.waitForTimeout(2000);
-        }
-        navigatedToReservation = true;
-      } else {
-        await page.goto(dashboardUrl);
-        await page.waitForTimeout(3000);
-
-        // Long-lived sessions can expire; if the navigation landed on the
-        // login screen, run auto-login and retry the goto.
-        if (this._isLoginPage(page.url())) {
-          logger.info(`[STRIPE TERMINAL] Session expired mid-flight; re-logging in.`);
-          await this._performLogin(page);
-          await page.goto(dashboardUrl);
-          await page.waitForTimeout(3000);
-        }
-
-        logger.info(`[STRIPE TERMINAL] Searching for reservation ${reservationId}...`);
-        let searchClicked = false;
-        const searchSelectors = [
-          'input[placeholder*="Search" i]',
-          'input[placeholder*="reservation" i]',
-          '[role="search"] input',
-          '[role="searchbox"]',
-          'input[type="search"]'
-        ];
-        for (const sel of searchSelectors) {
-          try {
-            const el = await page.$(sel);
-            if (el && await el.isVisible()) {
-              await el.click();
-              searchClicked = true;
-              break;
-            }
-          } catch (e) {}
-        }
-
-        if (!searchClicked) {
-          logger.warn(`[STRIPE TERMINAL] Search bar selector missed; falling back to vision lane.`);
-          await vision.click('the search bar at the top of the page. It is an input field that says "Search reservations, guests, and more"');
-        }
-
-        await page.waitForTimeout(500);
-        await page.keyboard.type(reservationId, { delay: 80 });
-        await page.waitForTimeout(3000);
-
-        logger.info(`[STRIPE TERMINAL] Clicking search result for ${reservationId}...`);
-        try {
-          await vision.click(`the exact search result or link containing the reservation ID ${reservationId} in the dropdown below the search bar. Do NOT click the search bar itself.`);
-        } catch (e) {
-          logger.warn(`[STRIPE TERMINAL] Vision click failed on search result: ${e.message}`);
-        }
-
-        await page.waitForTimeout(3000);
-
-        const currentUrl = page.url();
-        const match = currentUrl.match(/reservation[iI]d=(\d+)/);
-
-        if (match && match[1]) {
-          internalId = match[1];
-          // Persist for the rest of the process lifetime so retries and
-          // repeat-charges skip the search entirely. Also dump candidate
-          // fields from the cached reservation for diagnostic — if any
-          // field consistently equals the internal ID, a follow-up can
-          // skip the search even for first-time charges.
-          this._internalIdByPublic.set(reservationId, internalId);
-          logger.info(`[STRIPE TERMINAL] Found internal numeric reservation ID: ${internalId} (cached for future charges)`);
-          try {
-            const { reservationCache } = require('./reservationCache');
-            const cached = reservationCache.getReservationById(reservationId);
-            if (cached) {
-              const candidates = [];
-              const collectNumeric = (path, val) => {
-                if (typeof val === 'string' && /^\d{10,}$/.test(val)) candidates.push({ path, val, match: val === internalId });
-              };
-              collectNumeric('guestID', cached.guestID);
-              collectNumeric('profileID', cached.profileID);
-              if (cached.guestList) {
-                for (const [gid, g] of Object.entries(cached.guestList)) {
-                  if (!g) continue;
-                  collectNumeric(`guestList[${gid}].guestID`, g.guestID);
-                  collectNumeric(`guestList[${gid}].reservationRoomID`, g.reservationRoomID);
-                  if (Array.isArray(g.rooms)) {
-                    g.rooms.forEach((r, i) => collectNumeric(`guestList[${gid}].rooms[${i}].reservationRoomID`, r && r.reservationRoomID));
-                  }
-                  if (Array.isArray(g.unassignedRooms)) {
-                    g.unassignedRooms.forEach((r, i) => collectNumeric(`guestList[${gid}].unassignedRooms[${i}].reservationRoomID`, r && r.reservationRoomID));
-                  }
-                }
-              }
-              const matched = candidates.filter(c => c.match);
-              if (matched.length > 0) {
-                logger.info(`[STRIPE TERMINAL] Internal ID matched cached field(s): ${matched.map(c => c.path).join(', ')} — future fast-path candidate.`);
-              } else {
-                logger.info(`[STRIPE TERMINAL] Internal ID did not match any cached numeric field. Candidates checked: ${candidates.map(c => `${c.path}=${c.val}`).join(' | ')}`);
-              }
-            }
-          } catch (diagErr) {
-            // Diagnostic only — never block a charge on it.
-          }
-          const explicitUrl = `https://${this.uiHost}/connect/${propertyPath}#/reservations/${internalId}`;
-          await page.goto(explicitUrl);
-          await page.waitForTimeout(3000);
-          navigatedToReservation = true;
-        } else {
-          logger.warn(`[STRIPE TERMINAL] Could not find internal reservationId in URL: ${currentUrl}. Proceeding anyway.`);
-        }
       }
+      navigatedToReservation = true;
 
       // Make sure the SPA actually routed to the reservation DETAIL view
       // and not the reservations LIST. The detail view exposes a Folio
@@ -371,11 +254,7 @@ class PaymentTerminal {
         await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
       } catch (e) {
         logger.warn(`[STRIPE TERMINAL] Folio tab didn't appear within 15s. URL: ${page.url()}. Re-navigating in case the SPA lost the hash route.`);
-        if (navigatedToReservation && internalId) {
-            await page.goto(`https://${this.uiHost}/connect/${propertyPath}#/reservations/${internalId}`);
-        } else {
-            await page.goto(dashboardUrl); // Can't recover easily without internal ID
-        }
+        await page.goto(explicitUrl);
         await page.waitForTimeout(3000);
         await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       }
