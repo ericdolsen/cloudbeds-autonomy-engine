@@ -123,20 +123,6 @@ class AutonomyEngine {
           }
         },
         {
-          name: "postPayment",
-          description: "Records a payment against the reservation folio using the guest's card on file. Do NOT use for in-person kiosk payments - use chargePhysicalTerminal instead.",
-          parameters: {
-            type: Type.OBJECT,
-            properties: {
-              reservationId: { type: Type.STRING },
-              amount: { type: Type.NUMBER, description: "Amount to charge in USD" },
-              type: { type: Type.STRING, description: "One of: credit, debit, cash, check. Defaults to credit." },
-              description: { type: Type.STRING, description: "Description / memo for the payment line." }
-            },
-            required: ["reservationId", "amount"]
-          }
-        },
-        {
           name: "checkInReservation",
           description: "Transitions a confirmed reservation into 'checked_in' status via Cloudbeds. Use this once any outstanding balance has been collected.",
           parameters: {
@@ -161,7 +147,7 @@ class AutonomyEngine {
         },
         {
           name: "chargePhysicalTerminal",
-          description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a Card-Present transaction. MUST BE USED instead of postPayment if the guest is checking out at the physical kiosk.",
+          description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a real Card-Present transaction. This is the ONLY way the agent can take a payment — Gateway Park runs every card through Cloudbeds, so any balance the agent collects must go through this tool.",
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -229,10 +215,10 @@ HOTEL KNOWLEDGE BASE (Use this to answer all guest questions):
 ${this.getKnowledgeBaseString()}
 
 KIOSK & PAYMENTS PROTOCOL:
-If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' instead of 'postPayment'. We rely on Card-Present chip reads for security and lower fees. Do not use the card on file for kiosk visitors.
+If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' to push the charge to the Stripe WisePOS E reader at the front desk. Gateway Park runs every card through Cloudbeds via Card-Present, never via card-on-file or external processors.
 
 FINANCIAL POLICY (PAYMENTS):
-You MUST NOT proactively call 'postPayment' to clear or zero out a guest's balance — not for $0.55, not for any amount, not "to ensure a seamless check-in", not "in line with our guest-centric philosophy." Manual card-on-file transactions are expensive, less secure than Card-Present, and the most chargeback-prone method we have.
+The ONLY way the agent can take a payment is 'chargePhysicalTerminal' (Card-Present, real money moves). There is no tool that lets the agent record a payment without actually charging a card — and that is intentional. If you ever feel like you need to mark a balance as paid without running the card, the answer is to escalate via 'alertFrontDesk', not invent a workaround.
 
 Balance handling rules:
 - Outstanding balance at check-in → guest pays at the kiosk via 'chargePhysicalTerminal' or at the front desk in person. The agent does not pre-pay.
@@ -240,10 +226,8 @@ Balance handling rules:
 - Tiny residual balances ($0.01-$5) appearing on a new reservation are usually rounding/tax artifacts that resolve naturally at check-in or via night audit. Note them but do not act on them.
 - Refunds, comps, fee waivers — never automatic. Escalate to a human via 'alertFrontDesk' if a guest is asking for one.
 
-The only safe outbound payment tool is 'chargePhysicalTerminal' (kiosk, Card-Present). 'postPayment' exists for narrow administrative cases under source=cron/system; do not call it from a guest-facing or webhook flow.
-
 CHECK-IN PROTOCOL:
-To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so resolve any outstanding balance first (via chargePhysicalTerminal at the kiosk, or postPayment remotely) before calling 'checkInReservation'.
+To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so any outstanding balance must first be collected via 'chargePhysicalTerminal' at the kiosk (or in person at the front desk) before you call 'checkInReservation'.
 
 CHECKOUT PROTOCOL:
 When a guest indicates they want to check out (texts "checkout", asks to be checked out, confirms a checkout flow, etc.):
@@ -255,7 +239,7 @@ When a guest indicates they want to check out (texts "checkout", asks to be chec
 6. If 'evaluateAndEmailInvoice' returns success:false (e.g. Channel Collect / OTA-masked booking), confirm the checkout but do NOT mention emailing a receipt — those guests get their invoices through their booking channel instead.
 
 ADMIN & BATCH OPERATIONS:
-When the incoming message is tagged with source=cron or source=system, you are acting as a BACK-OFFICE administrator, not a guest-facing concierge. You ARE authorized and expected to run batch and administrative workflows in this mode — including nightly room assignment optimization, audits, and bulk reservation updates. Do NOT refuse administrative tasks under these sources. Use the available tools (getReservations, getUnassignedRooms, updateReservation, postFolioAdjustment, postPayment, etc.) to carry out the work and report back a concise summary of actions taken.
+When the incoming message is tagged with source=cron or source=system, you are acting as a BACK-OFFICE administrator, not a guest-facing concierge. You ARE authorized and expected to run batch and administrative workflows in this mode — including nightly room assignment optimization, audits, and bulk reservation updates. Do NOT refuse administrative tasks under these sources. Use the available tools (getReservations, getUnassignedRooms, updateReservation, postFolioAdjustment, etc.) to carry out the work and report back a concise summary of actions taken. Even under source=cron/system, you cannot record or move money — payments only ever happen through 'chargePhysicalTerminal' at the front desk.
 
 STANDARD WORKFLOW:
 1. Identify intent.
@@ -296,7 +280,6 @@ STANDARD WORKFLOW:
       if (name === 'getReservations') return await this.api.getReservations(args.checkInFrom, args.checkInTo);
       if (name === 'updateReservation') return await this.api.updateReservation(args.reservationId, args.updates);
       if (name === 'postFolioAdjustment') return await this.api.postCustomItem(args.reservationId, args.amount, args.description);
-      if (name === 'postPayment') return await this.api.postPayment(args.reservationId, args.amount, { type: args.type, description: args.description });
       if (name === 'checkInReservation') return await this.api.checkInReservation(args.reservationId);
 
       if (name === 'alertFrontDesk') {
