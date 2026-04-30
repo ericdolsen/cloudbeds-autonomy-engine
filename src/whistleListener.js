@@ -564,6 +564,18 @@ ${textToProcess}
     if (!aiResponseText || aiResponseText.length < 2) {
         logger.warn(`[WHISTLE RPA] Engine returned empty/unusable response; skipping fill+send. The thread is marked read; a human should follow up.`);
         await this.page.waitForTimeout(2000);
+        // Same nav-back-to-inbox-root as the post-send path (PR #51): without
+        // it, the page stays on this dead conversation forever and every
+        // subsequent poll re-clicks the same Unread badge, scrapes the same
+        // stale content, and the recency-dedup keeps skipping. Result is the
+        // bot getting wedged on one thread for hours and missing every other
+        // guest message that arrives during that window.
+        try {
+            await this.page.goto(this.whistleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await this.page.waitForTimeout(1500);
+        } catch (e) {
+            logger.warn(`[WHISTLE RPA] Post-empty nav back to inbox root failed: ${e.message.substring(0, 120)}`);
+        }
         return;
     }
 
