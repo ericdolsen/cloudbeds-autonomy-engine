@@ -249,27 +249,37 @@ class PaymentTerminal {
       // role=tab; the list only has a Folio <th> column header. Without
       // this guard, the click below would resolve to the wrong element
       // and time out for ~60s.
+      // Wait for the reservation detail view to render. The Folio tab is
+      // a Bootstrap-style anchor (<a data-toggle="tab" href="#rs-folio-tab">),
+      // NOT a WAI-ARIA role="tab" — Cloudbeds uses pre-ARIA Bootstrap tabs.
+      // role:'link' with the exact accessible name 'Folio' skips both the
+      // <th>Folio</th> on the reservations list view AND the hidden
+      // Handlebars source template ({{{lang 'reservation/ResFolio_folio'}}}
+      // ) that sits in the page waiting to be interpolated. The data-hook
+      // attribute is the most stable selector if Cloudbeds ever renames
+      // the visible string.
+      const folioLink = page.getByRole('link', { name: 'Folio', exact: true });
       logger.info(`[STRIPE TERMINAL] Waiting for reservation detail view to load...`);
       try {
-        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 });
+        await folioLink.waitFor({ state: 'visible', timeout: 15000 });
       } catch (e) {
         logger.warn(`[STRIPE TERMINAL] Folio tab didn't appear within 15s. URL: ${page.url()}. Re-navigating in case the SPA lost the hash route.`);
         await page.goto(explicitUrl);
         await page.waitForTimeout(3000);
-        await page.getByRole('tab', { name: 'Folio' }).waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+        await folioLink.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       }
 
       // Switch to Folio tab
       logger.info(`[STRIPE TERMINAL] Switching to Folio tab...`);
       try {
-        await page.getByRole('tab', { name: 'Folio' }).click({ timeout: 5000 });
+        await folioLink.click({ timeout: 5000 });
       } catch (e) {
-        // Visible-only fallback — explicitly excludes <th>Folio</th> on
-        // the reservations LIST view. Without :visible, locator('text="Folio"')
-        // matches the table header and Playwright spins for 30s waiting
-        // for it to be clickable.
-        logger.warn(`[STRIPE TERMINAL] Role-based Folio click failed; falling back to visible-only locator.`);
-        await page.locator('[role="tab"]:visible', { hasText: 'Folio' }).first().click({ timeout: 5000 });
+        // Fallback: target by data-hook="folio-tab", filtered to visible
+        // so we skip the hidden Handlebars template that shares the
+        // attribute. The data-hook is the API contract Cloudbeds uses
+        // for QA selectors and is the most stable identifier here.
+        logger.warn(`[STRIPE TERMINAL] Folio link click failed by accessible name; falling back to data-hook locator. ${e.message.substring(0, 80)}`);
+        await page.locator('a[data-hook="folio-tab"]:visible').first().click({ timeout: 5000 });
       }
       await page.waitForTimeout(1000);
 
