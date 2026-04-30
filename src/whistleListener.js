@@ -58,9 +58,9 @@ class WhistleListener {
       const { killChromesUsingDir, logChromeLandscape } = require('./chromeCleanup');
       logChromeLandscape('[WHISTLE RPA]');
       killChromesUsingDir(path.basename(userDataDir));
-      try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
-      try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
-      try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
+      try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove SingletonLock: ${e.message}`); }
+      try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove SingletonCookie: ${e.message}`); }
+      try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove lockfile: ${e.message}`); }
 
       // Retry the launch a few times — Chrome occasionally exits with
       // code 0 on the first attempt ("Opening in existing browser
@@ -103,9 +103,9 @@ class WhistleListener {
       if (!this.context) {
         logger.warn(`[WHISTLE RPA] All headed launches failed; falling back to true headless.`);
         killChromesUsingDir(path.basename(userDataDir));
-        try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
-        try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
-        try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) {}
+        try { fs.rmSync(path.join(userDataDir, 'SingletonLock'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove SingletonLock: ${e.message}`); }
+        try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove SingletonCookie: ${e.message}`); }
+        try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove lockfile: ${e.message}`); }
         try {
           this.context = await chromium.launchPersistentContext(userDataDir, { ...launchOpts, headless: true });
           logger.info(`[WHISTLE RPA] Headless fallback succeeded.`);

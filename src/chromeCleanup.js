@@ -19,7 +19,7 @@ function listAllChromes() {
         // Each row: PID|first 240 chars of CommandLine|
         "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)|\" }"
       ],
-      { encoding: 'utf8', timeout: 10000 }
+      { encoding: 'utf8', timeout: 30000 }
     );
     return out
       .split('\n')
@@ -31,6 +31,7 @@ function listAllChromes() {
         return { pid, cmdline };
       });
   } catch (e) {
+    logger.error(`[CHROME CLEANUP] listAllChromes failed: ${e.message}`);
     return [];
   }
 }

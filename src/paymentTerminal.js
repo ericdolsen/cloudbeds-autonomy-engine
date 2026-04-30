@@ -61,9 +61,9 @@ class PaymentTerminal {
     const { killChromesUsingDir, logChromeLandscape } = require('./chromeCleanup');
     logChromeLandscape('[STRIPE TERMINAL]');
     killChromesUsingDir(path.basename(this._userDataDir));
-    try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
-    try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
-    try { fs.rmSync(path.join(this._userDataDir, 'lockfile'), { force: true }); } catch (e) {}
+    try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) { logger.warn(`[STRIPE TERMINAL] Could not remove SingletonLock: ${e.message}`); }
+    try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) { logger.warn(`[STRIPE TERMINAL] Could not remove SingletonCookie: ${e.message}`); }
+    try { fs.rmSync(path.join(this._userDataDir, 'lockfile'), { force: true }); } catch (e) { logger.warn(`[STRIPE TERMINAL] Could not remove lockfile: ${e.message}`); }
 
     try {
       const launchOpts = {
@@ -105,8 +105,8 @@ class PaymentTerminal {
       if (!this.context) {
         logger.warn(`[STRIPE TERMINAL] All headed launches failed; falling back to true headless.`);
         killChromesUsingDir(path.basename(this._userDataDir));
-        try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) {}
-        try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) {}
+        try { fs.rmSync(path.join(this._userDataDir, 'SingletonLock'), { force: true }); } catch (e) { logger.warn(`[STRIPE TERMINAL] Could not remove SingletonLock: ${e.message}`); }
+        try { fs.rmSync(path.join(this._userDataDir, 'SingletonCookie'), { force: true }); } catch (e) { logger.warn(`[STRIPE TERMINAL] Could not remove SingletonCookie: ${e.message}`); }
         try {
           this.context = await chromium.launchPersistentContext(this._userDataDir, { ...launchOpts, headless: true });
           logger.info(`[STRIPE TERMINAL] Headless fallback succeeded.`);
