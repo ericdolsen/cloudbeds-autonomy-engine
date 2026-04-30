@@ -1,3 +1,11 @@
+// Must come before ANY other require: a few of the modules below
+// (notably modelRouter.js, which instantiates a singleton at module
+// load time) read process.env.TEXT_MODEL / GEMINI_API_KEY / etc.
+// during their own initialization. If dotenv runs after those requires
+// the env vars are still undefined and the singletons lock in
+// hard-coded defaults — silently ignoring whatever's in .env.
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -11,8 +19,6 @@ const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
 const { MessagingClient } = require('./src/messaging');
 const { WhistleListener } = require('./src/whistleListener');
 const { reservationCache } = require('./src/reservationCache');
-
-require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
