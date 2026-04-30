@@ -110,6 +110,19 @@ class AutonomyEngine {
           }
         },
         {
+          name: "assignRoom",
+          description: "Assigns a physical room to a reservation using the underlying Cloudbeds room ID. You MUST provide the complex cloudbeds roomID (e.g. '1234-5') and roomTypeID, which you can find via the getUnassignedRooms tool.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING },
+              roomId: { type: Type.STRING, description: "The complex Cloudbeds room ID, NOT the simple room name." },
+              roomTypeId: { type: Type.STRING }
+            },
+            required: ["reservationId", "roomId", "roomTypeId"]
+          }
+        },
+        {
           name: "postFolioAdjustment",
           description: "Adds a line-item charge to the guest's folio (e.g., room upgrade fee, parking, pet fee).",
           parameters: {
@@ -279,6 +292,7 @@ STANDARD WORKFLOW:
       if (name === 'getUnassignedRooms') return await this.api.getUnassignedRooms(args.startDate, args.endDate);
       if (name === 'getReservations') return await this.api.getReservations(args.checkInFrom, args.checkInTo);
       if (name === 'updateReservation') return await this.api.updateReservation(args.reservationId, args.updates);
+      if (name === 'assignRoom') return await this.api.assignRoom(args.reservationId, args.roomId, args.roomTypeId);
       if (name === 'postFolioAdjustment') return await this.api.postCustomItem(args.reservationId, args.amount, args.description);
       if (name === 'checkInReservation') return await this.api.checkInReservation(args.reservationId);
 

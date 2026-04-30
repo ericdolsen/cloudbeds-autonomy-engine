@@ -284,7 +284,9 @@ class CloudbedsAPI {
 
       // 4. Filter to unassigned rooms
       const unassigned = allRooms.filter(room => !assignedRoomIDs.has(room.roomID)).map(r => ({
-        roomId: r.roomName, // map to expected format by LLM
+        roomName: r.roomName, // human-readable name, e.g. "204"
+        roomId: r.roomID,     // actual cloudbeds ID needed for assignment, e.g. "12676007973093-5"
+        roomTypeID: r.roomTypeID,
         roomType: r.roomTypeName,
         doorlockID: r.doorlockID || ''
       }));
@@ -292,6 +294,42 @@ class CloudbedsAPI {
       return { success: true, data: unassigned };
     } catch (error) {
       logger.error(`getUnassignedRooms failed: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * POST /postRoomAssign — explicitly assigns a room to a reservation.
+   */
+  async assignRoom(reservationId, newRoomID, roomTypeID) {
+    logger.info(`[API CALL] POST /postRoomAssign [${reservationId}] | newRoomID: ${newRoomID} | roomTypeID: ${roomTypeID}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: "Room assigned." });
+    }
+    try {
+      let oldRoomID = undefined;
+      const resData = await this.getReservationById(reservationId);
+      const guestList = resData && resData.data ? resData.data.guestList : (resData ? resData.guestList : null);
+      if (guestList) {
+        Object.values(guestList).forEach(g => {
+           if (g.rooms && g.rooms.length > 0 && g.rooms[0].roomID) {
+               oldRoomID = g.rooms[0].roomID;
+           }
+        });
+      }
+
+      const payload = { reservationID: reservationId, newRoomID };
+      if (oldRoomID) {
+         payload.oldRoomID = oldRoomID;
+      } else if (roomTypeID) {
+         payload.roomTypeID = roomTypeID;
+      }
+
+      const body = this._encodeForm(payload);
+      const response = await this._getClient().post('/postRoomAssign', body, { headers: this._formHeaders() });
+      return response.data;
+    } catch (error) {
+      logger.error(`assignRoom failed: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
