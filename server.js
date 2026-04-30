@@ -145,6 +145,34 @@ app.get('/api/employee/status', checkLocalNetwork, (req, res) => {
     });
   });
 
+app.get('/api/employee/knowledge', checkLocalNetwork, (req, res) => {
+    try {
+        const data = fs.readFileSync(path.join(__dirname, 'data', 'knowledge_base.json'), 'utf8');
+        res.json({ success: true, data: JSON.parse(data) });
+    } catch (e) {
+        if (e.code === 'ENOENT') {
+            res.json({ success: true, data: [] });
+        } else {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    }
+});
+
+app.post('/api/employee/knowledge', checkLocalNetwork, express.json(), (req, res) => {
+    try {
+        if (!Array.isArray(req.body)) throw new Error('Expected JSON array');
+        fs.writeFileSync(path.join(__dirname, 'data', 'knowledge_base.json'), JSON.stringify(req.body, null, 2));
+        logger.info('[ADMIN] Knowledge Base updated via Employee Hub');
+        
+        // Let the engine know the knowledge base has changed if we want it to hot-reload,
+        // though it reads it dynamically in getSystemInstruction anyway.
+        
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.post('/api/employee/reports/night-audit', checkLocalNetwork, async (req, res) => {
   if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
   try {

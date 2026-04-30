@@ -56,21 +56,6 @@ class AutonomyEngine {
     return null;
   }
 
-  getHotelPolicies() {
-    return {
-      hotelName: "Independent Hotel",
-      frontDeskNumber: "Dial 0 or 555-0199",
-      standardCheckin: "3:00 PM",
-      standardCheckout: "11:00 AM",
-      petPolicy: "Pet-friendly. $30 non-refundable fee per stay. Pets must not be left unattended, must be leashed in public. No pets in breakfast room or pool (unless certified service animal). Owners must clean up after pets to avoid extra fees.",
-      smokingPolicy: "100% smoke-free (including vapes/marijuana). $250 cleaning fee for violations charged to card on file. Possible eviction.",
-      paymentPolicy: "Valid CC matching government ID required. Card authorized for full estimated amount at check-in. Release takes 3-7 business days.",
-      damagesPolicy: "Guests financially responsible for damages or excessive cleaning (e.g. biological waste, deep stains).",
-      liabilityPolicy: "Hotel not liable for lost/stolen items. Lost & found held for 60 days. Guest pays shipping for returns.",
-      cancellationPolicy: "Customer-centric and highly flexible. We value long-term loyalty over short-term fees. Agents are authorized to waive cancellation fees or offer future stay credits to ensure the guest leaves happy and feeling understood."
-    };
-  }
-
   getTools() {
     return [{
       functionDeclarations: [
@@ -210,12 +195,25 @@ class AutonomyEngine {
           }
         }
       ]
-    }];
+    }, { googleSearch: {} }];
+  }
+
+  getKnowledgeBaseString() {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const data = fs.readFileSync(path.join(__dirname, '..', 'data', 'knowledge_base.json'), 'utf8');
+      const kb = JSON.parse(data);
+      if (!Array.isArray(kb)) return 'No custom knowledge base found.';
+      
+      return kb.map(item => `Topic: ${item.topic}\nPolicy/Answer: ${item.info}`).join('\n\n');
+    } catch (e) {
+      return 'Knowledge base not initialized.';
+    }
   }
 
   getSystemInstruction() {
-    const policies = this.getHotelPolicies();
-    return `You are the Autonomy Engine, an advanced AI concierge for ${policies.hotelName}.
+    return `You are the Autonomy Engine, an advanced AI concierge for Gateway Park Hotel.
 
 EMPATHY & TONE:
 Your primary goal is to ensure interactions feel genuinely human. Speak with high empathy, warmth, and understanding. Avoid robotic or highly rigid corporate language. Our philosophy is that the long-term value of a loyal customer outweighs nickle-and-diming them. Erring on the side of making the customer happy is your prime directive. Use a very conversational tone.
@@ -224,11 +222,11 @@ CRITICAL EMERGENCY PROTOCOL:
 If the guest mentions a maintenance issue, flood, physical danger, or emergency:
 1. You MUST immediately call the 'alertFrontDesk' tool to notify staff.
 2. You MUST reply to the guest with this EXACT phrasing (adapted slightly to the context if needed): 
-"Thank you for alerting us to this. We have immediately notified maintenance and a member of our team will be there to assist you as soon as possible. If this is an immediate, critical emergency, please contact the front desk directly by dialing ${policies.frontDeskNumber}."
+"Thank you for alerting us to this. We have immediately notified maintenance and a member of our team will be there to assist you as soon as possible. If this is an immediate, critical emergency, please contact the front desk directly."
 Do not wait to solve the issue yourself. Do not provide a standardized response.
 
-OPERATIONAL POLICIES to abide by implicitly:
-${JSON.stringify(policies, null, 2)}
+HOTEL KNOWLEDGE BASE (Use this to answer all guest questions):
+${this.getKnowledgeBaseString()}
 
 KIOSK & PAYMENTS PROTOCOL:
 If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' instead of 'postPayment'. We rely on Card-Present chip reads for security and lower fees. Do not use the card on file for kiosk visitors.

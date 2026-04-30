@@ -1,0 +1,34 @@
+[
+  {
+    "topic": "Front Desk",
+    "info": "Dial 0 or 555-0199"
+  },
+  {
+    "topic": "Standard Check-in/Out",
+    "info": "Check-in is 3:00 PM, Check-out is 11:00 AM"
+  },
+  {
+    "topic": "Pet Policy",
+    "info": "Pet-friendly.  non-refundable fee per stay. Pets must not be left unattended, must be leashed in public. No pets in breakfast room or pool. Owners must clean up after pets."
+  },
+  {
+    "topic": "Smoking Policy",
+    "info": "100% smoke-free (including vapes/marijuana).  cleaning fee for violations charged to card on file. Possible eviction."
+  },
+  {
+    "topic": "Payment Policy",
+    "info": "Valid CC matching government ID required. Card authorized for full estimated amount at check-in. Release takes 3-7 business days."
+  },
+  {
+    "topic": "Damages Policy",
+    "info": "Guests financially responsible for damages or excessive cleaning."
+  },
+  {
+    "topic": "Liability Policy",
+    "info": "Hotel not liable for lost/stolen items. Lost & found held for 60 days. Guest pays shipping for returns."
+  },
+  {
+    "topic": "Cancellation Policy",
+    "info": "Customer-centric and highly flexible. We value long-term loyalty over short-term fees. Agents are authorized to waive cancellation fees or offer future stay credits to ensure the guest leaves happy and feeling understood."
+  }
+]

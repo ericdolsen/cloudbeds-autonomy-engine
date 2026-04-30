@@ -177,6 +177,10 @@
                 <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                 Reporting Center
             </div>
+            <div class="nav-item" onclick="switchTab('knowledge')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+                Agent Knowledge Base
+            </div>
         </div>
 
         <div class="server-status">
@@ -244,6 +248,27 @@
                     <button class="btn" id="btnTax" onclick="generateSalesTax()">
                         Build Filing Report
                     </button>
+                </div>
+        </div>
+
+        <!-- KNOWLEDGE BASE TAB -->
+        <div id="view-knowledge" class="view-section">
+            <div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+                <div>
+                    <h2>AI Agent Training</h2>
+                    <p>Teach the Autonomy Engine how to answer guest questions.</p>
+                </div>
+                <button class="btn" onclick="addKnowledgeRow()">
+                    + Add New Rule
+                </button>
+            </div>
+
+            <div class="report-card" style="margin-bottom: 25px;">
+                <div id="knowledgeList" style="display: flex; flex-direction: column; gap: 15px;">
+                    <!-- Rows populated by JS -->
+                </div>
+                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                    <button class="btn" style="background: var(--success);" onclick="saveKnowledgeBase()">Save Changes to AI</button>
                 </div>
             </div>
         </div>
@@ -396,6 +421,72 @@
                 btn.disabled = false;
             }
         }
+
+        // --- KNOWLEDGE BASE LOGIC ---
+        let kbData = [];
+
+        async function loadKnowledgeBase() {
+            try {
+                const res = await fetch('/api/employee/knowledge');
+                const result = await res.json();
+                if (result.success) {
+                    kbData = result.data || [];
+                    renderKnowledgeBase();
+                }
+            } catch (e) {
+                showToast("❌ Failed to load Knowledge Base");
+            }
+        }
+
+        function renderKnowledgeBase() {
+            const list = document.getElementById('knowledgeList');
+            list.innerHTML = kbData.map((item, idx) => `
+                <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--glass-border);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                        <input type="text" value="${item.topic.replace(/"/g, '&quot;')}" onchange="updateKb(${idx}, 'topic', this.value)" placeholder="Topic (e.g. WiFi Password)" style="width: 80%; background: transparent; border: none; border-bottom: 1px solid var(--glass-border); color: var(--accent); font-size: 1.1rem; font-family: 'Outfit'; font-weight: 500; outline: none;">
+                        <button onclick="deleteKb(${idx})" style="background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 1.2rem;">&times;</button>
+                    </div>
+                    <textarea onchange="updateKb(${idx}, 'info', this.value)" placeholder="Enter the exact answer or policy here..." style="width: 100%; height: 60px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: white; padding: 10px; font-family: 'Outfit'; resize: vertical;">${item.info}</textarea>
+                </div>
+            `).join('');
+            if (kbData.length === 0) list.innerHTML = '<p style="color: var(--text-muted);">No rules found. Add one above!</p>';
+        }
+
+        function addKnowledgeRow() {
+            kbData.unshift({ topic: 'New Topic', info: '' });
+            renderKnowledgeBase();
+        }
+
+        function updateKb(idx, field, val) {
+            kbData[idx][field] = val;
+        }
+
+        function deleteKb(idx) {
+            kbData.splice(idx, 1);
+            renderKnowledgeBase();
+        }
+
+        async function saveKnowledgeBase() {
+            try {
+                const res = await fetch('/api/employee/knowledge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(kbData)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("✅ Knowledge Base saved to AI Engine!");
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (e) {
+                showToast(`❌ Failed to save: ${e.message}`);
+            }
+        }
+
+        // Load KB on startup
+        loadKnowledgeBase();
+
     </script>
 </body>
 </html>
