@@ -339,7 +339,23 @@ class PaymentTerminal {
       }
 
       await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
-      await page.locator(`text="${terminalName}"`).first().click();
+      // The reader options are Chakra radios — `<label class="chakra-radio">
+      // ... <span class="chakra-radio__label">Reader 1</span></label>`. The
+      // visible label is a span, not the clickable target; clicking the
+      // bare text was working accidentally because Playwright walks up to
+      // the clickable ancestor, but role-based is the contract Chakra
+      // actually exposes and is what we want when there are multiple
+      // tablets in play (Reader 1, Reader 2). exact:true rules out a
+      // partial match like "Reader 12" if Cloudbeds ever introduces it.
+      try {
+        await page.getByRole('radio', { name: terminalName, exact: true }).click({ timeout: 5000 });
+      } catch (e) {
+        // Fallback to the visible label span — same target Playwright
+        // would walk up from, but explicit so we don't depend on the
+        // text-locator's ambiguity.
+        logger.warn(`[STRIPE TERMINAL] Role-based '${terminalName}' radio missed; falling back to label span. ${e.message.substring(0, 80)}`);
+        await page.locator('span.chakra-radio__label:visible', { hasText: terminalName }).first().click({ timeout: 5000 });
+      }
 
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
       await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 }).catch(() => {});

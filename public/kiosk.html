@@ -347,8 +347,21 @@
 
     <script>
         // --- CONFIGURATION ---
-        // Change this for each individual tablet deployed so the server knows which reader to trigger
-        const TERMINAL_NAME = "Reader 1";
+        // Each tablet is paired 1:1 with a Stripe WisePOS E reader. Pull
+        // which Reader THIS tablet should drive from the URL so we don't
+        // have to maintain per-tablet edits to this file. Two accepted
+        // forms:
+        //   ?terminal=Reader%202   → "Reader 2" (full name)
+        //   ?terminal=2            → "Reader 2" (number-only shorthand)
+        // Defaults to "Reader 1" when the param is absent so existing
+        // single-tablet bookmarks keep working unchanged.
+        const TERMINAL_NAME = (() => {
+            const raw = new URLSearchParams(window.location.search).get('terminal');
+            if (!raw) return 'Reader 1';
+            const trimmed = raw.trim();
+            if (/^\d+$/.test(trimmed)) return `Reader ${trimmed}`;
+            return trimmed;
+        })();
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
         let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
