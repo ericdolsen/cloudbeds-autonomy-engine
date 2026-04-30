@@ -34,7 +34,16 @@ class CloudbedsAgent {
       return;
     }
     
-    logger.info(`Received payload: ${JSON.stringify(payload)}`);
+    // Full-payload dump goes to debug only — at INFO it floods the log
+    // (Whistle scrapes are 600-3000 chars and get logged AGAIN by
+    // executeTask). Useful when AUTONOMY_DEBUG=true and you're chasing
+    // a "what did the engine actually see" question.
+    if (process.env.AUTONOMY_DEBUG === 'true') {
+      logger.info(`Received payload: ${JSON.stringify(payload)}`);
+    } else {
+      const textLen = (payload && payload.text) ? payload.text.length : 0;
+      logger.info(`Received payload from ${(payload && payload.source) || 'unknown'} (${textLen} chars)`);
+    }
     // Route to Autonomy Engine to decide what to do
     const responseText = await this.engine.executeTask(payload);
     

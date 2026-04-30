@@ -231,6 +231,17 @@ ${this.getKnowledgeBaseString()}
 KIOSK & PAYMENTS PROTOCOL:
 If processing a kiosk checkout and a balance is owed, you MUST use 'chargePhysicalTerminal' instead of 'postPayment'. We rely on Card-Present chip reads for security and lower fees. Do not use the card on file for kiosk visitors.
 
+FINANCIAL POLICY (PAYMENTS):
+You MUST NOT proactively call 'postPayment' to clear or zero out a guest's balance — not for $0.55, not for any amount, not "to ensure a seamless check-in", not "in line with our guest-centric philosophy." Manual card-on-file transactions are expensive, less secure than Card-Present, and the most chargeback-prone method we have.
+
+Balance handling rules:
+- Outstanding balance at check-in → guest pays at the kiosk via 'chargePhysicalTerminal' or at the front desk in person. The agent does not pre-pay.
+- Outstanding balance at checkout → if at the kiosk, use 'chargePhysicalTerminal'; otherwise direct the guest to the front desk and STOP.
+- Tiny residual balances ($0.01-$5) appearing on a new reservation are usually rounding/tax artifacts that resolve naturally at check-in or via night audit. Note them but do not act on them.
+- Refunds, comps, fee waivers — never automatic. Escalate to a human via 'alertFrontDesk' if a guest is asking for one.
+
+The only safe outbound payment tool is 'chargePhysicalTerminal' (kiosk, Card-Present). 'postPayment' exists for narrow administrative cases under source=cron/system; do not call it from a guest-facing or webhook flow.
+
 CHECK-IN PROTOCOL:
 To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so resolve any outstanding balance first (via chargePhysicalTerminal at the kiosk, or postPayment remotely) before calling 'checkInReservation'.
 
@@ -392,7 +403,16 @@ STANDARD WORKFLOW:
   }
 
   async executeTask(messagePayload) {
-    logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
+    // The full inbound text is huge for Whistle scrapes (entire chat
+    // panel innerText). Default to a short preview at INFO and gate
+    // the full dump behind AUTONOMY_DEBUG=true.
+    if (process.env.AUTONOMY_DEBUG === 'true') {
+      logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'}: "${messagePayload.text}"`);
+    } else {
+      const text = (messagePayload && messagePayload.text) || '';
+      const preview = text.length > 160 ? `${text.substring(0, 160).replace(/\s+/g, ' ').trim()}…` : text.replace(/\s+/g, ' ').trim();
+      logger.info(`[AUTONOMY ENGINE] Processing new message from ${messagePayload.source || 'user'} (${text.length} chars): "${preview}"`);
+    }
 
     try {
       const chat = this._getOrCreateChat(messagePayload.sessionKey);
@@ -412,7 +432,28 @@ STANDARD WORKFLOW:
 
         const apiResult = await this.runTool(name, args);
 
-        logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
+        // Full API result goes to debug; getReservations/getTransactions
+        // can return tens of KB of JSON which buries useful log signal.
+        // At INFO we log a short summary: success flag and either an
+        // error message or the array length / record count.
+        if (process.env.AUTONOMY_DEBUG === 'true') {
+          logger.info(`[AUTONOMY ENGINE] API Result: ${JSON.stringify(apiResult)}`);
+        } else {
+          let summary;
+          if (!apiResult) {
+            summary = 'null';
+          } else if (apiResult.success === false) {
+            summary = `success=false error="${(apiResult.error || apiResult.message || '').toString().substring(0, 120)}"`;
+          } else if (Array.isArray(apiResult.data)) {
+            summary = `success=true records=${apiResult.data.length}`;
+          } else if (apiResult.data && typeof apiResult.data === 'object') {
+            const keys = Object.keys(apiResult.data);
+            summary = `success=true keys=${keys.length}${keys.length ? ` (${keys.slice(0, 3).join(',')}${keys.length > 3 ? '…' : ''})` : ''}`;
+          } else {
+            summary = `success=${apiResult.success !== false}`;
+          }
+          logger.info(`[AUTONOMY ENGINE] API Result: ${summary}`);
+        }
 
         // Send tool output back to the model
         response = await this._sendMessageWithRetry(chat, {

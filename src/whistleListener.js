@@ -22,6 +22,14 @@ class WhistleListener {
     // ms of the last successful send; skip the cycle if the parsed latest
     // chat-content timestamp is older than that.
     this._lastReplyAtByUrl = new Map();
+    // Per-URL flag: have we already logged the "already replied; skipping"
+    // notice for the most-recent reply on this conversation? If yes,
+    // subsequent skips on the same reply go to debug only — without this
+    // we'd flood the log with one identical line every ~13s as long as
+    // the same stuck thread is being re-detected. Reset to false in
+    // _lastReplyAtByUrl.set(...) so the FIRST skip after each new reply
+    // is still visible at INFO.
+    this._skipLoggedForReplyAt = new Map();
     // Circuit breaker: once true, the listener stops clicking unread rows.
     // Clicking marks the conversation as read in Whistle, so if we can't
     // actually compose+send a reply we silently consume the unread state
@@ -172,16 +180,29 @@ class WhistleListener {
     // actually load the conversation list — without that, no "Unread"
     // pills can ever appear because the list itself never renders.
     //
+    // BUT: "Select a conversation" stays visible even AFTER Guest is
+    // expanded (it's the no-conversation-picked placeholder for both
+    // the channel-selector view and the conversation-list-but-nothing-
+    // selected view). Distinguishing requires checking whether the OTHER
+    // category headers ("Housekeeping" etc.) are still visible in the
+    // sidebar — they only appear in the channel-selector state. Without
+    // that check, every poll cycle re-clicks Guest, spams the log, and
+    // wastes ~3s per cycle.
+    //
     // Older Whistle builds rendered a numeric chakra-badge next to each
     // collapsed category (e.g. "Guest" with a "3" pill for unread count),
     // which we used to identify the right row. Current builds don't show
     // the per-category count until you hover, so that selector returns
     // nothing and the bot just sits on the empty pane until a human
     // clicks "Guest" manually. Since this listener is hard-wired to the
-    // guest-chat tab, we now just click the "Guest" row directly.
+    // guest-chat tab, we now just click the "Guest" row directly when
+    // the channel-selector state is actually showing.
+    const debugRpa = process.env.WHISTLE_RPA_DEBUG === 'true';
     const emptyState = await this.page.locator('text=/Select a conversation/i').first()
         .isVisible().catch(() => false);
-    if (emptyState) {
+    const onChannelSelector = emptyState && await this.page.getByText('Housekeeping', { exact: true }).first()
+        .isVisible().catch(() => false);
+    if (onChannelSelector) {
         let clicked = false;
         // Primary: click the "Guest" category row by exact text match.
         // exact:true rules out "Guest chat" (the tab) so we land on the
@@ -189,7 +210,9 @@ class WhistleListener {
         const guestRow = this.page.getByText('Guest', { exact: true }).first()
             .locator('xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]');
         if ((await guestRow.count().catch(() => 0)) > 0) {
-            logger.info('[WHISTLE RPA] Inbox is on the channel selector; clicking the "Guest" category to load conversations.');
+            if (debugRpa) {
+                logger.info('[WHISTLE RPA] Inbox is on the channel selector; clicking the "Guest" category to load conversations.');
+            }
             await guestRow.first().click().catch(() => {});
             await this.page.waitForTimeout(2500);
             clicked = true;
@@ -207,7 +230,9 @@ class WhistleListener {
                     'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
                 );
                 if ((await channelRow.count()) > 0) {
-                    logger.info('[WHISTLE RPA] Inbox is on the channel selector; falling back to numeric-badge channel pick.');
+                    if (debugRpa) {
+                        logger.info('[WHISTLE RPA] Inbox is on the channel selector; falling back to numeric-badge channel pick.');
+                    }
                     await channelRow.first().click();
                     await this.page.waitForTimeout(2500);
                 }
@@ -223,7 +248,6 @@ class WhistleListener {
     // accessible text is exactly "Unread", regardless of class hash or nesting.
     let targetContext = null;
     let unreadIndicator = null;
-    const debugRpa = process.env.WHISTLE_RPA_DEBUG === 'true';
 
     for (const frame of this.page.frames()) {
         const candidates = frame.getByText('Unread', { exact: true });
@@ -345,7 +369,9 @@ class WhistleListener {
         return;
     }
 
-    logger.info(`[WHISTLE RPA] Unread message detected! Extracting...`);
+    if (debugRpa) {
+        logger.info(`[WHISTLE RPA] Unread message detected! Extracting...`);
+    }
 
     // The badge is a small span inside the conversation row. Clicking the badge
     // itself doesn't always trigger the row's onClick — walk up to the nearest
@@ -504,7 +530,18 @@ class WhistleListener {
     const lastReplyAt = this._lastReplyAtByUrl.get(convUrl);
     if (lastReplyAt && latestActivityAt && latestActivityAt < lastReplyAt) {
         const ageSec = Math.round((Date.now() - lastReplyAt) / 1000);
-        logger.info(`[WHISTLE RPA] Already replied to this conversation ${ageSec}s ago and no newer guest activity since; skipping to avoid duplicate replies.`);
+        // Only log this at INFO once per reply — subsequent re-detects
+        // of the same already-handled conversation go to debug. Without
+        // this the log fills with ~80 identical lines for any thread
+        // that lingers between the bot's reply and Whistle's read-state
+        // catching up.
+        const alreadyLogged = this._skipLoggedForReplyAt.get(convUrl) === lastReplyAt;
+        if (!alreadyLogged) {
+            logger.info(`[WHISTLE RPA] Already replied to this conversation ${ageSec}s ago and no newer guest activity since; skipping to avoid duplicate replies. (Further skips on this reply suppressed.)`);
+            this._skipLoggedForReplyAt.set(convUrl, lastReplyAt);
+        } else if (debugRpa) {
+            logger.info(`[WHISTLE RPA] Already replied ${ageSec}s ago; still skipping.`);
+        }
         await this.page.waitForTimeout(2000);
         return;
     }
