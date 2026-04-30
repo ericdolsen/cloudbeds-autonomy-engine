@@ -738,12 +738,29 @@ app.post('/api/kiosk/print_receipt', async (req, res) => {
     if (!resData || !resData.data) {
       return res.status(404).json({ success: false, message: "Could not fetch reservation details." });
     }
-    
+
     const r = resData.data;
-    
-    // 2. Generate PDF
+
+    // 2. Pull payment transactions so the printed receipt can itemize each
+    //    line (card brand + last 4, payment date) instead of falling back to
+    //    the "No payments recorded." block. Same pattern the email path
+    //    uses in autonomyEngine._evaluateAndEmailInvoice.
+    let transactions = [];
+    try {
+      const start = r.startDate || new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
+      const end = new Date().toISOString().split('T')[0];
+      const earliest = new Date(new Date(start).getTime() - 60 * 86400000).toISOString().split('T')[0];
+      const txRes = await agent.engine.api.getTransactions(earliest, end);
+      if (txRes && txRes.success && Array.isArray(txRes.data)) {
+        transactions = txRes.data.filter(t => t && (t.sourceId === reservationId || t.reservationID === reservationId));
+      }
+    } catch (txErr) {
+      logger.warn(`[KIOSK] Could not fetch transactions for printed receipt: ${txErr.message}`);
+    }
+
+    // 3. Generate PDF
     const { generateFolioPdf } = require('./src/printHandler');
-    const pdfBuffer = await generateFolioPdf(reservationId, r);
+    const pdfBuffer = await generateFolioPdf(reservationId, r, transactions);
 
     // 4. Print it physically
     const printResult = await printPdfBuffer(pdfBuffer, reservationId);

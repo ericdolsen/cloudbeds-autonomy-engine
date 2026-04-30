@@ -325,7 +325,11 @@ STANDARD WORKFLOW:
 
       throw new Error(`Unknown tool call: ${name}`);
     } catch (e) {
-      return { error: e.message };
+      // Match the shape of every successful return in this method:
+      // { success: false, error: ... } so downstream consumers (the
+      // model's tool response handler, voice lane, the API-result
+      // log summary) all see the same envelope on failure.
+      return { success: false, error: e.message };
     }
   }
 
