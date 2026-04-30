@@ -60,23 +60,41 @@ function logChromeLandscape(prefix) {
 
 /**
  * Kill any chrome.exe processes whose command line references the given
- * user-data-dir substring. Targeted: only kills processes for the dir
- * we're about to launch into; the operator's regular Chrome and the
- * sibling component's profile (different dir) are untouched.
+ * user-data-dir basename. Match anchors on `--user-data-dir=<basename>` so
+ * we only target processes whose data-dir is exactly this one — no false
+ * positives if a future profile name is a substring of another (e.g.
+ * `.cloudbeds_session` vs hypothetical `.cloudbeds_session_old`).
  *
  * Returns the count of processes killed (best-effort — PowerShell
  * isn't always reliable about reporting Stop-Process errors).
  */
-function killChromesUsingDir(dirSubstring) {
-  if (!dirSubstring) return 0;
+function killChromesUsingDir(dirBasename) {
+  if (!dirBasename) return 0;
   if (process.platform !== 'win32') return 0;
   let killed = 0;
   try {
     const procs = listAllChromes();
-    const targets = procs.filter(p => p.cmdline.includes(dirSubstring));
+    // Anchor on the launch flag so we don't accidentally cross-match a
+    // dir whose name happens to be a substring of another. Cmd lines
+    // appear with the path quoted on Windows, hence the bracket
+    // alternative for the character right before the basename.
+    const needle = `--user-data-dir=`;
+    const targets = procs.filter(p => {
+      const idx = p.cmdline.indexOf(needle);
+      if (idx === -1) return false;
+      // Slice the value of --user-data-dir up to the next quote or
+      // whitespace, then check basename equality. This is more robust
+      // than a substring sniff against the whole cmdline.
+      const tail = p.cmdline.slice(idx + needle.length);
+      const match = tail.match(/^"([^"]+)"|^(\S+)/);
+      const value = match ? (match[1] || match[2] || '') : '';
+      if (!value) return false;
+      const base = value.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+      return base === dirBasename;
+    });
     if (targets.length === 0) return 0;
 
-    logger.info(`[CHROME CLEANUP] Killing ${targets.length} stale chrome.exe process(es) using "${dirSubstring}": ${targets.map(t => t.pid).join(', ')}`);
+    logger.info(`[CHROME CLEANUP] Killing ${targets.length} stale chrome.exe process(es) using "${dirBasename}": ${targets.map(t => t.pid).join(', ')}`);
     for (const t of targets) {
       try {
         // taskkill is more reliable than PowerShell Stop-Process for
@@ -93,7 +111,7 @@ function killChromesUsingDir(dirSubstring) {
       execSync('cmd /c "ping 127.0.0.1 -n 2 >nul"', { stdio: 'ignore', timeout: 5000 });
     }
   } catch (e) {
-    logger.warn(`[CHROME CLEANUP] Targeted kill for "${dirSubstring}" failed: ${e.message.substring(0, 200)}`);
+    logger.warn(`[CHROME CLEANUP] Targeted kill for "${dirBasename}" failed: ${e.message.substring(0, 200)}`);
   }
   return killed;
 }

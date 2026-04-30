@@ -639,6 +639,16 @@
                           // the guest disambiguate before we PIN-verify
                           // against the wrong contact.
                           showTopLevelChooserStep(data.topLevelGroups);
+                      } else if (data.success && data.multiTopLevel && Array.isArray(data.topLevelGroups) && data.topLevelGroups.length === 1) {
+                          // Defensive: server's `byParent.size > 1` guard
+                          // should make this unreachable, but if a future
+                          // change ever emits multiTopLevel with one group
+                          // we promote it directly into PIN-verify rather
+                          // than fall through to the empty-registration
+                          // branch (which is what bit us on the kiosk
+                          // tonight before the cache-headers fix).
+                          kioskTopLevelGroups = data.topLevelGroups;
+                          selectTopLevelGroup(0);
                       } else if (data.success && data.requiresVerification) {
                           verifiedReservationId = data.reservationId;
                           // If the booking has multiple sub-reservations today, stash
