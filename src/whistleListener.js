@@ -368,6 +368,33 @@ class WhistleListener {
         return;
     }
 
+    // The compose box renders BEFORE Whistle finishes hydrating the chat
+    // bubbles — the right pane sits as Chakra skeleton placeholders for
+    // up to ~1.5s. Scraping in that window dispatches blank-panel garbage
+    // to the engine AND consumes the unread badge (because the click
+    // already fired). Real message bubbles always render a HH:MM AM/PM
+    // timestamp; skeletons never do, so we poll the chat-panel ancestor
+    // until at least one timestamp-shaped token appears. Continues anyway
+    // on timeout so a chat that genuinely has no timestamp (extremely
+    // rare) still gets a chance.
+    try {
+        await targetContext.waitForFunction(() => {
+            const compose = document.querySelector('div[contenteditable="true"][role="textbox"]');
+            if (!compose) return false;
+            let el = compose.parentElement;
+            while (el && el !== document.body) {
+                const text = (el.innerText || '').trim();
+                if (text.length > 100 && /\d{1,2}:\d{2}\s*(AM|PM)/i.test(text)) {
+                    return true;
+                }
+                el = el.parentElement;
+            }
+            return false;
+        }, { timeout: 4000, polling: 250 });
+    } catch (e) {
+        logger.warn(`[WHISTLE RPA] Chat panel did not show a parseable timestamp within 4s after compose appeared; scrape may catch a skeleton. URL: ${this.page.url()}`);
+    }
+
     // Scrape the chat content. Two-pronged approach:
     //   1) Walk up from the compose input through ancestors and pick the
     //      smallest non-trivial one (between 100 and 4000 chars). The chat
