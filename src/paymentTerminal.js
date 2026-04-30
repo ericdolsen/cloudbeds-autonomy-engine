@@ -335,16 +335,10 @@ class PaymentTerminal {
       }
       await page.waitForTimeout(1000);
 
-      // Click Process Payment.
-      // The button on the new Chakra-based payment side panel is
-      // `<button type="button" class="chakra-button ...">Process Payment</button>`.
-      // The text-based locator was matching legacy Bootstrap anchors
-      // (`<a class="payment-processing-btns">Process Payment`) elsewhere
-      // on the page that aren't clickable when the Chakra modal is open;
-      // .first() landed on those, .click() timed out, and the vision-lane
-      // fallback got confused (it kept clicking the Terminal dropdown
-      // again). Role-based selector targets only the actual Chakra
-      // button — Chakra Buttons render with role=button correctly.
+      // Process Payment is a Chakra <button class="chakra-button">.
+      // role=button with exact name avoids matching legacy Bootstrap
+      // <a class="payment-processing-btns"> elements elsewhere on the
+      // page that share the visible text but aren't clickable.
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
       try {
         await page.getByRole('button', { name: 'Process Payment', exact: true }).click({ timeout: 5000 });
@@ -359,21 +353,13 @@ class PaymentTerminal {
       }
 
       await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
-      // The reader options are Chakra radios — `<label class="chakra-radio">
-      // ... <span class="chakra-radio__label">Reader 1</span></label>`. The
-      // visible label is a span, not the clickable target; clicking the
-      // bare text was working accidentally because Playwright walks up to
-      // the clickable ancestor, but role-based is the contract Chakra
-      // actually exposes and is what we want when there are multiple
-      // tablets in play (Reader 1, Reader 2). exact:true rules out a
-      // partial match like "Reader 12" if Cloudbeds ever introduces it.
+      // Click the Chakra radio's <label> directly — its hidden <input>
+      // can't be clicked through. Falls back to the visible label span
+      // if the wrapper class ever changes.
       try {
         await page.locator('label.chakra-radio', { hasText: terminalName }).first().click({ timeout: 5000 });
       } catch (e) {
-        // Fallback to the visible label span — same target Playwright
-        // would walk up from, but explicit so we don't depend on the
-        // text-locator's ambiguity.
-        logger.warn(`[STRIPE TERMINAL] Role-based '${terminalName}' radio missed; falling back to label span. ${e.message.substring(0, 80)}`);
+        logger.warn(`[STRIPE TERMINAL] '${terminalName}' radio label missed; falling back to label span. ${e.message.substring(0, 80)}`);
         await page.locator('span.chakra-radio__label:visible', { hasText: terminalName }).first().click({ timeout: 5000 });
       }
 
