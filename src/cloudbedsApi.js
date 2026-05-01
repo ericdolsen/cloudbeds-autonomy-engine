@@ -235,7 +235,11 @@ class CloudbedsAPI {
         params: {
           reservationID,
           ...(this.propertyID ? { propertyID: this.propertyID } : {}),
-          includeGuestsDetails: 'true'
+          includeGuestsDetails: 'true',
+          // Surface the customFields array (e.g. portal_doorcode from
+          // the Goki/Portal lock integration) so the agent can read
+          // door codes for guests who report lock issues.
+          includeCustomFields: 'true'
         }
       });
       return response.data;
@@ -243,6 +247,47 @@ class CloudbedsAPI {
       logger.error(`getReservationById failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Pull a single custom-field value off a reservation by its shortcode
+   * (e.g. 'portal_doorcode'). Returns null if the reservation has no
+   * customFields array, no matching entry, or an empty value.
+   */
+  extractCustomField(reservationData, shortcode) {
+    if (!reservationData || !shortcode) return null;
+    const fields = reservationData.customFields;
+    if (!Array.isArray(fields)) return null;
+    const match = fields.find(f => f && (
+      f.customFieldShortcode === shortcode ||
+      f.customFieldName === shortcode ||
+      f.shortcode === shortcode
+    ));
+    if (!match) return null;
+    const value = match.customFieldValue || match.value || '';
+    return value && value.toString().trim() ? value.toString().trim() : null;
+  }
+
+  /**
+   * Parse Portal/Goki's portal_doorcode field into structured pairs.
+   * Portal writes a single string like:
+   *   "Jose Emigdio 215: 1618, 204: 4538"
+   * for multi-room bookings, with each room+code separated by a comma.
+   * The guest name prefix is ignored — we match `<roomNum>: <code>`
+   * patterns and return them in the order they appear.
+   *
+   * Returns: [{ room: '215', code: '1618' }, { room: '204', code: '4538' }]
+   * Empty array on null/empty/unrecognized input.
+   */
+  parseDoorCodes(rawValue) {
+    if (!rawValue) return [];
+    const re = /(\d{1,4})\s*[:\-]\s*(\d{3,8})/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(rawValue))) {
+      out.push({ room: m[1], code: m[2] });
+    }
+    return out;
   }
 
   async getUnassignedRooms(startDate, endDate) {

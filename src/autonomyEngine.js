@@ -159,6 +159,18 @@ class AutonomyEngine {
           }
         },
         {
+          name: "getDoorCode",
+          description: "Returns the keypad door code(s) Portal/Goki has assigned to a reservation. Use this when a guest reports the code isn't working, asks for their code again, or says they can't get into their room. Multi-room bookings return multiple {room, code} pairs — pass roomNumber to filter to a single one if the guest told you which room they're trying to enter.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING, description: "Cloudbeds reservation ID" },
+              roomNumber: { type: Type.STRING, description: "Optional room number (e.g. '215') to filter to. Use this when the guest has already said which room they're trying to get into." }
+            },
+            required: ["reservationId"]
+          }
+        },
+        {
           name: "chargePhysicalTerminal",
           description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a real Card-Present transaction. This is the ONLY way the agent can take a payment — Gateway Park runs every card through Cloudbeds, so any balance the agent collects must go through this tool.",
           parameters: {
@@ -242,6 +254,28 @@ Balance handling rules:
 CHECK-IN PROTOCOL:
 To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so any outstanding balance must first be collected via 'chargePhysicalTerminal' at the kiosk (or in person at the front desk) before you call 'checkInReservation'.
 
+LOCK & ACCESS PROTOCOL:
+When a guest reports trouble entering their room — "code isn't working", "can't get in", "keypad won't open", "didn't get my code", or similar — the door codes are managed by the Portal/Goki lock system and stored on the reservation as the 'portal_doorcode' custom field. The field can hold codes for multiple rooms in a single multi-room booking.
+
+Step 1: Identify the reservation via 'getReservation'.
+
+Step 2: Did the guest already mention a specific room number in their message ("can't get into 215", "code for 218")?
+  - YES → Call 'getDoorCode' with reservationId AND roomNumber.
+  - NO  → Call 'getDoorCode' with reservationId only, then handle the response:
+    - If single-room booking → tool returns one code; proceed to Step 3 confirming the room number explicitly in your reply (guests sometimes forget which room is theirs and that IS the actual problem).
+    - If multi-room booking → tool returns multiRoom:true with the list of rooms. Reply asking the guest which room they're trying to enter (e.g. "I see your booking has rooms 215 and 204 — which one are you trying to get into?"). Once they answer, call 'getDoorCode' again with the roomNumber.
+
+Step 3: With a single code in hand, reply warmly and ALWAYS include the room number alongside the code so the guest can confirm they're at the right door:
+   "Hi <name>! The code for Room <room> is <code>. Enter it on the keypad and press the unlock button. Let us know if it's still not opening."
+
+Step 4: After replying, ALSO call 'alertFrontDesk' with urgency='high'. Put the guest name, room number, and code in issueDescription so staff in the alert console can walk a master key over if the resend doesn't fix it. Example: "Guest <name> in Room <room> reported door code issue. Code on file: <code>. Re-sent via SMS; please assist if needed."
+
+Failure modes:
+- 'getDoorCode' returns success:false with notCheckedIn:true → the room exists but is not yet checked in. Portal generates codes ahead of time but the locks won't activate them until the room is in checked-in state. Reply directing the guest to finish check-in first (kiosk + registration card), and offer to help them get checked in if they haven't started. Example: "Welcome! Your code is generated, but it doesn't activate until you complete check-in. Please head to the kiosk in the lobby to finish registration — once you're checked in, the code will start working immediately. I'm happy to walk you through it if you're stuck." Do NOT call alertFrontDesk for this case unless the guest can't complete check-in for some other reason — it's the expected pre-check-in state, not an emergency.
+- 'getDoorCode' returns success:false with "No door code on file" → Portal hasn't synced. Tell the guest "Let me get someone from the front desk over to you right away" and call 'alertFrontDesk' with urgency='critical'.
+- 'getDoorCode' returns success:false with "No code on file for Room X" → the guest gave a wrong/stale room number. Reply listing the rooms that ARE on file (the tool returns availableRooms): "I have codes for Rooms 215 and 204 on your booking — which one are you trying to enter?"
+- Inbound SMS phone doesn't match the reservation's guestPhone/guestCellPhone (or any sub-guest phone in guestList) → refuse to share the code. Reply "For security I can't text the code without confirming your identity — please call the front desk." and call 'alertFrontDesk' urgency='high'.
+
 CHECKOUT PROTOCOL:
 When a guest indicates they want to check out (texts "checkout", asks to be checked out, confirms a checkout flow, etc.):
 1. Identify the reservation via 'getReservation'.
@@ -304,6 +338,69 @@ STANDARD WORKFLOW:
           this.alertHub.publish({ urgency: args.urgency, issueDescription: args.issueDescription });
         }
         return { success: true, action: 'Front desk staff has been successfully pinged.' };
+      }
+
+      if (name === 'getDoorCode') {
+        const resData = await this.api.getReservationById(args.reservationId);
+        if (!resData || !resData.success || !resData.data) {
+          return { success: false, error: 'Could not fetch reservation to look up door code.' };
+        }
+        const raw = this.api.extractCustomField(resData.data, 'portal_doorcode');
+        if (!raw) {
+          return { success: false, error: 'No door code on file for this reservation. Portal may not have synced yet — escalate to the front desk.' };
+        }
+        const codes = this.api.parseDoorCodes(raw);
+        if (codes.length === 0) {
+          return { success: false, error: `Door code field present but could not be parsed. Raw value: "${raw.substring(0, 200)}". Escalate to the front desk.` };
+        }
+        const guestName = (resData.data.guestName || '').toString();
+        const reservationStatus = (resData.data.status || '').toString();
+
+        // Portal generates codes BEFORE check-in, but the locks won't
+        // accept them until the reservation/room is in checked-in
+        // state. Returning a code that physically can't open the door
+        // would just confuse the guest, so guard on status.
+        // Per-room status (multi-room bookings can have rooms in
+        // different states). Cloudbeds uses 'in_house' for the
+        // checked-in room state, alongside 'not_checked_in' / 'checked_out'.
+        const findRoomStatus = (roomName) => {
+          if (!resData.data.guestList) return null;
+          for (const g of Object.values(resData.data.guestList)) {
+            if (!g || !Array.isArray(g.rooms)) continue;
+            for (const r of g.rooms) {
+              if (r && String(r.roomName) === String(roomName)) return r.roomStatus || null;
+            }
+          }
+          return null;
+        };
+        const roomIsCheckedIn = (roomStatus) => roomStatus === 'in_house' || roomStatus === 'checked_in';
+        const reservationIsCheckedIn = reservationStatus === 'checked_in';
+
+        // Caller specified which room they're trying to enter — filter to it.
+        if (args.roomNumber) {
+          const wanted = String(args.roomNumber).trim();
+          const match = codes.find(c => c.room === wanted);
+          if (!match) {
+            return { success: false, error: `No code on file for Room ${wanted}. Available rooms on this reservation: ${codes.map(c => c.room).join(', ')}.`, availableRooms: codes.map(c => c.room) };
+          }
+          const roomStatus = findRoomStatus(match.room);
+          if (!roomIsCheckedIn(roomStatus) && !reservationIsCheckedIn) {
+            return { success: false, notCheckedIn: true, room: match.room, status: roomStatus || reservationStatus, error: `Room ${match.room} is not yet checked in (status: ${roomStatus || reservationStatus}). The code Portal generated will not activate until check-in is complete. Direct the guest to finish registration and check-in first.` };
+          }
+          return { success: true, room: match.room, code: match.code, guestName, reservationId: args.reservationId };
+        }
+
+        // No room specified.
+        if (codes.length === 1) {
+          const only = codes[0];
+          const roomStatus = findRoomStatus(only.room);
+          if (!roomIsCheckedIn(roomStatus) && !reservationIsCheckedIn) {
+            return { success: false, notCheckedIn: true, room: only.room, status: roomStatus || reservationStatus, error: `Room ${only.room} is not yet checked in (status: ${roomStatus || reservationStatus}). The code Portal generated will not activate until check-in is complete. Direct the guest to finish registration and check-in first.` };
+          }
+          return { success: true, room: only.room, code: only.code, guestName, reservationId: args.reservationId, codes };
+        }
+        // Multi-room booking; caller needs to disambiguate.
+        return { success: true, multiRoom: true, codes, guestName, reservationId: args.reservationId, message: `This booking has ${codes.length} rooms (${codes.map(c => c.room).join(', ')}). Ask the guest which room they're trying to enter, then call getDoorCode again with the roomNumber argument — that path will also verify the specific room is checked in before returning the code.` };
       }
 
       if (name === 'chargePhysicalTerminal') {
