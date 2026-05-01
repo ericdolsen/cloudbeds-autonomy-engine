@@ -509,6 +509,23 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
     });
   }
 
+  // Informational events that don't require agent reasoning. The cache
+  // update above (when applicable) is the only side effect we need.
+  // Without this gate, every housekeeping room_condition_changed event
+  // (fired whenever a room status flips — clean / dirty / occupied /
+  // vacant) was prompting the agent to run a full arrivals audit, which
+  // burned getReservations API calls on every housekeeper action.
+  const NO_AGENT_EVENTS = new Set([
+    'housekeeping/room_condition_changed',
+    'guest/created',
+    'guest/details_changed',
+    'reservation/accommodation_changed',
+    'reservation/accommodation_status_changed'
+  ]);
+  if (NO_AGENT_EVENTS.has(event)) {
+    return;
+  }
+
   try {
     let promptText = "";
 
