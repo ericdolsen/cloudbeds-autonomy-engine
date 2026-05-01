@@ -12,6 +12,8 @@ const path = require('path');
 const cron = require('node-cron');
 const { Server } = require('socket.io');
 const { logger } = require('./src/logger');
+const { AlertHub } = require('./src/alertHub');
+const { startWarnDigest } = require('./src/warnDigest');
 const { printPdfBuffer } = require('./src/printHandler');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
@@ -28,13 +30,9 @@ const port = process.env.PORT || 3000;
 // Setup static files and APIs
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
-    // HTML shells (kiosk / chat / employee) must never be cached: the kiosk
-    // browser is long-running and we ship UI changes mid-day. If the cache
-    // serves stale HTML, the JS in it is also stale, so new server response
-    // shapes (e.g. PR #43's multiTopLevel) get handled by old code paths
-    // and the kiosk lands on the wrong screen until someone hits Ctrl+F5.
-    // Static assets (JS bundles, images, CSS files) keep their default
-    // caching since they're versioned by filename in practice.
+    // HTML shells must never be cached: long-running kiosk browsers
+    // would otherwise miss UI changes shipped mid-day, leaving stale JS
+    // that mishandles new server response shapes.
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -67,11 +65,18 @@ app.get('/', (req, res) => {
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
 const messaging = new MessagingClient();
+const alertHub = new AlertHub(io);
+agent.engine.alertHub = alertHub; // exposed so the alertFrontDesk tool can publish
 
 // WebSockets (Tablet & Chat Connectivity)
 io.on('connection', (socket) => {
   logger.info(`[WEBSOCKET] Client Connected: ${socket.id}`);
-  
+
+  // /alerts page joins this room so it gets alert:new and alert:ack events.
+  socket.on('alerts:subscribe', () => {
+    socket.join('alerts');
+  });
+
   socket.on('chat_message', async (data) => {
       const room = data.room || 'Unknown Room';
       const text = data.text;
@@ -125,6 +130,23 @@ const checkLocalNetwork = (req, res, next) => {
 
 app.get('/employee', checkLocalNetwork, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'employee.html'));
+});
+
+// LAN-accessible alert console. Open in any browser on the local network
+// (front desk PC, back-room tablet, manager office). Plays an audible
+// chime/klaxon on alertFrontDesk events and lets staff acknowledge them.
+app.get('/alerts', checkLocalNetwork, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'alerts.html'));
+});
+
+app.get('/api/alerts', checkLocalNetwork, (req, res) => {
+  res.json({ success: true, alerts: alertHub.listActive() });
+});
+
+app.post('/api/alerts/:id/ack', checkLocalNetwork, (req, res) => {
+  const ok = alertHub.ack(req.params.id);
+  res.json({ success: ok });
 });
 
 // Public liveness probe. Safe to expose through the Cloudflare tunnel —
@@ -738,12 +760,29 @@ app.post('/api/kiosk/print_receipt', async (req, res) => {
     if (!resData || !resData.data) {
       return res.status(404).json({ success: false, message: "Could not fetch reservation details." });
     }
-    
+
     const r = resData.data;
-    
-    // 2. Generate PDF
+
+    // 2. Pull payment transactions so the printed receipt can itemize each
+    //    line (card brand + last 4, payment date) instead of falling back to
+    //    the "No payments recorded." block. Same pattern the email path
+    //    uses in autonomyEngine._evaluateAndEmailInvoice.
+    let transactions = [];
+    try {
+      const start = r.startDate || new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
+      const end = new Date().toISOString().split('T')[0];
+      const earliest = new Date(new Date(start).getTime() - 60 * 86400000).toISOString().split('T')[0];
+      const txRes = await agent.engine.api.getTransactions(earliest, end);
+      if (txRes && txRes.success && Array.isArray(txRes.data)) {
+        transactions = txRes.data.filter(t => t && (t.sourceId === reservationId || t.reservationID === reservationId));
+      }
+    } catch (txErr) {
+      logger.warn(`[KIOSK] Could not fetch transactions for printed receipt: ${txErr.message}`);
+    }
+
+    // 3. Generate PDF
     const { generateFolioPdf } = require('./src/printHandler');
-    const pdfBuffer = await generateFolioPdf(reservationId, r);
+    const pdfBuffer = await generateFolioPdf(reservationId, r, transactions);
 
     // 4. Print it physically
     const printResult = await printPdfBuffer(pdfBuffer, reservationId);
@@ -1228,6 +1267,7 @@ function validateStartupConfig() {
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
   validateStartupConfig();
+  startWarnDigest();
   server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });

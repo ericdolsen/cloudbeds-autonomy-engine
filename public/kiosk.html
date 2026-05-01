@@ -359,8 +359,12 @@
             const raw = new URLSearchParams(window.location.search).get('terminal');
             if (!raw) return 'Reader 1';
             const trimmed = raw.trim();
-            if (/^\d+$/.test(trimmed)) return `Reader ${trimmed}`;
-            return trimmed;
+            // Coerce number-only shorthand to "Reader N".
+            const candidate = /^\d+$/.test(trimmed) ? `Reader ${trimmed}` : trimmed;
+            // Whitelist match. Anything else (typo, junk, prompt-injection
+            // attempt) falls back to Reader 1 rather than getting echoed
+            // into logs and downstream selectors.
+            return /^Reader \d+$/.test(candidate) ? candidate : 'Reader 1';
         })();
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.

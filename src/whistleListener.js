@@ -46,15 +46,10 @@ class WhistleListener {
 
     try {
       const userDataDir = path.join(__dirname, '..', '.cloudbeds_session');
-      
-      // Previously this method ran `taskkill /IM chrome.exe /F /T` here to
-      // sweep up zombie Chrome processes from prior aborted runs. That
-      // turned out to be far too aggressive — at server boot it races
-      // PaymentTerminal's pre-warm (PR #37 onwards) and the operator's
-      // own visible Chrome window, force-killing all of them. Removed.
-      // The targeted PowerShell kill below scrubs only chrome.exe
-      // processes whose command line references THIS user-data-dir, so
-      // the operator's Chrome and PaymentTerminal's profile are untouched.
+
+      // Targeted PowerShell kill: scrubs only chrome.exe processes whose
+      // command line references THIS user-data-dir, so the operator's
+      // Chrome and PaymentTerminal's profile are untouched.
       const { killChromesUsingDir, logChromeLandscape } = require('./chromeCleanup');
       logChromeLandscape('[WHISTLE RPA]');
       killChromesUsingDir(path.basename(userDataDir));
@@ -62,12 +57,12 @@ class WhistleListener {
       try { fs.rmSync(path.join(userDataDir, 'SingletonCookie'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove SingletonCookie: ${e.message}`); }
       try { fs.rmSync(path.join(userDataDir, 'lockfile'), { force: true }); } catch (e) { logger.warn(`[WHISTLE RPA] Could not remove lockfile: ${e.message}`); }
 
-      // Retry the launch a few times — Chrome occasionally exits with
-      // code 0 on the first attempt ("Opening in existing browser
-      // session") even after the targeted kill, which surfaces as
-      // Playwright's "Browser window not found". A short pause + retry
-      // usually succeeds. Each retry re-runs the targeted kill in case
-      // a subprocess clung on after the previous attempt.
+      // Chrome occasionally exits with code 0 on the first attempt
+      // ("Opening in existing browser session") even after the targeted
+      // kill, surfacing as Playwright's "Browser window not found". Retry
+      // with re-kill between attempts. If all headed launches fail (e.g.
+      // the Windows session can't materialize a window), fall back once
+      // to true headless.
       const launchOpts = {
           executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
           channel: 'chrome',
@@ -96,10 +91,6 @@ class WhistleListener {
           }
         }
       }
-      // If all headed attempts fail (e.g. the Windows session can't
-      // materialize a window for some reason), fall back once to true
-      // headless. Slower SPA bootstrap, but doesn't need an interactive
-      // desktop and keeps the inbox monitor running.
       if (!this.context) {
         logger.warn(`[WHISTLE RPA] All headed launches failed; falling back to true headless.`);
         killChromesUsingDir(path.basename(userDataDir));
@@ -122,10 +113,8 @@ class WhistleListener {
       });
 
       this.page = await this.context.newPage();
-      // domcontentloaded, not networkidle: Cloudbeds keeps long-poll/WebSocket
-      // connections open indefinitely, so 'networkidle' never fires and times
-      // out at 30s. domcontentloaded returns as soon as the SPA shell is up;
-      // the polling loop then waits for the inbox to hydrate on its own.
+      // domcontentloaded, not networkidle: Cloudbeds keeps long-poll
+      // connections open so 'networkidle' never fires.
       await this.page.goto(this.whistleUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
       this._startPollingLoop();
@@ -173,30 +162,11 @@ class WhistleListener {
       this._loggedOut = false;
     }
 
-    // Whistle's hashed inbox URL (#/inbox/guest-chat) lands on a channel
-    // selector, NOT the conversation list. The body shows "Select a
-    // conversation" plus a sidebar of channels (Guest, Housekeeping, etc.),
-    // each as a collapsible row. We have to click the channel row to
-    // actually load the conversation list — without that, no "Unread"
-    // pills can ever appear because the list itself never renders.
-    //
-    // BUT: "Select a conversation" stays visible even AFTER Guest is
-    // expanded (it's the no-conversation-picked placeholder for both
-    // the channel-selector view and the conversation-list-but-nothing-
-    // selected view). Distinguishing requires checking whether the OTHER
-    // category headers ("Housekeeping" etc.) are still visible in the
-    // sidebar — they only appear in the channel-selector state. Without
-    // that check, every poll cycle re-clicks Guest, spams the log, and
-    // wastes ~3s per cycle.
-    //
-    // Older Whistle builds rendered a numeric chakra-badge next to each
-    // collapsed category (e.g. "Guest" with a "3" pill for unread count),
-    // which we used to identify the right row. Current builds don't show
-    // the per-category count until you hover, so that selector returns
-    // nothing and the bot just sits on the empty pane until a human
-    // clicks "Guest" manually. Since this listener is hard-wired to the
-    // guest-chat tab, we now just click the "Guest" row directly when
-    // the channel-selector state is actually showing.
+    // Whistle's inbox URL lands on a channel selector. We click the
+    // "Guest" sidebar row to load the conversation list. Detect the
+    // selector state by whether OTHER category headers ("Housekeeping")
+    // are still visible — "Select a conversation" alone is ambiguous
+    // because it also shows when Guest is expanded with no conv picked.
     const debugRpa = process.env.WHISTLE_RPA_DEBUG === 'true';
     const emptyState = await this.page.locator('text=/Select a conversation/i').first()
         .isVisible().catch(() => false);
@@ -204,9 +174,7 @@ class WhistleListener {
         .isVisible().catch(() => false);
     if (onChannelSelector) {
         let clicked = false;
-        // Primary: click the "Guest" category row by exact text match.
-        // exact:true rules out "Guest chat" (the tab) so we land on the
-        // sidebar category, not the tab strip.
+        // exact:true rules out "Guest chat" (the tab strip).
         const guestRow = this.page.getByText('Guest', { exact: true }).first()
             .locator('xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]');
         if ((await guestRow.count().catch(() => 0)) > 0) {
@@ -217,10 +185,7 @@ class WhistleListener {
             await this.page.waitForTimeout(2500);
             clicked = true;
         }
-        // Fallback: legacy numeric-badge approach. Kept in case Whistle
-        // restores the per-category unread count and the "Guest" row
-        // selector fails for some build-specific reason (e.g. the row
-        // text is rendered via a CSS pseudo-element).
+        // Fallback: numeric-badge selector if the text-based row click missed.
         if (!clicked) {
             const channelCountBadge = this.page.locator('span.chakra-badge:visible')
                 .filter({ hasText: /^\s*\d+\s*$/ })
@@ -240,12 +205,8 @@ class WhistleListener {
         }
     }
 
-    // Whistle's "Unread" pill is a red Chakra badge. Earlier attempts targeted
-    // span.chakra-badge filtered by hasText, but that failed to match in
-    // practice — likely because the visible text is rendered via a CSS pseudo-
-    // element, nested wrapper, or a non-textContent mechanism. getByText with
-    // exact: true is structure-agnostic: it matches any element whose
-    // accessible text is exactly "Unread", regardless of class hash or nesting.
+    // getByText('Unread', exact:true) is structure-agnostic; class-based
+    // selectors didn't match because the badge text is rendered via CSS.
     let targetContext = null;
     let unreadIndicator = null;
 
@@ -566,13 +527,9 @@ ${textToProcess}
             text: agentPrompt
         });
 
-        // CloudbedsAgent.processIncomingMessage returns
-        // { success: true, agent_response: <string> }. Earlier this code
-        // JSON.stringify'd the whole envelope when engineResult wasn't a
-        // string — which sent the literal text {"success":true,
-        // "agent_response":"..."} as the SMS reply to the guest. Extract
-        // the agent_response field; fall back to String() only if the
-        // shape is something unexpected.
+        // processIncomingMessage returns { agent_response: <string> }.
+        // Pull that field — never JSON.stringify the envelope (we'd send
+        // the literal {"agent_response":"..."} text to the guest).
         if (typeof engineResult === 'string') {
             aiResponseText = engineResult;
         } else if (engineResult && typeof engineResult.agent_response === 'string') {
@@ -601,12 +558,10 @@ ${textToProcess}
     if (!aiResponseText || aiResponseText.length < 2) {
         logger.warn(`[WHISTLE RPA] Engine returned empty/unusable response; skipping fill+send. The thread is marked read; a human should follow up.`);
         await this.page.waitForTimeout(2000);
-        // Same nav-back-to-inbox-root as the post-send path (PR #51): without
-        // it, the page stays on this dead conversation forever and every
-        // subsequent poll re-clicks the same Unread badge, scrapes the same
-        // stale content, and the recency-dedup keeps skipping. Result is the
-        // bot getting wedged on one thread for hours and missing every other
-        // guest message that arrives during that window.
+        // Nav back to inbox root so the next poll starts fresh. Without
+        // it the page stays on this dead conversation, the Unread-row
+        // re-click gets short-circuited by the SPA router, and every
+        // subsequent cycle keeps scraping stale content.
         try {
             await this.page.goto(this.whistleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await this.page.waitForTimeout(1500);

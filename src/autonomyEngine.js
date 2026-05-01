@@ -297,7 +297,12 @@ STANDARD WORKFLOW:
       if (name === 'checkInReservation') return await this.api.checkInReservation(args.reservationId);
 
       if (name === 'alertFrontDesk') {
-        logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
+        logger.warn(`[EMERGENCY ESCALATION] Urgency ${(args.urgency || 'high').toUpperCase()}: ${args.issueDescription}`);
+        // Publish to the AlertHub so the LAN-accessible /alerts page
+        // chimes and surfaces the message. Wired by server.js at boot.
+        if (this.alertHub && typeof this.alertHub.publish === 'function') {
+          this.alertHub.publish({ urgency: args.urgency, issueDescription: args.issueDescription });
+        }
         return { success: true, action: 'Front desk staff has been successfully pinged.' };
       }
 
@@ -325,7 +330,11 @@ STANDARD WORKFLOW:
 
       throw new Error(`Unknown tool call: ${name}`);
     } catch (e) {
-      return { error: e.message };
+      // Match the shape of every successful return in this method:
+      // { success: false, error: ... } so downstream consumers (the
+      // model's tool response handler, voice lane, the API-result
+      // log summary) all see the same envelope on failure.
+      return { success: false, error: e.message };
     }
   }
 
