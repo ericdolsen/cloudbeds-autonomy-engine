@@ -1,0 +1,539 @@
+/* ============================================================================
+ * Gateway Park — Theme
+ *
+ * Drop this file into the existing app and apply the profile classes:
+ *   .lobby   → customer-facing surfaces (check-in kiosk, lobby displays)
+ *   .prairie → staff-facing surfaces (employee panel, reports, KB)
+ *
+ * Both profiles share the same brand-book charcoal/linen ground; they differ
+ * only in accent color and serif. Wrap a screen in one or the other and the
+ * components inside resolve automatically via CSS custom properties.
+ *
+ * Required font imports (already loaded via Google Fonts <link> in the host
+ * page — no @import needed if you do that there):
+ *   Fraunces      (Lobby)
+ *   EB Garamond   (Prairie)
+ *   Inter         (UI text, both profiles)
+ * ============================================================================ */
+
+/* ─── Profile A · Lobby — customer kiosk ─────────────────────────────────── */
+.lobby {
+  --p-deep:        #101F26;   /* charcoal ground (brand book) */
+  --p-deep-2:      #15262e;   /* one step up — tile surface */
+  --p-deep-3:      #1c2f38;   /* tile hover */
+  --p-warm:        #F2F0EB;   /* linen (brand book) */
+  --p-ink:         #F2F0EB;   /* primary type on deep */
+  --p-ink-2:       #BFB9AB;   /* muted type */
+  --p-ink-3:       #8A8474;   /* tertiary / metadata */
+  --p-rule:        rgba(242,240,235,0.12);
+
+  --p-accent:      #C9A86A;   /* warm brass */
+  --p-accent-2:    #D9BC85;
+  --p-accent-ink:  #1c1305;   /* type that sits on the accent fill */
+
+  --p-serif:       "Fraunces", "Playfair Display", Georgia, serif;
+  --p-radius:      2px;
+}
+
+/* ─── Profile C · Prairie — employee panel ───────────────────────────────── */
+.prairie {
+  --p-deep:        #101F26;
+  --p-deep-2:      #15262e;
+  --p-deep-3:      #1c2f38;
+  --p-warm:        #F2F0EB;
+  --p-ink:         #F2F0EB;
+  --p-ink-2:       #B5B5A8;
+  --p-ink-3:       #8A8A7C;
+  --p-rule:        rgba(242,240,235,0.10);
+
+  --p-accent:      #94B49F;   /* dusty prairie sage */
+  --p-accent-2:    #B0CABA;
+  --p-accent-ink:  #0d1a0f;
+
+  --p-serif:       "EB Garamond", "Cormorant Garamond", Georgia, serif;
+  --p-radius:      2px;
+}
+
+/* Both profiles inherit a sans for UI: assumed to be Inter, defined on host */
+.lobby, .prairie {
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+               Roboto, Helvetica, Arial, sans-serif;
+  background: var(--p-deep);
+  color: var(--p-ink);
+}
+
+/* ============================================================================
+ * KIOSK (Lobby)
+ *   Fullscreen self-service surface, 1280×800 reference. Padding scales but
+ *   keep this aspect ratio in mind — the layout assumes the clock has room
+ *   to breathe in the middle.
+ * ============================================================================ */
+
+.kiosk {
+  width: 100%;
+  height: 100%;
+  background: var(--p-deep);
+  color: var(--p-ink);
+  position: relative;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  padding: 56px 64px 48px;
+}
+.kiosk::before {
+  content: "";
+  position: absolute; inset: -120px -120px 50% 30%;
+  background: radial-gradient(ellipse at top right,
+    color-mix(in oklab, var(--p-accent) 18%, transparent) 0%,
+    transparent 60%);
+  pointer-events: none;
+}
+
+.kiosk-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  position: relative; z-index: 1;
+}
+.kiosk-mark { display: flex; flex-direction: column; gap: 2px; }
+.kiosk-mark .crest {
+  font-family: var(--p-serif);
+  font-weight: 600; font-style: italic;
+  font-size: 13px; letter-spacing: 0.04em;
+  color: var(--p-accent);
+}
+.kiosk-mark .name {
+  font-family: var(--p-serif);
+  font-weight: 600;
+  font-size: 28px; line-height: 1; letter-spacing: -0.01em;
+}
+.kiosk-mark .sub {
+  font-size: 11px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--p-ink-2);
+  margin-top: 6px; font-weight: 500;
+}
+
+.kiosk-status {
+  display: flex; align-items: center; gap: 18px;
+  font-size: 12px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--p-ink-3);
+}
+.kiosk-status .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--p-accent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--p-accent) 18%, transparent);
+}
+
+/* The big centered clock + greeting block */
+.kiosk-clock {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  position: relative; z-index: 1;
+  margin-top: -8px;
+}
+.kiosk-greeting {
+  font-family: var(--p-serif);
+  font-weight: 400; font-size: 22px;
+  color: var(--p-ink-2); margin-bottom: 8px;
+  font-style: italic;
+}
+.kiosk-greeting em { color: var(--p-accent); font-style: italic; }
+.kiosk-time {
+  font-family: var(--p-serif);
+  font-weight: 500; font-size: 132px;
+  line-height: 0.9; letter-spacing: -0.04em;
+}
+.kiosk-time .ampm {
+  font-size: 28px; vertical-align: super;
+  margin-left: 8px; color: var(--p-ink-2);
+  letter-spacing: 0;
+}
+.kiosk-date {
+  margin-top: 16px;
+  font-size: 14px; letter-spacing: 0.3em;
+  text-transform: uppercase; color: var(--p-ink-2);
+  font-weight: 500;
+}
+.kiosk-rule {
+  width: 48px; height: 1px;
+  background: var(--p-accent);
+  margin: 22px auto 0;
+}
+
+/* Primary tiles (Check-In, Check-Out) */
+.kiosk-actions {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 24px; position: relative; z-index: 1;
+  margin-bottom: 12px;
+}
+.kiosk-tile {
+  background: var(--p-deep-2);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+  padding: 28px 32px;
+  display: flex; align-items: center; gap: 22px;
+  cursor: pointer;
+  transition: border-color .25s, background .25s;
+}
+.kiosk-tile:hover { border-color: var(--p-accent); background: var(--p-deep-3); }
+.kiosk-tile .ic {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--p-accent);
+  color: var(--p-accent);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.kiosk-tile .ic svg { width: 24px; height: 24px; }
+.kiosk-tile .text { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.kiosk-tile .text .label {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.kiosk-tile .text .help { font-size: 13px; color: var(--p-ink-2); }
+.kiosk-tile .arrow {
+  color: var(--p-ink-3); font-size: 22px;
+  transition: color .25s, transform .25s;
+}
+.kiosk-tile:hover .arrow { color: var(--p-accent); transform: translateX(4px); }
+
+/* Secondary, low-priority actions */
+.kiosk-secondary {
+  display: flex; gap: 24px; justify-content: center;
+  position: relative; z-index: 1;
+}
+.kiosk-secondary button {
+  background: transparent;
+  border: 1px solid var(--p-rule);
+  color: var(--p-ink-2);
+  font-family: inherit;
+  font-size: 13px; letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 12px 22px;
+  border-radius: var(--p-radius);
+  cursor: pointer; font-weight: 500;
+  transition: color .2s, border-color .2s;
+}
+.kiosk-secondary button:hover { color: var(--p-ink); border-color: var(--p-ink-3); }
+
+/* Footer with status + scan-to-check-in QR */
+.kiosk-foot {
+  position: absolute;
+  bottom: 24px; left: 64px; right: 64px;
+  display: flex; justify-content: space-between;
+  align-items: center;
+  font-size: 11px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--p-ink-3);
+  z-index: 1;
+}
+.kiosk-foot .qr { display: flex; align-items: center; gap: 14px; }
+.kiosk-foot .qr-card {
+  width: 64px; height: 64px;
+  background: var(--p-warm);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-template-rows: repeat(7, 1fr);
+  gap: 1px;
+}
+.kiosk-foot .qr-card span { background: var(--p-warm); }
+.kiosk-foot .qr-card span.on { background: var(--p-deep); }
+.kiosk-foot .qr-text {
+  text-align: left;
+  font-size: 10px; letter-spacing: 0.2em; line-height: 1.5;
+}
+.kiosk-foot .qr-text strong {
+  display: block; color: var(--p-ink-2); font-weight: 500;
+  letter-spacing: 0.2em;
+}
+
+/* ============================================================================
+ * EMPLOYEE PANEL (Prairie)
+ *   Sidebar + main content. 1280×800 reference; main scrolls if content
+ *   overflows on narrower viewports.
+ * ============================================================================ */
+
+.emp {
+  width: 100%; height: 100%;
+  display: flex;
+  background: var(--p-deep);
+  color: var(--p-ink);
+  overflow: hidden;
+}
+
+.emp-side {
+  width: 248px;
+  background: color-mix(in oklab, var(--p-deep) 92%, black 8%);
+  border-right: 1px solid var(--p-rule);
+  padding: 28px 22px;
+  display: flex; flex-direction: column;
+}
+.emp-brand {
+  margin-bottom: 36px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--p-rule);
+}
+.emp-brand .crest {
+  font-family: var(--p-serif);
+  font-style: italic; font-weight: 500;
+  font-size: 12px; letter-spacing: 0.06em;
+  color: var(--p-accent);
+  margin-bottom: 4px;
+}
+.emp-brand .name {
+  font-family: var(--p-serif);
+  font-weight: 600;
+  font-size: 24px; line-height: 1;
+  letter-spacing: -0.005em;
+}
+.emp-brand .sub {
+  font-size: 10px; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--p-ink-3);
+  font-weight: 500; margin-top: 8px;
+}
+
+.emp-nav { display: flex; flex-direction: column; gap: 2px; }
+.emp-nav .item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 14px;
+  color: var(--p-ink-2);
+  font-size: 13px; font-weight: 500;
+  border-radius: var(--p-radius);
+  cursor: pointer;
+  transition: color .15s, background .15s;
+  border-left: 2px solid transparent;
+}
+.emp-nav .item svg { width: 16px; height: 16px; opacity: 0.7; }
+.emp-nav .item:hover { color: var(--p-ink); }
+.emp-nav .item.active {
+  color: var(--p-accent);
+  border-left-color: var(--p-accent);
+  background: color-mix(in oklab, var(--p-accent) 8%, transparent);
+}
+.emp-nav .item.active svg { opacity: 1; }
+
+/* Sidebar footer status block */
+.emp-status {
+  margin-top: auto;
+  padding: 14px;
+  background: color-mix(in oklab, var(--p-deep) 80%, black 20%);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+  display: flex; align-items: center; gap: 12px;
+}
+.emp-status .pulse {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--p-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--p-accent) 22%, transparent);
+}
+.emp-status .label { font-size: 12px; font-weight: 500; color: var(--p-ink); }
+.emp-status .meta {
+  font-size: 10px; color: var(--p-ink-3);
+  margin-top: 2px; letter-spacing: 0.05em;
+}
+
+/* Main content column */
+.emp-main { flex: 1; padding: 36px 44px; overflow: auto; }
+
+.emp-eyebrow {
+  font-size: 11px; letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--p-accent);
+  font-weight: 500; margin-bottom: 6px;
+}
+.emp-h1 {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 40px;
+  line-height: 1.05; letter-spacing: -0.005em;
+  color: var(--p-ink);
+  margin: 0 0 6px;
+}
+.emp-sub {
+  font-size: 14px; color: var(--p-ink-2);
+  margin-bottom: 32px; line-height: 1.55;
+  max-width: 540px;
+}
+
+/* Two-column metric + feed grid */
+.emp-grid {
+  display: grid; grid-template-columns: 1fr 2fr;
+  gap: 18px; margin-bottom: 24px;
+}
+.emp-card {
+  background: var(--p-deep-2);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+  padding: 22px 24px;
+}
+.emp-card .label {
+  font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--p-ink-3);
+  font-weight: 500; margin-bottom: 14px;
+}
+.emp-card .metric {
+  font-family: var(--p-serif);
+  font-weight: 500; font-size: 60px;
+  line-height: 0.95; letter-spacing: -0.015em;
+  color: var(--p-accent);
+}
+.emp-card .metric-help {
+  font-size: 12px; color: var(--p-ink-3); margin-top: 6px;
+}
+
+/* Live activity feed */
+.emp-feed { padding: 22px 24px; }
+.emp-feed .feed-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--p-rule);
+  font-size: 13px;
+}
+.emp-feed .feed-row:last-child { border-bottom: none; }
+.emp-feed .badge {
+  font-size: 9px; letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 2px; font-weight: 600;
+  flex-shrink: 0;
+}
+.emp-feed .badge.ok {
+  color: var(--p-accent);
+  background: color-mix(in oklab, var(--p-accent) 14%, transparent);
+}
+.emp-feed .badge.warn {
+  color: #d4a256;
+  background: rgba(212,162,86,0.14);
+}
+.emp-feed .badge.err {  /* extension — apply to real-error rows */
+  color: #d47272;
+  background: rgba(212,114,114,0.14);
+}
+.emp-feed .feed-text { flex: 1; color: var(--p-ink-2); }
+.emp-feed .feed-time { color: var(--p-ink-3); font-size: 11px; letter-spacing: 0.05em; }
+
+/* Report cards row */
+.emp-reports {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+}
+.emp-report {
+  background: var(--p-deep-2);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+  padding: 24px 26px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.emp-report h3 {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 22px;
+  color: var(--p-ink);
+  margin: 0; letter-spacing: -0.005em;
+}
+.emp-report p {
+  font-size: 13px; color: var(--p-ink-2);
+  line-height: 1.55; margin: 0; flex: 1;
+}
+
+/* ============================================================================
+ * BUTTONS — usable inside either profile
+ * ============================================================================ */
+
+.btn-primary {
+  background: var(--p-accent);
+  color: var(--p-accent-ink);
+  border: none;
+  padding: 11px 18px;
+  font-size: 12px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: var(--p-radius);
+  cursor: pointer; align-self: flex-start;
+}
+.btn-primary:hover { background: var(--p-accent-2); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--p-ink);
+  border: 1px solid var(--p-rule);
+  padding: 11px 18px;
+  font-size: 12px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--p-radius);
+  cursor: pointer; align-self: flex-start;
+}
+.btn-ghost:hover { border-color: var(--p-ink-3); }
+
+/* ============================================================================
+ * EXTENSION HELPERS — small generic primitives for screens not yet designed.
+ * Use these to keep new surfaces visually consistent without inventing rules.
+ * ============================================================================ */
+
+/* Generic surface: same chrome as .kiosk-tile / .emp-card */
+.gp-surface {
+  background: var(--p-deep-2);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+}
+
+/* Generic eyebrow label */
+.gp-eyebrow {
+  font-size: 11px; letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--p-ink-3); font-weight: 500;
+}
+
+/* Display-serif heading levels — use INSTEAD of <h1>/<h2>/<h3> wherever the
+   host app's global type styles would otherwise leak in. Match these to your
+   existing semantic levels via classes, not tag selectors. */
+.gp-display {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 56px;
+  line-height: 1; letter-spacing: -0.02em;
+  color: var(--p-ink);
+}
+.gp-h1 {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 40px;
+  line-height: 1.05; letter-spacing: -0.005em;
+  color: var(--p-ink);
+}
+.gp-h2 {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 28px;
+  line-height: 1.1; letter-spacing: -0.005em;
+  color: var(--p-ink);
+}
+.gp-h3 {
+  font-family: var(--p-serif);
+  font-weight: 600; font-size: 22px;
+  line-height: 1.15; letter-spacing: -0.005em;
+  color: var(--p-ink);
+}
+
+/* Form inputs — match the ghost-button border treatment */
+.gp-input {
+  background: var(--p-deep-2);
+  color: var(--p-ink);
+  border: 1px solid var(--p-rule);
+  border-radius: var(--p-radius);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  width: 100%;
+}
+.gp-input:focus {
+  outline: none;
+  border-color: var(--p-accent);
+}
+.gp-input::placeholder { color: var(--p-ink-3); }
+
+.gp-label {
+  display: block;
+  font-size: 11px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--p-ink-3);
+  font-weight: 500;
+  margin-bottom: 8px;
+}

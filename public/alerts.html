@@ -5,103 +5,167 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Front Desk Alerts — Gateway Park</title>
   <script src="/socket.io/socket.io.js"></script>
+  <!-- Google Fonts: Inter for UI, EB Garamond for the Prairie display serif -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Gateway Park theme tokens + components (see public/handoff/STYLE-GUIDE.md) -->
+  <link rel="stylesheet" href="/handoff/gateway-theme.css">
   <style>
     * { box-sizing: border-box; }
-    html, body {
-      margin: 0; padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-      background: #0f172a;
-      color: #f1f5f9;
-      min-height: 100vh;
-    }
+    html, body { margin: 0; padding: 0; min-height: 100vh; }
+
     header {
-      padding: 18px 24px;
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
+      padding: 22px 32px;
+      background: color-mix(in oklab, var(--p-deep) 92%, black 8%);
+      border-bottom: 1px solid var(--p-rule);
       display: flex;
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
       gap: 12px;
     }
-    header h1 { margin: 0; font-size: 1.4rem; font-weight: 600; }
-    header .meta { font-size: 0.9rem; opacity: 0.7; }
+    header h1 {
+      margin: 0;
+      font-family: var(--p-serif);
+      font-size: 1.6rem;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      color: var(--p-ink);
+    }
+    header .meta {
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--p-ink-3);
+      font-weight: 500;
+    }
+    #counter { font-variant-numeric: tabular-nums; }
+
     .status-dot {
       display: inline-block;
-      width: 10px; height: 10px;
+      width: 8px; height: 8px;
       border-radius: 50%;
       margin-right: 8px;
       vertical-align: middle;
     }
-    .connected { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
-    .disconnected { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .connected {
+      background: var(--p-accent);
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--p-accent) 22%, transparent);
+    }
+    .disconnected {
+      background: #d47272;
+      box-shadow: 0 0 0 3px rgba(212, 114, 114, 0.22);
+    }
 
-    main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+    main { padding: 24px 32px; max-width: 1100px; margin: 0 auto; }
 
     .empty {
       text-align: center;
-      padding: 80px 20px;
-      opacity: 0.6;
-      font-size: 1.1rem;
+      padding: 96px 20px;
+      color: var(--p-ink-3);
+      font-size: 14px;
+      letter-spacing: 0.05em;
     }
-    .empty .check { font-size: 4rem; margin-bottom: 12px; }
+    .empty .check {
+      font-family: var(--p-serif);
+      font-style: italic;
+      font-size: 2.4rem;
+      color: var(--p-accent);
+      margin-bottom: 18px;
+      letter-spacing: -0.01em;
+    }
 
     .alert {
-      border-radius: 14px;
-      padding: 22px 24px;
+      background: var(--p-deep-2);
+      border: 1px solid var(--p-rule);
+      border-left: 3px solid var(--p-accent);
+      border-radius: var(--p-radius);
+      padding: 22px 26px;
       margin-bottom: 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 18px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.35);
       animation: slideIn 0.25s ease;
     }
     @keyframes slideIn {
-      from { transform: translateY(-12px); opacity: 0; }
-      to   { transform: translateY(0);     opacity: 1; }
+      from { transform: translateY(-8px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
     }
-    .alert.urgency-high     { background: linear-gradient(135deg, #b45309 0%, #92400e 100%); border-left: 6px solid #fbbf24; }
-    .alert.urgency-critical { background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%); border-left: 6px solid #fca5a5; animation: pulse 1.4s ease-in-out infinite; }
-    .alert.urgency-other    { background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%); border-left: 6px solid #60a5fa; }
+    .alert.urgency-high     { border-left-color: #d4a256; }
+    .alert.urgency-critical {
+      border-left-color: #d47272;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    .alert.urgency-other    { border-left-color: var(--p-accent); }
     @keyframes pulse {
-      0%, 100% { box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35); }
-      50%      { box-shadow: 0 6px 28px rgba(239, 68, 68, 0.85); }
+      0%, 100% { box-shadow: 0 0 0 0 rgba(212, 114, 114, 0.0); }
+      50%      { box-shadow: 0 0 0 4px rgba(212, 114, 114, 0.30); }
     }
+
     .alert .body { flex: 1; min-width: 0; }
     .alert .urgency-tag {
       display: inline-block;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.15);
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
+      padding: 3px 9px;
+      border-radius: var(--p-radius);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
+      color: var(--p-ink-2);
+      background: rgba(242, 240, 235, 0.06);
     }
-    .alert .message { font-size: 1.4rem; line-height: 1.4; font-weight: 500; word-wrap: break-word; }
-    .alert .ts { font-size: 0.85rem; opacity: 0.75; margin-top: 8px; }
+    .alert.urgency-high .urgency-tag {
+      color: #d4a256;
+      background: rgba(212, 162, 86, 0.14);
+    }
+    .alert.urgency-critical .urgency-tag {
+      color: #d47272;
+      background: rgba(212, 114, 114, 0.16);
+    }
+    .alert.urgency-other .urgency-tag {
+      color: var(--p-accent);
+      background: color-mix(in oklab, var(--p-accent) 14%, transparent);
+    }
+
+    .alert .message {
+      font-size: 1.15rem;
+      line-height: 1.45;
+      font-weight: 500;
+      word-wrap: break-word;
+      color: var(--p-ink);
+    }
+    .alert .ts {
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      color: var(--p-ink-3);
+      margin-top: 10px;
+    }
 
     .ack-btn {
-      background: rgba(255,255,255,0.15);
-      color: #fff;
-      border: 1px solid rgba(255,255,255,0.4);
-      padding: 14px 22px;
-      font-size: 1rem;
+      background: transparent;
+      color: var(--p-ink);
+      border: 1px solid var(--p-rule);
+      padding: 12px 20px;
+      font-family: inherit;
+      font-size: 11px;
       font-weight: 600;
-      border-radius: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      border-radius: var(--p-radius);
       cursor: pointer;
       white-space: nowrap;
-      transition: all 0.15s;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
     }
-    .ack-btn:hover  { background: rgba(255,255,255,0.28); }
+    .ack-btn:hover  { border-color: var(--p-accent); color: var(--p-accent); }
     .ack-btn:active { transform: scale(0.98); }
 
     .audio-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.96);
+      background: color-mix(in oklab, var(--p-deep) 96%, black 4%);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -112,17 +176,36 @@
       text-align: center;
       padding: 20px;
     }
-    .audio-overlay .icon { font-size: 5rem; }
-    .audio-overlay h2 { margin: 0; font-size: 1.6rem; }
-    .audio-overlay p  { margin: 0; opacity: 0.75; max-width: 480px; line-height: 1.5; }
+    .audio-overlay .icon {
+      font-size: 3.2rem;
+      color: var(--p-accent);
+      opacity: 0.85;
+    }
+    .audio-overlay h2 {
+      margin: 0;
+      font-family: var(--p-serif);
+      font-weight: 500;
+      font-size: 1.6rem;
+      color: var(--p-ink);
+      letter-spacing: -0.005em;
+    }
+    .audio-overlay p {
+      margin: 0;
+      color: var(--p-ink-2);
+      max-width: 480px;
+      line-height: 1.55;
+      font-size: 14px;
+    }
 
     @media (max-width: 600px) {
+      header { padding: 18px 20px; }
+      main { padding: 16px 20px; }
       .alert { flex-direction: column; align-items: stretch; }
       .ack-btn { width: 100%; }
     }
   </style>
 </head>
-<body>
+<body class="prairie">
   <div id="audioOverlay" class="audio-overlay">
     <div class="icon">🔔</div>
     <h2>Tap anywhere to enable sound</h2>
