@@ -9,6 +9,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const cron = require('node-cron');
 const { Server } = require('socket.io');
 const { logger } = require('./src/logger');
