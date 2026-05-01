@@ -12,6 +12,8 @@ const path = require('path');
 const cron = require('node-cron');
 const { Server } = require('socket.io');
 const { logger } = require('./src/logger');
+const { AlertHub } = require('./src/alertHub');
+const { startWarnDigest } = require('./src/warnDigest');
 const { printPdfBuffer } = require('./src/printHandler');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
@@ -63,11 +65,18 @@ app.get('/', (req, res) => {
 // Initialize the master Autonomy Engine
 const agent = new CloudbedsAgent();
 const messaging = new MessagingClient();
+const alertHub = new AlertHub(io);
+agent.engine.alertHub = alertHub; // exposed so the alertFrontDesk tool can publish
 
 // WebSockets (Tablet & Chat Connectivity)
 io.on('connection', (socket) => {
   logger.info(`[WEBSOCKET] Client Connected: ${socket.id}`);
-  
+
+  // /alerts page joins this room so it gets alert:new and alert:ack events.
+  socket.on('alerts:subscribe', () => {
+    socket.join('alerts');
+  });
+
   socket.on('chat_message', async (data) => {
       const room = data.room || 'Unknown Room';
       const text = data.text;
@@ -121,6 +130,23 @@ const checkLocalNetwork = (req, res, next) => {
 
 app.get('/employee', checkLocalNetwork, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'employee.html'));
+});
+
+// LAN-accessible alert console. Open in any browser on the local network
+// (front desk PC, back-room tablet, manager office). Plays an audible
+// chime/klaxon on alertFrontDesk events and lets staff acknowledge them.
+app.get('/alerts', checkLocalNetwork, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'alerts.html'));
+});
+
+app.get('/api/alerts', checkLocalNetwork, (req, res) => {
+  res.json({ success: true, alerts: alertHub.listActive() });
+});
+
+app.post('/api/alerts/:id/ack', checkLocalNetwork, (req, res) => {
+  const ok = alertHub.ack(req.params.id);
+  res.json({ success: ok });
 });
 
 // Public liveness probe. Safe to expose through the Cloudflare tunnel —
@@ -1241,6 +1267,7 @@ function validateStartupConfig() {
 async function boot() {
   logger.info(`Starting Hotel Automation Platform Server on port ${port}...`);
   validateStartupConfig();
+  startWarnDigest();
   server.listen(port, () => {
     logger.info(`Dashboard accessible locally at http://localhost:${port}`);
   });

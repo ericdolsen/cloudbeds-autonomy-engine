@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Front Desk Alerts — Gateway Park</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      min-height: 100vh;
+    }
+    header {
+      padding: 18px 24px;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 1.4rem; font-weight: 600; }
+    header .meta { font-size: 0.9rem; opacity: 0.7; }
+    .status-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .connected { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+    .disconnected { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
+    main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+
+    .empty {
+      text-align: center;
+      padding: 80px 20px;
+      opacity: 0.6;
+      font-size: 1.1rem;
+    }
+    .empty .check { font-size: 4rem; margin-bottom: 12px; }
+
+    .alert {
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+      animation: slideIn 0.25s ease;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(-12px); opacity: 0; }
+      to   { transform: translateY(0);     opacity: 1; }
+    }
+    .alert.urgency-high     { background: linear-gradient(135deg, #b45309 0%, #92400e 100%); border-left: 6px solid #fbbf24; }
+    .alert.urgency-critical { background: linear-gradient(135deg, #b91c1c 0%, #7f1d1d 100%); border-left: 6px solid #fca5a5; animation: pulse 1.4s ease-in-out infinite; }
+    .alert.urgency-other    { background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%); border-left: 6px solid #60a5fa; }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 6px 18px rgba(239, 68, 68, 0.35); }
+      50%      { box-shadow: 0 6px 28px rgba(239, 68, 68, 0.85); }
+    }
+    .alert .body { flex: 1; min-width: 0; }
+    .alert .urgency-tag {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.15);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .alert .message { font-size: 1.4rem; line-height: 1.4; font-weight: 500; word-wrap: break-word; }
+    .alert .ts { font-size: 0.85rem; opacity: 0.75; margin-top: 8px; }
+
+    .ack-btn {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.4);
+      padding: 14px 22px;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .ack-btn:hover  { background: rgba(255,255,255,0.28); }
+    .ack-btn:active { transform: scale(0.98); }
+
+    .audio-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.96);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 18px;
+      z-index: 1000;
+      cursor: pointer;
+      text-align: center;
+      padding: 20px;
+    }
+    .audio-overlay .icon { font-size: 5rem; }
+    .audio-overlay h2 { margin: 0; font-size: 1.6rem; }
+    .audio-overlay p  { margin: 0; opacity: 0.75; max-width: 480px; line-height: 1.5; }
+
+    @media (max-width: 600px) {
+      .alert { flex-direction: column; align-items: stretch; }
+      .ack-btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div id="audioOverlay" class="audio-overlay">
+    <div class="icon">🔔</div>
+    <h2>Tap anywhere to enable sound</h2>
+    <p>Browsers block audio until you interact with the page. Tap once to allow chimes for incoming alerts.</p>
+  </div>
+
+  <header>
+    <div>
+      <h1>Front Desk Alerts</h1>
+      <div class="meta"><span id="statusDot" class="status-dot disconnected"></span><span id="statusText">Connecting…</span></div>
+    </div>
+    <div class="meta" id="counter">0 active</div>
+  </header>
+
+  <main>
+    <div id="emptyState" class="empty">
+      <div class="check">✅</div>
+      <div>No active alerts. You'll hear a chime when one arrives.</div>
+    </div>
+    <div id="alertList"></div>
+  </main>
+
+  <script>
+    let audioEnabled = false;
+    let audioCtx = null;
+    let activeKlaxons = new Map(); // alertId -> intervalHandle (so we can stop on ack)
+    let alerts = new Map(); // id -> alert
+
+    const overlay = document.getElementById('audioOverlay');
+    const list = document.getElementById('alertList');
+    const empty = document.getElementById('emptyState');
+    const counter = document.getElementById('counter');
+    const dot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+
+    overlay.addEventListener('click', enableAudio, { once: true });
+
+    function enableAudio() {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // A brief silent buffer to fully unlock audio on iOS Safari.
+        const buf = audioCtx.createBuffer(1, 1, 22050);
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf; src.connect(audioCtx.destination); src.start(0);
+        audioEnabled = true;
+        overlay.style.display = 'none';
+      } catch (e) {
+        console.error('Audio init failed:', e);
+        overlay.querySelector('p').textContent = 'Audio not available in this browser. Alerts will still appear visually.';
+      }
+    }
+
+    function tone(frequency, durationMs, volume = 0.25, type = 'sine') {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = frequency;
+      gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+      // Quick fade-out to avoid click on stop.
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + durationMs / 1000);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + durationMs / 1000);
+    }
+
+    function playChime() {
+      // Two soft beeps, doorbell-ish.
+      tone(660, 220, 0.22);
+      setTimeout(() => tone(520, 280, 0.22), 230);
+    }
+
+    function playKlaxonOnce() {
+      tone(880, 280, 0.35, 'square');
+      setTimeout(() => tone(620, 280, 0.35, 'square'), 320);
+    }
+
+    function startKlaxon(id) {
+      if (activeKlaxons.has(id)) return;
+      playKlaxonOnce();
+      const handle = setInterval(playKlaxonOnce, 1400);
+      activeKlaxons.set(id, handle);
+    }
+
+    function stopKlaxon(id) {
+      const handle = activeKlaxons.get(id);
+      if (handle) {
+        clearInterval(handle);
+        activeKlaxons.delete(id);
+      }
+    }
+
+    function formatTimeAgo(ms) {
+      const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+      if (sec < 60) return `${sec}s ago`;
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `${min}m ago`;
+      const hr = Math.floor(min / 60);
+      return `${hr}h ${min % 60}m ago`;
+    }
+
+    function render() {
+      const list2 = Array.from(alerts.values()).sort((a, b) => b.createdAt - a.createdAt);
+      counter.textContent = `${list2.length} active`;
+      empty.style.display = list2.length === 0 ? 'block' : 'none';
+      list.innerHTML = list2.map(a => `
+        <div class="alert urgency-${escape(a.urgency === 'critical' ? 'critical' : a.urgency === 'high' ? 'high' : 'other')}" data-id="${escape(a.id)}">
+          <div class="body">
+            <span class="urgency-tag">${escape(a.urgency || 'alert')}</span>
+            <div class="message">${escape(a.message || '')}</div>
+            <div class="ts" data-ts="${a.createdAt}">${formatTimeAgo(a.createdAt)}</div>
+          </div>
+          <button class="ack-btn" onclick="ack('${escape(a.id)}')">Acknowledge</button>
+        </div>
+      `).join('');
+    }
+
+    function escape(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function addAlert(a) {
+      const isNew = !alerts.has(a.id);
+      alerts.set(a.id, a);
+      if (isNew && audioEnabled) {
+        if (a.urgency === 'critical') startKlaxon(a.id);
+        else playChime();
+      }
+      render();
+    }
+
+    function ack(id) {
+      stopKlaxon(id);
+      fetch(`/api/alerts/${encodeURIComponent(id)}/ack`, { method: 'POST' })
+        .catch(err => console.error('ack failed:', err));
+      // Remove optimistically; the server will broadcast `alert:ack` too.
+      alerts.delete(id);
+      render();
+    }
+
+    // Refresh "Xm ago" labels every 10s.
+    setInterval(render, 10000);
+
+    // Initial load — fetch any active alerts the server already has.
+    fetch('/api/alerts')
+      .then(r => r.json())
+      .then(payload => {
+        if (payload && payload.success && Array.isArray(payload.alerts)) {
+          payload.alerts.forEach(a => alerts.set(a.id, a));
+          render();
+          // Resume klaxons for any active critical alerts that survived
+          // a page refresh.
+          if (audioEnabled) {
+            for (const a of payload.alerts) {
+              if (a.urgency === 'critical') startKlaxon(a.id);
+            }
+          }
+        }
+      })
+      .catch(err => console.error('initial load failed:', err));
+
+    // Live updates via Socket.IO.
+    const socket = io();
+    socket.on('connect', () => {
+      dot.className = 'status-dot connected';
+      statusText.textContent = 'Live';
+      socket.emit('alerts:subscribe');
+    });
+    socket.on('disconnect', () => {
+      dot.className = 'status-dot disconnected';
+      statusText.textContent = 'Disconnected — reconnecting…';
+      // Stop all active klaxons; they'll be restarted on reconnect via /api/alerts.
+      for (const id of Array.from(activeKlaxons.keys())) stopKlaxon(id);
+    });
+    socket.on('alert:new', addAlert);
+    socket.on('alert:ack', ({ id }) => { stopKlaxon(id); alerts.delete(id); render(); });
+  </script>
+</body>
+</html>

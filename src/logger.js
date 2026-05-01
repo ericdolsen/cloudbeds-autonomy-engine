@@ -8,6 +8,21 @@ class Logger {
       fs.mkdirSync(this.logDir, { recursive: true });
     }
     this.feed = []; // Bounded array for non-technical staff dashboard
+    // Tap subscribers — each gets (level, message) for every log line.
+    // Used by warnDigest to batch-email the operator about problems.
+    this._taps = [];
+  }
+
+  /**
+   * Subscribe to log events. Returns an unsubscribe function.
+   * Subscriber signature: (level, message) => void
+   */
+  subscribe(fn) {
+    if (typeof fn !== 'function') return () => {};
+    this._taps.push(fn);
+    return () => {
+      this._taps = this._taps.filter(t => t !== fn);
+    };
   }
 
   _timestamp() {
@@ -23,6 +38,12 @@ class Logger {
     fs.appendFile(logFile, line + '\n', (err) => {
       if (err) console.error('Failed to write to log file:', err);
     });
+
+    // Fan out to subscribers. Wrap in try so a misbehaving subscriber
+    // doesn't take down the next log call.
+    for (const tap of this._taps) {
+      try { tap(level, message); } catch (e) { /* never propagate tap errors */ }
+    }
   }
 
   // Activity Feed hook for Front-End Staff Portal

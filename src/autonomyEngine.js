@@ -297,7 +297,12 @@ STANDARD WORKFLOW:
       if (name === 'checkInReservation') return await this.api.checkInReservation(args.reservationId);
 
       if (name === 'alertFrontDesk') {
-        logger.warn(`[EMERGENCY ESCALATION] Urgency ${args.urgency.toUpperCase()}: ${args.issueDescription}`);
+        logger.warn(`[EMERGENCY ESCALATION] Urgency ${(args.urgency || 'high').toUpperCase()}: ${args.issueDescription}`);
+        // Publish to the AlertHub so the LAN-accessible /alerts page
+        // chimes and surfaces the message. Wired by server.js at boot.
+        if (this.alertHub && typeof this.alertHub.publish === 'function') {
+          this.alertHub.publish({ urgency: args.urgency, issueDescription: args.issueDescription });
+        }
         return { success: true, action: 'Front desk staff has been successfully pinged.' };
       }
 
