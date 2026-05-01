@@ -37,10 +37,23 @@ async function printPdfBuffer(pdfBuffer, documentId) {
 
 // Itemize payment transactions for the receipt's "Payments Received"
 // section. Each row gives the guest a clear paper trail for expense
-// reports: card brand + last 4 if available, otherwise the description
-// Cloudbeds attached to the transaction.
-function _renderPaymentRows(payments) {
+// reports: card brand + last 4 if Cloudbeds populates the description
+// that way, otherwise whatever description the transaction has.
+//
+// When transactions are unavailable (empty array passed in) but the
+// reservation balance shows money was paid, render a single
+// lump-sum row instead of "No payments recorded." — that double-rendered
+// (empty state + lump sum fallback) on the previous version of this
+// receipt and looked broken to the guest.
+function _renderPaymentRows(payments, paidLumpSum) {
   if (!payments || payments.length === 0) {
+    if (paidLumpSum > 0) {
+      return `
+      <tr>
+        <td style="padding-left: 24px; color:#666;">Payment received <span style="color:#999; font-size:11px;">(transaction details unavailable)</span></td>
+        <td style="text-align: right;">-$${paidLumpSum.toFixed(2)}</td>
+      </tr>`;
+    }
     return `<tr><td colspan="2" style="color:#999; padding: 8px 12px;">No payments recorded.</td></tr>`;
   }
   return payments.map(p => {
@@ -58,6 +71,32 @@ function _renderPaymentRows(payments) {
       </tr>
     `;
   }).join('');
+}
+
+// Hotel branding + contact block embedded at the top of every PDF
+// receipt. Mirrors the values exposed in autonomyEngine.getHotelPolicies()
+// so guest-facing answers and printed/emailed receipts stay in sync.
+const HOTEL_INFO = {
+  name: 'Gateway Park Hotel & Suites',
+  address: '830 Gateway Lane, Tea, SD 57064',
+  phone: '605-213-1500',
+  fax: '605-213-1501',
+  email: 'Info@gatewayparkhotel.com'
+};
+
+// Try to embed a logo at data/logo.png as a base64 data: URI. If the
+// file isn't present we fall back to the bold hotel-name text. The
+// logo file isn't checked into git — drop the operator's PNG into
+// data/logo.png after deploy and it'll start appearing automatically.
+function _loadLogoDataUri() {
+  try {
+    const logoPath = path.join(__dirname, '..', 'data', 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      const data = fs.readFileSync(logoPath).toString('base64');
+      return `data:image/png;base64,${data}`;
+    }
+  } catch (e) { /* fall through to text title */ }
+  return '';
 }
 
 /**
@@ -93,14 +132,19 @@ async function generateFolioPdf(reservationId, r, transactions) {
     ? transactions.filter(t => t && (t.transactionType === 'Payment' || t.transactionCategory === 'payment') && !t.transactionVoid)
     : [];
 
+  const logoDataUri = _loadLogoDataUri();
+
   const htmlContent = `
     <html>
       <head>
         <style>
           body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
           .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 20px; }
+          .header img.logo { max-width: 320px; max-height: 90px; display: block; margin: 0 auto 10px; }
           .title { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
-          .subtitle { font-size: 14px; color: #777; }
+          .subtitle { font-size: 14px; color: #777; margin-bottom: 8px; }
+          .hotel-info { font-size: 12px; color: #666; line-height: 1.5; }
+          .hotel-info .sep { color: #ccc; margin: 0 6px; }
           .info-row { display: flex; justify-content: space-between; margin-bottom: 20px; }
           .box { padding: 15px; border: 1px solid #ddd; background: #fafafa; border-radius: 8px; width: 45%; }
           .label { font-size: 12px; color: #777; text-transform: uppercase; margin-bottom: 5px; }
@@ -116,8 +160,15 @@ async function generateFolioPdf(reservationId, r, transactions) {
       </head>
       <body>
         <div class="header">
-          <div class="title">GATEWAY PARK HOTEL & SUITES</div>
+          ${logoDataUri
+            ? `<img class="logo" src="${logoDataUri}" alt="${HOTEL_INFO.name}" />`
+            : `<div class="title">${HOTEL_INFO.name.toUpperCase()}</div>`}
           <div class="subtitle">Guest Folio / Receipt</div>
+          <div class="hotel-info">
+            ${HOTEL_INFO.address}
+            <span class="sep">·</span> ${HOTEL_INFO.phone}
+            <span class="sep">·</span> ${HOTEL_INFO.email}
+          </div>
         </div>
 
         <div class="info-row">
@@ -163,12 +214,7 @@ async function generateFolioPdf(reservationId, r, transactions) {
             </tr>
 
             <tr class="section-row"><td colspan="2">Payments Received</td></tr>
-            ${_renderPaymentRows(payments)}
-            ${payments.length === 0 && paid > 0 ? `
-            <tr>
-              <td style="padding-left: 24px; color:#999;">Payment on file</td>
-              <td style="text-align: right;">-$${paid.toFixed(2)}</td>
-            </tr>` : ''}
+            ${_renderPaymentRows(payments, paid)}
             <tr class="total-row">
               <td>Total Paid</td>
               <td style="text-align: right;">-$${paid.toFixed(2)}</td>
