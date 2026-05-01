@@ -94,7 +94,7 @@ function injectTabletButton() {
             mainBtn.innerText = `Pushing to Kiosk ${kioskId}...`;
             optionsMenu.style.display = 'none';
             
-            fetch('http://10.25.25.39:3000/api/kiosk/push', {
+            fetch('https://kiosk.gatewayparkhotel.com/api/kiosk/push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reservationId: id, kioskId: kioskId })
