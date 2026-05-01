@@ -235,7 +235,11 @@ class CloudbedsAPI {
         params: {
           reservationID,
           ...(this.propertyID ? { propertyID: this.propertyID } : {}),
-          includeGuestsDetails: 'true'
+          includeGuestsDetails: 'true',
+          // Surface the customFields array (e.g. portal_doorcode from
+          // the Goki/Portal lock integration) so the agent can read
+          // door codes for guests who report lock issues.
+          includeCustomFields: 'true'
         }
       });
       return response.data;
@@ -243,6 +247,25 @@ class CloudbedsAPI {
       logger.error(`getReservationById failed: ${error.message}`);
       return { success: false, error: error.message };
     }
+  }
+
+  /**
+   * Pull a single custom-field value off a reservation by its shortcode
+   * (e.g. 'portal_doorcode'). Returns null if the reservation has no
+   * customFields array, no matching entry, or an empty value.
+   */
+  extractCustomField(reservationData, shortcode) {
+    if (!reservationData || !shortcode) return null;
+    const fields = reservationData.customFields;
+    if (!Array.isArray(fields)) return null;
+    const match = fields.find(f => f && (
+      f.customFieldShortcode === shortcode ||
+      f.customFieldName === shortcode ||
+      f.shortcode === shortcode
+    ));
+    if (!match) return null;
+    const value = match.customFieldValue || match.value || '';
+    return value && value.toString().trim() ? value.toString().trim() : null;
   }
 
   async getUnassignedRooms(startDate, endDate) {

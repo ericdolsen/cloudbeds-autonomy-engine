@@ -159,6 +159,17 @@ class AutonomyEngine {
           }
         },
         {
+          name: "getDoorCode",
+          description: "Returns the keypad door code Portal/Goki has assigned to a reservation. Use this when a guest reports the code isn't working, asks for their code again, or says they can't get into their room. The code is the same one Portal originally texted them; we're just re-sending it from our number.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              reservationId: { type: Type.STRING, description: "Cloudbeds reservation ID" }
+            },
+            required: ["reservationId"]
+          }
+        },
+        {
           name: "chargePhysicalTerminal",
           description: "Pushes a payment request to the physical Stripe WisePOS E terminal at the front desk for a real Card-Present transaction. This is the ONLY way the agent can take a payment — Gateway Park runs every card through Cloudbeds, so any balance the agent collects must go through this tool.",
           parameters: {
@@ -242,6 +253,15 @@ Balance handling rules:
 CHECK-IN PROTOCOL:
 To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so any outstanding balance must first be collected via 'chargePhysicalTerminal' at the kiosk (or in person at the front desk) before you call 'checkInReservation'.
 
+LOCK & ACCESS PROTOCOL:
+When a guest reports trouble entering their room — "code isn't working", "can't get in", "keypad won't open", "didn't get my code", or similar — the door codes are managed by the Portal/Goki lock system and stored on the reservation as the 'portal_doorcode' custom field. You can re-send the code via SMS:
+1. Identify the reservation via 'getReservation'.
+2. Call 'getDoorCode' with the reservationId.
+3. If the tool returns a code, reply warmly with the code formatted clearly. Example: "Hi <name>! Your door code for Room <roomName> is <code>. Enter the code on the keypad and press the unlock button. Let us know if it's still not opening."
+4. ALSO call 'alertFrontDesk' with urgency='high' so staff are aware. Include the room number and the code in issueDescription so they can walk over with a master key if the second attempt fails. Example issueDescription: "Guest <name> in Room <roomName> reported door code issue. Code on file: <code>. Re-sent via SMS; please be ready to assist if it doesn't work."
+5. If 'getDoorCode' returns success:false (no code on file), do NOT make up a code. Tell the guest "Let me get someone from the front desk over to you right away" and call 'alertFrontDesk' with urgency='critical' so staff dispatch immediately.
+6. Never share a door code with someone whose phone number on the conversation doesn't match the reservation's guestPhone/guestCellPhone — if the inbound message phone doesn't match, refuse and escalate.
+
 CHECKOUT PROTOCOL:
 When a guest indicates they want to check out (texts "checkout", asks to be checked out, confirms a checkout flow, etc.):
 1. Identify the reservation via 'getReservation'.
@@ -304,6 +324,26 @@ STANDARD WORKFLOW:
           this.alertHub.publish({ urgency: args.urgency, issueDescription: args.issueDescription });
         }
         return { success: true, action: 'Front desk staff has been successfully pinged.' };
+      }
+
+      if (name === 'getDoorCode') {
+        const resData = await this.api.getReservationById(args.reservationId);
+        if (!resData || !resData.success || !resData.data) {
+          return { success: false, error: 'Could not fetch reservation to look up door code.' };
+        }
+        const code = this.api.extractCustomField(resData.data, 'portal_doorcode');
+        if (!code) {
+          return { success: false, error: 'No door code on file for this reservation. Portal may not have synced yet — escalate to the front desk.' };
+        }
+        const r = resData.data;
+        const guestName = (r.guestName || '').toString();
+        let roomName = '';
+        if (r.guestList && typeof r.guestList === 'object') {
+          for (const g of Object.values(r.guestList)) {
+            if (g && Array.isArray(g.rooms) && g.rooms[0] && g.rooms[0].roomName) { roomName = g.rooms[0].roomName; break; }
+          }
+        }
+        return { success: true, code, roomName, guestName, reservationId: args.reservationId };
       }
 
       if (name === 'chargePhysicalTerminal') {
