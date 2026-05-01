@@ -16,24 +16,33 @@ function injectTabletButton() {
 
     const reservationId = resMatch[1];
 
-    if (document.getElementById('cloudbeds-kiosk-push-btn')) {
+    if (document.getElementById('cloudbeds-kiosk-push-container')) {
         // Already injected, just update the dataset ID in case URL changed
-        document.getElementById('cloudbeds-kiosk-push-btn').dataset.resId = reservationId;
+        document.getElementById('cloudbeds-kiosk-push-container').dataset.resId = reservationId;
         return;
     }
 
-    // Create the floating button
-    const btn = document.createElement("button");
-    btn.id = "cloudbeds-kiosk-push-btn";
-    btn.dataset.resId = reservationId;
-    btn.innerText = "📲 Push to Tablet";
+    // Create the container
+    const container = document.createElement("div");
+    container.id = "cloudbeds-kiosk-push-container";
+    container.dataset.resId = reservationId;
 
-    // Styling to look native but float in the bottom right corner
-    Object.assign(btn.style, {
+    Object.assign(container.style, {
         position: 'fixed',
         bottom: '30px',
         right: '30px',
         zIndex: '999999',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        gap: '10px'
+    });
+
+    // Create the main toggle button
+    const mainBtn = document.createElement("button");
+    mainBtn.innerText = "📲 Push to Tablet";
+    
+    const btnStyle = {
         backgroundColor: '#007BFF',
         color: '#FFFFFF',
         border: 'none',
@@ -44,47 +53,94 @@ function injectTabletButton() {
         boxShadow: '0px 4px 6px rgba(0,0,0,0.2)',
         cursor: 'pointer',
         transition: 'all 0.3s ease'
+    };
+    Object.assign(mainBtn.style, btnStyle);
+
+    mainBtn.addEventListener('mouseenter', () => { mainBtn.style.backgroundColor = '#0056b3'; });
+    mainBtn.addEventListener('mouseleave', () => { mainBtn.style.backgroundColor = '#007BFF'; });
+
+    // Create the expanded options menu
+    const optionsMenu = document.createElement("div");
+    Object.assign(optionsMenu.style, {
+        display: 'none',
+        flexDirection: 'column',
+        gap: '5px',
+        backgroundColor: 'white',
+        padding: '10px',
+        borderRadius: '10px',
+        boxShadow: '0px 4px 12px rgba(0,0,0,0.15)'
     });
 
-    btn.addEventListener('mouseenter', () => { btn.style.backgroundColor = '#0056b3'; });
-    btn.addEventListener('mouseleave', () => { btn.style.backgroundColor = '#007BFF'; });
-
-    btn.addEventListener('click', () => {
-        const id = btn.dataset.resId;
-        btn.innerText = 'Pushing...';
-        
-        // Ping our local Autonomy Engine server
-        fetch('http://10.25.25.39:3000/api/kiosk/push', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reservationId: id })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                btn.innerText = '✅ Tablet Synced!';
-                btn.style.backgroundColor = '#28a745';
-                setTimeout(() => {
-                    btn.innerText = "📲 Push to Tablet";
-                    btn.style.backgroundColor = '#007BFF';
-                }, 3000);
-            } else {
-                alert("Failed to sync to tablet: " + data.error);
-                btn.innerText = "📲 Push to Tablet";
-            }
-        })
-        .catch(err => {
-            alert("Local Autonomy server unreachable. Make sure node server.js is running.");
-            btn.innerText = "📲 Push to Tablet";
+    const createOption = (kioskId, label) => {
+        const opt = document.createElement("button");
+        opt.innerText = label;
+        Object.assign(opt.style, {
+            backgroundColor: '#f8f9fa',
+            color: '#333',
+            border: '1px solid #ddd',
+            borderRadius: '5px',
+            padding: '8px 16px',
+            fontSize: '14px',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            transition: 'background 0.2s'
         });
+        opt.addEventListener('mouseenter', () => { opt.style.backgroundColor = '#e2e6ea'; });
+        opt.addEventListener('mouseleave', () => { opt.style.backgroundColor = '#f8f9fa'; });
+        
+        opt.addEventListener('click', () => {
+            const id = container.dataset.resId;
+            const originalText = mainBtn.innerText;
+            mainBtn.innerText = `Pushing to Kiosk ${kioskId}...`;
+            optionsMenu.style.display = 'none';
+            
+            fetch('http://10.25.25.39:3000/api/kiosk/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reservationId: id, kioskId: kioskId })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    mainBtn.innerText = `✅ Kiosk ${kioskId} Synced!`;
+                    mainBtn.style.backgroundColor = '#28a745';
+                    setTimeout(() => {
+                        mainBtn.innerText = "📲 Push to Tablet";
+                        mainBtn.style.backgroundColor = '#007BFF';
+                    }, 3000);
+                } else {
+                    alert("Failed to sync to tablet: " + data.error);
+                    mainBtn.innerText = "📲 Push to Tablet";
+                }
+            })
+            .catch(err => {
+                alert("Local Autonomy server unreachable. Make sure node server.js is running.");
+                mainBtn.innerText = "📲 Push to Tablet";
+            });
+        });
+        return opt;
+    };
+
+    optionsMenu.appendChild(createOption('1', 'Kiosk 1 (Terminal 1)'));
+    optionsMenu.appendChild(createOption('2', 'Kiosk 2 (Terminal 2)'));
+
+    // Toggle menu on click
+    mainBtn.addEventListener('click', () => {
+        if (optionsMenu.style.display === 'none') {
+            optionsMenu.style.display = 'flex';
+        } else {
+            optionsMenu.style.display = 'none';
+        }
     });
 
-    document.body.appendChild(btn);
+    container.appendChild(optionsMenu);
+    container.appendChild(mainBtn);
+    document.body.appendChild(container);
 }
 
 function removeTabletButton() {
-    const btn = document.getElementById('cloudbeds-kiosk-push-btn');
-    if (btn) btn.remove();
+    const container = document.getElementById('cloudbeds-kiosk-push-container');
+    if (container) container.remove();
 }
 
 // Observe URL changes natively inside the Cloudbeds SPA

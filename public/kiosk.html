@@ -347,25 +347,14 @@
 
     <script>
         // --- CONFIGURATION ---
-        // Each tablet is paired 1:1 with a Stripe WisePOS E reader. Pull
-        // which Reader THIS tablet should drive from the URL so we don't
-        // have to maintain per-tablet edits to this file. Two accepted
-        // forms:
-        //   ?terminal=Reader%202   → "Reader 2" (full name)
-        //   ?terminal=2            → "Reader 2" (number-only shorthand)
-        // Defaults to "Reader 1" when the param is absent so existing
-        // single-tablet bookmarks keep working unchanged.
-        const TERMINAL_NAME = (() => {
-            const raw = new URLSearchParams(window.location.search).get('terminal');
-            if (!raw) return 'Reader 1';
-            const trimmed = raw.trim();
-            // Coerce number-only shorthand to "Reader N".
-            const candidate = /^\d+$/.test(trimmed) ? `Reader ${trimmed}` : trimmed;
-            // Whitelist match. Anything else (typo, junk, prompt-injection
-            // attempt) falls back to Reader 1 rather than getting echoed
-            // into logs and downstream selectors.
-            return /^Reader \d+$/.test(candidate) ? candidate : 'Reader 1';
-        })();
+        // Each tablet is assigned a Kiosk ID (e.g., ?kioskId=1) which is saved to localStorage.
+        // It is paired 1:1 with a Stripe WisePOS E reader based on this ID.
+        const kioskIdParam = new URLSearchParams(window.location.search).get('kioskId');
+        if (kioskIdParam) {
+            localStorage.setItem('kioskId', kioskIdParam);
+        }
+        const MY_KIOSK_ID = localStorage.getItem('kioskId') || '1';
+        const TERMINAL_NAME = `Reader ${MY_KIOSK_ID}`;
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
         let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
@@ -396,18 +385,31 @@
 
         // --- WEBSOCKET LISTENER FOR FRONT DESK PUSH ---
         const socket = io(); // Connects to the local server.js
-        socket.on('pushToTablet', (data) => {
+        socket.on('pushToTablet', async (data) => {
             if(data.reservationId) {
-                setLoading(true, `Incoming Check-In for Reservation ${data.reservationId}. Redirecting to Guest Portal...`, false);
+                // Ignore pushes intended for a different kiosk
+                if (data.kioskId && data.kioskId !== MY_KIOSK_ID) return;
 
-                setTimeout(() => {
-                    if (!kioskConfig.propertyID) {
-                        showToast("Kiosk is missing property configuration. Please see the front desk.");
-                        setLoading(false);
-                        return;
+                showForm('checkin'); // Set UI to Check-in Mode
+                setLoading(true, `Loading Registration Card...`, false);
+
+                try {
+                    const res = await fetch('/api/kiosk/identify', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lookupValue: data.reservationId, mode: 'checkin' })
+                    });
+                    const identifyData = await res.json();
+                    setLoading(false);
+                    if (identifyData.success) {
+                        // Bypass PIN step, jump straight to registration
+                        showRegistrationStep(identifyData.guestData || {}, data.reservationId);
+                    } else {
+                        showToast("Failed to load reservation for check-in.");
                     }
-                    window.location.href = `${kioskConfig.guestPortalBase}/${kioskConfig.propertyID}/reservation/${data.reservationId}`;
-                }, 1500);
+                } catch (e) {
+                    setLoading(false);
+                    showToast("Network Error connecting to the desk.");
+                }
             }
         });
 
