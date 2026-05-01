@@ -449,13 +449,38 @@ STANDARD WORKFLOW:
       return { success: false, error: 'Could not fetch reservation to evaluate invoice.' };
     }
 
-    const source = (resData.data.source || '').toLowerCase();
-    const guestEmail = this._resolveGuestEmail(resData.data) || '';
+    const r = resData.data;
+    // Channel-collect detection has to use multiple signals because the
+    // kiosk registration card overwrites the guest's email with their
+    // real one, so the masked-email check (the original signal) silently
+    // breaks the moment a guest goes through check-in. We layer:
+    //   1. paymentType — Cloudbeds' authoritative flag when present
+    //   2. OTA source + third-party identifier — definitive OTA booking
+    //   3. Masked email — legacy check, only works pre-registration
+    //   4. source string containing 'collect' — legacy
+    const paymentType = (r.paymentType || '').toString().toLowerCase();
+    const sourceName = (r.sourceName || '').toString().toLowerCase();
+    const sourceLegacy = (r.source || '').toString().toLowerCase();
+    const sourceID = (r.sourceID || '').toString().toLowerCase();
+    const tpid = r.thirdPartyIdentifier;
+    const guestEmail = this._resolveGuestEmail(r) || '';
+
+    const OTA_SOURCES = ['expedia', 'booking.com', 'hotels.com', 'agoda', 'airbnb', 'orbitz', 'priceline', 'travelocity', 'kayak', 'trivago'];
+    const isOtaSource = OTA_SOURCES.some(s => sourceName.includes(s) || sourceLegacy.includes(s));
     const isMaskedEmail = guestEmail.includes('expediapartnercentral.com') || guestEmail.includes('guest.booking.com') || guestEmail.includes('agoda.com');
-    const isChannelCollect = isMaskedEmail || source.includes('expedia collect') || source.includes('booking.com collect');
+    const isStorefrontSource = sourceID.startsWith('ss-'); // Cloudbeds prefix for channel-managed sources
+
+    const isChannelCollect = (
+      paymentType === 'channel_collect' ||
+      paymentType === 'cc' ||
+      (isOtaSource && tpid) ||
+      (isStorefrontSource && tpid) ||
+      isMaskedEmail ||
+      sourceLegacy.includes('collect')
+    );
 
     if (isChannelCollect) {
-      logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${reservationId} - Identified as Channel Collect / OTA Masked Booking!`);
+      logger.warn(`[CHECKOUT GUARD] Skipping Email Invoice step for ${reservationId} (paymentType=${paymentType || 'n/a'}, sourceName=${sourceName || 'n/a'}, tpid=${tpid || 'n/a'}, masked=${isMaskedEmail}).`);
       return { success: true, message: 'Invoice skipped due to Channel Collect policy.' };
     }
     if (!guestEmail) {
