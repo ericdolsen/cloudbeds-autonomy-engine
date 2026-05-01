@@ -26,10 +26,10 @@
             font-family: 'Outfit', sans-serif;
             background-color: var(--primary-bg);
             color: var(--text-main);
-            min-height: 100vh;
+            height: 100vh;
             display: flex;
             overflow: hidden;
-            background-image: 
+            background-image:
                 radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.08), transparent 25%),
                 radial-gradient(circle at 85% 30%, rgba(147, 51, 234, 0.08), transparent 25%);
         }
@@ -252,22 +252,22 @@
 
         <!-- KNOWLEDGE BASE TAB -->
         <div id="view-knowledge" class="view-section">
-            <div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+            <div class="page-header" style="display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap;">
                 <div>
                     <h2>AI Agent Training</h2>
-                    <p>Teach the Autonomy Engine how to answer guest questions.</p>
+                    <p>Teach the Autonomy Engine how to answer guest questions. Click a rule to edit it; remember to save when you're done.</p>
                 </div>
-                <button class="btn" onclick="addKnowledgeRow()">
-                    + Add New Rule
-                </button>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <span id="kbDirtyBadge" style="display: none; color: #fbbf24; font-size: 0.95rem; font-weight: 500;">● Unsaved changes</span>
+                    <button class="btn" onclick="addKnowledgeRow()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent);">+ Add New Rule</button>
+                    <button id="kbDiscardBtn" class="btn" onclick="discardKnowledgeChanges()" style="display: none; background: transparent; border: 1px solid #94a3b8; color: #94a3b8;">Discard</button>
+                    <button id="kbSaveBtn" class="btn" disabled onclick="saveKnowledgeBase()" style="background: rgba(34, 197, 94, 0.4); opacity: 0.5; cursor: not-allowed;">Save Changes to AI</button>
+                </div>
             </div>
 
             <div class="report-card" style="margin-bottom: 25px;">
-                <div id="knowledgeList" style="display: flex; flex-direction: column; gap: 15px;">
+                <div id="knowledgeList" style="display: flex; flex-direction: column; gap: 12px;">
                     <!-- Rows populated by JS -->
-                </div>
-                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
-                    <button class="btn" style="background: var(--success);" onclick="saveKnowledgeBase()">Save Changes to AI</button>
                 </div>
             </div>
         </div>
@@ -422,7 +422,34 @@
         }
 
         // --- KNOWLEDGE BASE LOGIC ---
+        // Working copy of the rules. Saved-to-server snapshot is pristine
+        // (used to compute dirty state and to discard changes).
         let kbData = [];
+        let kbPristine = '[]';
+        let kbEditing = new Set(); // indices currently in edit mode
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function isKbDirty() {
+            return JSON.stringify(kbData) !== kbPristine;
+        }
+
+        function refreshKbToolbar() {
+            const dirty = isKbDirty();
+            const badge = document.getElementById('kbDirtyBadge');
+            const saveBtn = document.getElementById('kbSaveBtn');
+            const discardBtn = document.getElementById('kbDiscardBtn');
+            if (badge) badge.style.display = dirty ? 'inline' : 'none';
+            if (discardBtn) discardBtn.style.display = dirty ? 'inline-block' : 'none';
+            if (saveBtn) {
+                saveBtn.disabled = !dirty;
+                saveBtn.style.opacity = dirty ? '1' : '0.5';
+                saveBtn.style.cursor = dirty ? 'pointer' : 'not-allowed';
+                saveBtn.style.background = dirty ? 'var(--success)' : 'rgba(34, 197, 94, 0.4)';
+            }
+        }
 
         async function loadKnowledgeBase() {
             try {
@@ -430,7 +457,10 @@
                 const result = await res.json();
                 if (result.success) {
                     kbData = result.data || [];
+                    kbPristine = JSON.stringify(kbData);
+                    kbEditing = new Set();
                     renderKnowledgeBase();
+                    refreshKbToolbar();
                 }
             } catch (e) {
                 showToast("❌ Failed to load Knowledge Base");
@@ -439,29 +469,80 @@
 
         function renderKnowledgeBase() {
             const list = document.getElementById('knowledgeList');
-            list.innerHTML = kbData.map((item, idx) => `
-                <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 8px; border: 1px solid var(--glass-border);">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                        <input type="text" value="${item.topic.replace(/"/g, '&quot;')}" onchange="updateKb(${idx}, 'topic', this.value)" placeholder="Topic (e.g. WiFi Password)" style="width: 80%; background: transparent; border: none; border-bottom: 1px solid var(--glass-border); color: var(--accent); font-size: 1.1rem; font-family: 'Outfit'; font-weight: 500; outline: none;">
-                        <button onclick="deleteKb(${idx})" style="background: transparent; border: none; color: #ef4444; cursor: pointer; font-size: 1.2rem;">&times;</button>
+            if (kbData.length === 0) {
+                list.innerHTML = '<p style="color: var(--text-muted); padding: 20px; text-align: center;">No rules yet. Click "+ Add New Rule" to teach the AI something.</p>';
+                refreshKbToolbar();
+                return;
+            }
+            list.innerHTML = kbData.map((item, idx) => {
+                const editing = kbEditing.has(idx);
+                if (editing) {
+                    // Editable card.
+                    return `
+                        <div style="background: rgba(56, 189, 248, 0.08); padding: 18px; border-radius: 10px; border: 1px solid var(--accent);">
+                            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px;">
+                                <input type="text" value="${escapeHtml(item.topic)}" oninput="updateKb(${idx}, 'topic', this.value)" placeholder="Topic (e.g. WiFi Password)" style="flex: 1; background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--accent); font-size: 1.05rem; font-family: 'Outfit'; font-weight: 500; padding: 8px 12px; outline: none;">
+                                <button onclick="exitKbEdit(${idx})" style="background: var(--accent); border: none; color: #0f172a; cursor: pointer; padding: 8px 16px; border-radius: 6px; font-family: 'Outfit'; font-weight: 600;">Done</button>
+                                <button onclick="deleteKb(${idx})" title="Delete rule" style="background: transparent; border: 1px solid #ef4444; color: #ef4444; cursor: pointer; padding: 8px 12px; border-radius: 6px; font-family: 'Outfit';">Delete</button>
+                            </div>
+                            <textarea oninput="updateKb(${idx}, 'info', this.value)" placeholder="Enter the exact answer or policy the AI should give the guest..." style="width: 100%; min-height: 90px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: white; padding: 10px; font-family: 'Outfit'; resize: vertical; box-sizing: border-box;">${escapeHtml(item.info)}</textarea>
+                        </div>
+                    `;
+                }
+                // Read-only card.
+                const preview = (item.info || '').toString();
+                const truncated = preview.length > 200 ? preview.substring(0, 200) + '…' : preview;
+                return `
+                    <div onclick="enterKbEdit(${idx})" style="background: rgba(0,0,0,0.2); padding: 16px 18px; border-radius: 10px; border: 1px solid var(--glass-border); cursor: pointer; transition: border-color 0.15s, background 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--glass-border)'">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px;">
+                            <div style="color: var(--accent); font-size: 1.05rem; font-weight: 500;">${escapeHtml(item.topic) || '<em style="color: var(--text-muted)">(no topic)</em>'}</div>
+                            <div style="color: var(--text-muted); font-size: 0.85rem; flex-shrink: 0;">Click to edit</div>
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap;">${truncated ? escapeHtml(truncated) : '<em>(no answer set yet)</em>'}</div>
                     </div>
-                    <textarea onchange="updateKb(${idx}, 'info', this.value)" placeholder="Enter the exact answer or policy here..." style="width: 100%; height: 60px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: white; padding: 10px; font-family: 'Outfit'; resize: vertical;">${item.info}</textarea>
-                </div>
-            `).join('');
-            if (kbData.length === 0) list.innerHTML = '<p style="color: var(--text-muted);">No rules found. Add one above!</p>';
+                `;
+            }).join('');
+            refreshKbToolbar();
+        }
+
+        function enterKbEdit(idx) {
+            kbEditing.add(idx);
+            renderKnowledgeBase();
+        }
+
+        function exitKbEdit(idx) {
+            kbEditing.delete(idx);
+            renderKnowledgeBase();
         }
 
         function addKnowledgeRow() {
             kbData.unshift({ topic: 'New Topic', info: '' });
+            // Shift edit-mode indices forward by one since we unshifted.
+            kbEditing = new Set(Array.from(kbEditing).map(i => i + 1));
+            kbEditing.add(0); // open the new row in edit mode
             renderKnowledgeBase();
         }
 
         function updateKb(idx, field, val) {
             kbData[idx][field] = val;
+            refreshKbToolbar();
         }
 
         function deleteKb(idx) {
+            if (!confirm(`Delete rule "${kbData[idx].topic || '(no topic)'}"?`)) return;
             kbData.splice(idx, 1);
+            // Drop and re-shift any edit-mode indices past the removed one.
+            kbEditing = new Set(Array.from(kbEditing)
+                .filter(i => i !== idx)
+                .map(i => (i > idx ? i - 1 : i)));
+            renderKnowledgeBase();
+        }
+
+        function discardKnowledgeChanges() {
+            if (!isKbDirty()) return;
+            if (!confirm('Discard all unsaved changes?')) return;
+            kbData = JSON.parse(kbPristine);
+            kbEditing = new Set();
             renderKnowledgeBase();
         }
 
@@ -474,6 +555,8 @@
                 });
                 const data = await res.json();
                 if (data.success) {
+                    kbPristine = JSON.stringify(kbData);
+                    refreshKbToolbar();
                     showToast("✅ Knowledge Base saved to AI Engine!");
                 } else {
                     throw new Error(data.error);
@@ -482,6 +565,14 @@
                 showToast(`❌ Failed to save: ${e.message}`);
             }
         }
+
+        // Warn before navigating away with unsaved changes.
+        window.addEventListener('beforeunload', (e) => {
+            if (isKbDirty()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
 
         // Load KB on startup
         loadKnowledgeBase();
