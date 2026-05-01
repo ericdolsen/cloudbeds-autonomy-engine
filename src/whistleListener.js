@@ -177,45 +177,65 @@ class WhistleListener {
       logger.info(`[WHISTLE RPA] Dumped ${i} frames to cloudbeds_whistle_dump_frame_*.html for analysis.`);
     }
 
-    // Whistle's inbox URL lands on a channel selector. We click the
-    // "Guest" sidebar row to load the conversation list. Detect the
-    // selector state by whether OTHER category headers ("Housekeeping")
-    // are still visible — "Select a conversation" alone is ambiguous
-    // because it also shows when Guest is expanded with no conv picked.
+    // Whistle's inbox sidebar is a Chakra accordion; the "Guest" row is a
+    // <button class="chakra-accordion__button"> whose aria-expanded
+    // attribute reflects whether its conversation list is open. If we
+    // land on the inbox with Guest collapsed, the conversation list is
+    // hidden and Unread badges aren't reachable downstream, so expand it.
+    //
+    // Previously we gated this on "Select a conversation" AND a visible
+    // "Housekeeping" header, but those signals weren't reliable across
+    // every transient state Whistle leaves the inbox in. The accordion's
+    // own aria-expanded is the source of truth.
     const debugRpa = process.env.WHISTLE_RPA_DEBUG === 'true';
-    const emptyState = await this.page.locator('text=/Select a conversation/i').first()
-        .isVisible().catch(() => false);
-    const onChannelSelector = emptyState && await this.page.getByText('Housekeeping', { exact: true }).first()
-        .isVisible().catch(() => false);
-    if (onChannelSelector) {
-        let clicked = false;
-        // exact:true rules out "Guest chat" (the tab strip).
-        const guestRow = this.page.getByText('Guest', { exact: true }).first()
-            .locator('xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]');
-        if ((await guestRow.count().catch(() => 0)) > 0) {
-            if (debugRpa) {
-                logger.info('[WHISTLE RPA] Inbox is on the channel selector; clicking the "Guest" category to load conversations.');
-            }
-            await guestRow.first().click().catch(() => {});
-            await this.page.waitForTimeout(2500);
-            clicked = true;
+    const guestAccordion = this.page
+        .locator('button.chakra-accordion__button', { hasText: /^Guest$/ })
+        .first();
+
+    const guestExpanded = await guestAccordion
+        .getAttribute('aria-expanded')
+        .catch(() => null);
+
+    if (guestExpanded === 'false') {
+        if (debugRpa) {
+            logger.info('[WHISTLE RPA] Guest accordion is collapsed; clicking to expand.');
         }
-        // Fallback: numeric-badge selector if the text-based row click missed.
-        if (!clicked) {
-            const channelCountBadge = this.page.locator('span.chakra-badge:visible')
-                .filter({ hasText: /^\s*\d+\s*$/ })
-                .first();
-            if (await channelCountBadge.isVisible().catch(() => false)) {
-                const channelRow = channelCountBadge.locator(
-                    'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
-                );
-                if ((await channelRow.count()) > 0) {
-                    if (debugRpa) {
-                        logger.info('[WHISTLE RPA] Inbox is on the channel selector; falling back to numeric-badge channel pick.');
+        await guestAccordion.click().catch(() => {});
+        // Wait for the expand state to flip; bail after 3s if it doesn't
+        // so we don't block the polling cycle on a stuck DOM.
+        await this.page
+            .waitForFunction(
+                () => {
+                    const btns = document.querySelectorAll('button.chakra-accordion__button');
+                    for (const b of btns) {
+                        if (b.textContent && b.textContent.trim() === 'Guest') {
+                            return b.getAttribute('aria-expanded') === 'true';
+                        }
                     }
-                    await channelRow.first().click();
-                    await this.page.waitForTimeout(2500);
+                    return false;
+                },
+                null,
+                { timeout: 3000 }
+            )
+            .catch(() => {});
+    } else if (guestExpanded === null) {
+        // Accordion not found — could mean the inbox hasn't hydrated yet,
+        // or Whistle restructured the sidebar. Fall back to the legacy
+        // numeric-badge channel-row click so we still have a way to load
+        // conversations on layouts that don't use chakra-accordion.
+        const channelCountBadge = this.page.locator('span.chakra-badge:visible')
+            .filter({ hasText: /^\s*\d+\s*$/ })
+            .first();
+        if (await channelCountBadge.isVisible().catch(() => false)) {
+            const channelRow = channelCountBadge.locator(
+                'xpath=ancestor::*[self::a or self::button or @role="button" or @onclick or @tabindex][1]'
+            );
+            if ((await channelRow.count()) > 0) {
+                if (debugRpa) {
+                    logger.info('[WHISTLE RPA] Guest accordion not found; falling back to numeric-badge channel pick.');
                 }
+                await channelRow.first().click().catch(() => {});
+                await this.page.waitForTimeout(2500);
             }
         }
     }
