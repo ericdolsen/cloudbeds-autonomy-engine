@@ -162,6 +162,21 @@ class WhistleListener {
       this._loggedOut = false;
     }
 
+    if (!this._hasDumpedDom) {
+      this._hasDumpedDom = true;
+      const fs = require('fs');
+      let i = 0;
+      for (const frame of this.page.frames()) {
+        try {
+          fs.writeFileSync(`cloudbeds_whistle_dump_frame_${i}.html`, await frame.content());
+          i++;
+        } catch (e) {
+          logger.warn(`Could not dump frame ${i}: ${e.message}`);
+        }
+      }
+      logger.info(`[WHISTLE RPA] Dumped ${i} frames to cloudbeds_whistle_dump_frame_*.html for analysis.`);
+    }
+
     // Whistle's inbox URL lands on a channel selector. We click the
     // "Guest" sidebar row to load the conversation list. Detect the
     // selector state by whether OTHER category headers ("Housekeeping")
