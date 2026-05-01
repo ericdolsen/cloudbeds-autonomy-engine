@@ -4,13 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Hotel Kiosk Landing</title>
-    <!-- Google Fonts -->
+    <!-- Google Fonts: Inter for UI, Fraunces for the Lobby display serif -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Gateway Park theme tokens + components (see public/handoff/STYLE-GUIDE.md) -->
+    <link rel="stylesheet" href="/handoff/gateway-theme.css">
     <style>
         :root {
-            --primary-bg: #0f172a; /* Slate 900 */
+            /* Form-only legacy palette. Round 1 restyles only the landing
+               surface; the multi-step forms still use these tokens. Round 2
+               will retheme the forms to the Lobby brass palette. */
+            --primary-bg: #0f172a;
             --glass-bg: rgba(30, 41, 59, 0.4);
             --glass-border: rgba(255, 255, 255, 0.1);
             --text-main: #f8fafc;
@@ -26,114 +31,29 @@
         }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            background-color: var(--primary-bg);
-            color: var(--text-main);
             height: 100vh;
             width: 100vw;
             overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             position: relative;
         }
 
-        /* Abstract Animated Background Elements */
-        .bg-shape {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(100px);
-            z-index: 0;
-            animation: float 20s infinite ease-in-out alternate;
-        }
+        /* Theme defines .kiosk as overflow:hidden. This kiosk has multi-step
+           forms (lookup → PIN → registration card) that can exceed viewport
+           height on the registration screen, so allow vertical scroll. */
+        .kiosk { overflow: auto; }
 
-        .shape1 { width: 800px; height: 800px; background: linear-gradient(135deg, rgba(79, 70, 229, 0.3), rgba(147, 51, 234, 0.3)); top: -200px; left: -100px; animation-delay: 0s; }
-        .shape2 { width: 700px; height: 700px; background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(56, 189, 248, 0.2)); bottom: -200px; right: -100px; animation-delay: -5s; }
-        .shape3 { width: 600px; height: 600px; background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(244, 63, 94, 0.15)); top: 30%; left: 50%; animation-delay: -10s; }
+        /* When forms are open the action grid is hidden; when restored the
+           grid layout from .kiosk-actions takes over (theme provides it). */
 
-        @keyframes float {
-            0% { transform: translate(0, 0) scale(1); }
-            50% { transform: translate(60px, 40px) scale(1.05); }
-            100% { transform: translate(-40px, -60px) scale(0.95); }
-        }
-
-        /* Main Container */
-        .kiosk-container {
-            width: 100vw;
-            height: 100vh;
-            background: var(--glass-bg);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: none;
-            border-radius: 0;
-            box-shadow: none;
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            padding: 40px;
-            position: relative;
-            overflow-y: auto;
-            overflow-x: hidden;
-            transition: all 0.5s ease;
-        }
-
-        .header { text-align: center; margin-bottom: 20px; }
-        .hotel-logo { max-width: 450px; height: auto; filter: drop-shadow(0px 4px 10px rgba(0,0,0,0.5)); margin-bottom: 10px; }
-        .hotel-subtitle { font-size: 1.2rem; color: var(--text-muted); font-weight: 400; letter-spacing: 3px; text-transform: uppercase; margin-top: 10px; }
-
-        .clock-widget { text-align: center; margin: auto 0; flex-grow: 1; display: flex; flex-direction: column; justify-content: center; }
-        .time { font-size: 9rem; font-weight: 600; line-height: 1; letter-spacing: -2px; }
-        .date { font-size: 1.6rem; color: var(--text-muted); margin-top: 15px; font-weight: 300; letter-spacing: 1px; }
-
-        /* QR Code Widget */
-        .qr-widget {
-            position: absolute;
-            bottom: 40px;
-            right: 40px;
-            text-align: center;
-            background: rgba(15, 23, 42, 0.7);
-            padding: 15px;
-            border-radius: 16px;
-            border: 1px solid var(--glass-border);
-            backdrop-filter: blur(15px);
-            z-index: 50;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            transition: transform 0.3s ease;
-        }
-        .qr-widget:hover { transform: scale(1.05); }
-        .qr-widget img {
-            width: 120px;
-            height: 120px;
-            background: white;
-            padding: 8px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-        }
-        .qr-widget p {
-            margin-top: 12px;
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            line-height: 1.3;
-            letter-spacing: 0.5px;
-        }
-
-        /* Actions & Forms */
-        .main-actions, .checkout-form {
-            display: flex;
-            gap: 40px;
-            justify-content: center;
-            margin-top: auto;
-            transition: all 0.4s ease;
-        }
-        
+        /* Forms — display rules only; visuals stay on the legacy palette. */
         .checkout-form {
             display: none;
             flex-direction: column;
             align-items: center;
             gap: 20px;
             width: 100%;
+            margin-top: auto;
+            margin-bottom: 80px;
         }
         
         .form-row {
@@ -215,45 +135,77 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none;
         }
 
-        .footer { position: absolute; bottom: 30px; left: 0; width: 100%; text-align: center; color: var(--text-muted); opacity: 0.5; }
     </style>
 </head>
-<body>
-
-    <div class="bg-shape shape1"></div>
-    <div class="bg-shape shape2"></div>
-    <div class="bg-shape shape3"></div>
+<body class="lobby">
 
     <div class="toast" id="errorToast"></div>
 
-    <div class="kiosk-container">
-        
-        <div class="header">
-            <img src="images/logo.png" alt="Gateway Park Hotel" class="hotel-logo">
-            <p class="hotel-subtitle">Self-Service Portal</p>
-        </div>
+    <div class="kiosk">
 
-        <div class="clock-widget">
-            <div class="time" id="time">--:--</div>
-            <div class="date" id="date">Updating date...</div>
-        </div>
-
-        <!-- Main Buttons -->
-        <div class="main-actions" id="mainActions" style="flex-direction: column; align-items: center; gap: 20px;">
-            <div style="display: flex; gap: 40px; justify-content: center; flex-wrap: wrap;">
-                <button class="kiosk-btn" onclick="showForm('checkin')">
-                    <span class="icon">✨</span>
-                    <span class="text">Guest Check-In</span>
-                </button>
-                <button class="kiosk-btn" onclick="showForm('checkout')">
-                    <span class="icon">🧾</span>
-                    <span class="text">Express Check-Out</span>
-                </button>
+        <!-- TOP BAR: brand mark on left, status on right.
+             .header is kept as an alias class because the form-mode JS
+             does document.querySelector('.header').style.display = ... -->
+        <div class="kiosk-head header">
+            <div class="kiosk-mark">
+                <div class="crest">est. South Dakota</div>
+                <div class="name">Gateway Park</div>
+                <div class="sub">Hotel &amp; Suites &middot; Self-Service</div>
             </div>
-            <button class="kiosk-btn secondary" style="width: auto; padding: 15px 40px; border-radius: 20px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);" onclick="showForm('print')">
-                <span class="icon" style="font-size: 1.2rem; margin-right: 10px;">🖨️</span>
-                <span class="text" style="font-size: 1rem; font-weight: 500;">Print Receipt</span>
-            </button>
+            <div class="kiosk-status">
+                <span class="dot"></span>
+                <span>Front Desk Open</span>
+            </div>
+        </div>
+
+        <!-- CENTER HERO: greeting + clock + date.
+             .clock-widget alias kept for the form-mode hide/show JS. -->
+        <div class="kiosk-clock clock-widget">
+            <div class="kiosk-greeting">welcome <em>home</em></div>
+            <div class="kiosk-time" id="time">--:--</div>
+            <div class="kiosk-date" id="date">Updating date...</div>
+            <div class="kiosk-rule"></div>
+        </div>
+
+        <!-- PRIMARY ACTIONS + secondary print receipt.
+             Wrapped in #mainActions so the existing form-toggle JS that
+             references that id continues to hide/show the whole block. -->
+        <div id="mainActions">
+            <div class="kiosk-actions">
+                <div class="kiosk-tile" role="button" tabindex="0" onclick="showForm('checkin')">
+                    <div class="ic">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                            <circle cx="8.5" cy="7" r="4"/>
+                            <polyline points="17 11 19 13 23 9"/>
+                        </svg>
+                    </div>
+                    <div class="text">
+                        <div class="label">Guest Check-In</div>
+                        <div class="help">Confirm details, settle any balance, get your room.</div>
+                    </div>
+                    <div class="arrow">&rarr;</div>
+                </div>
+                <div class="kiosk-tile" role="button" tabindex="0" onclick="showForm('checkout')">
+                    <div class="ic">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                    </div>
+                    <div class="text">
+                        <div class="label">Express Check-Out</div>
+                        <div class="help">Settle the balance and have a receipt emailed to you.</div>
+                    </div>
+                    <div class="arrow">&rarr;</div>
+                </div>
+            </div>
+            <div class="kiosk-secondary">
+                <button type="button" onclick="showForm('print')">Print Receipt</button>
+            </div>
         </div>
 
         <!-- Dynamic Form -->
@@ -329,11 +281,18 @@
             </div>
         </div>
 
-        <div class="footer" id="kioskFooter">SYSTEM ONLINE &bull; TERMINAL CONNECTED</div>
-
-        <div class="qr-widget" id="qrWidget">
-            <img src="images/qrcode.png" alt="Scan Guest Portal">
-            <p>Scan to check-in/out<br>on your mobile device</p>
+        <!-- FOOTER: status string on the left, scan-to-check-in QR on the
+             right. .footer alias and id="qrWidget" preserved so the form-
+             toggle JS continues to hide/show the same regions. -->
+        <div class="kiosk-foot footer" id="kioskFoot">
+            <div id="kioskFooter">SYSTEM ONLINE &middot; TERMINAL CONNECTED</div>
+            <div class="qr" id="qrWidget">
+                <div class="qr-text">
+                    <strong>Scan to check-in</strong>
+                    on your phone
+                </div>
+                <img src="images/qrcode.png" alt="Scan Guest Portal" style="width:64px; height:64px; background: var(--p-warm); padding: 6px; border-radius: var(--p-radius);">
+            </div>
         </div>
 
         <div class="loader-overlay" id="loader">
@@ -371,7 +330,7 @@
         
         // Update footer to visibly confirm the kiosk's assigned identity
         const footerEl = document.getElementById('kioskFooter');
-        if (footerEl) footerEl.innerHTML = `SYSTEM ONLINE &bull; KIOSK ${MY_KIOSK_ID} &bull; ${TERMINAL_NAME} CONNECTED`;
+        if (footerEl) footerEl.innerHTML = `SYSTEM ONLINE &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONNECTED`;
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
         let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
@@ -395,8 +354,10 @@
             const now = new Date();
             let hours = now.getHours(); let minutes = now.getMinutes(); const ampm = hours >= 12 ? 'PM' : 'AM';
             hours = hours % 12; hours = hours ? hours : 12; minutes = minutes < 10 ? '0' + minutes : minutes;
-            document.getElementById('time').innerText = hours + ':' + minutes;
-            document.getElementById('date').innerText = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' • ' + ampm;
+            // Theme-friendly time: large digits with a small AM/PM superscript.
+            // Values are numeric / fixed strings so innerHTML is safe here.
+            document.getElementById('time').innerHTML = `${hours}:${minutes}<span class="ampm">${ampm}</span>`;
+            document.getElementById('date').innerText = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         }
         setInterval(updateClock, 1000); updateClock();
 
@@ -464,11 +425,15 @@
         function hideForm() {
             document.getElementById('kioskForm').style.display = 'none';
             document.getElementById('chooserRow').style.display = 'none';
-            document.getElementById('mainActions').style.display = 'flex';
-            document.getElementById('qrWidget').style.display = 'flex';
-            document.querySelector('.footer').style.display = 'block';
-            document.querySelector('.clock-widget').style.display = 'flex';
-            document.querySelector('.header').style.display = 'block';
+            // Empty-string clears the inline display so the theme's CSS
+            // (grid for .kiosk-actions, flex for .kiosk-clock / .kiosk-head /
+            // .kiosk-foot / .kiosk-foot .qr) takes back over. Setting them
+            // to 'flex' or 'block' here would clobber the grid layout.
+            document.getElementById('mainActions').style.display = '';
+            document.getElementById('qrWidget').style.display = '';
+            document.querySelector('.footer').style.display = '';
+            document.querySelector('.clock-widget').style.display = '';
+            document.querySelector('.header').style.display = '';
             kioskGroup = [];
             kioskCompletedIds = new Set();
             if (typeof kioskTopLevelGroups !== 'undefined') kioskTopLevelGroups = [];
