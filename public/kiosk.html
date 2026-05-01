@@ -346,10 +346,17 @@
     <script src="/socket.io/socket.io.js"></script>
 
     <script>
-        // --- CONFIGURATION ---
-        // Each tablet is assigned a Kiosk ID (e.g., ?kioskId=1) which is saved to localStorage.
+        // Each tablet is assigned a Kiosk ID which is saved to localStorage.
         // It is paired 1:1 with a Stripe WisePOS E reader based on this ID.
-        const kioskIdParam = new URLSearchParams(window.location.search).get('kioskId');
+        // We support both ?kioskId=2 and the legacy ?terminal=2 URL formats.
+        const urlParams = new URLSearchParams(window.location.search);
+        let kioskIdParam = urlParams.get('kioskId') || urlParams.get('terminal');
+        
+        // If it was passed as "?terminal=Reader 2", strip out the text.
+        if (kioskIdParam && kioskIdParam.includes('Reader')) {
+            kioskIdParam = kioskIdParam.replace('Reader', '').trim();
+        }
+
         if (kioskIdParam) {
             localStorage.setItem('kioskId', kioskIdParam);
         }
@@ -396,7 +403,7 @@
                 try {
                     const res = await fetch('/api/kiosk/identify', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ lookupValue: data.reservationId, mode: 'checkin' })
+                        body: JSON.stringify({ query: data.reservationId, mode: 'checkin' })
                     });
                     const identifyData = await res.json();
                     setLoading(false);
