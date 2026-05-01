@@ -160,11 +160,12 @@ class AutonomyEngine {
         },
         {
           name: "getDoorCode",
-          description: "Returns the keypad door code Portal/Goki has assigned to a reservation. Use this when a guest reports the code isn't working, asks for their code again, or says they can't get into their room. The code is the same one Portal originally texted them; we're just re-sending it from our number.",
+          description: "Returns the keypad door code(s) Portal/Goki has assigned to a reservation. Use this when a guest reports the code isn't working, asks for their code again, or says they can't get into their room. Multi-room bookings return multiple {room, code} pairs — pass roomNumber to filter to a single one if the guest told you which room they're trying to enter.",
           parameters: {
             type: Type.OBJECT,
             properties: {
-              reservationId: { type: Type.STRING, description: "Cloudbeds reservation ID" }
+              reservationId: { type: Type.STRING, description: "Cloudbeds reservation ID" },
+              roomNumber: { type: Type.STRING, description: "Optional room number (e.g. '215') to filter to. Use this when the guest has already said which room they're trying to get into." }
             },
             required: ["reservationId"]
           }
@@ -254,13 +255,25 @@ CHECK-IN PROTOCOL:
 To check a guest in, always call the 'checkInReservation' tool (NOT 'updateReservation'). Cloudbeds only permits check-in from a 'confirmed' status, so any outstanding balance must first be collected via 'chargePhysicalTerminal' at the kiosk (or in person at the front desk) before you call 'checkInReservation'.
 
 LOCK & ACCESS PROTOCOL:
-When a guest reports trouble entering their room — "code isn't working", "can't get in", "keypad won't open", "didn't get my code", or similar — the door codes are managed by the Portal/Goki lock system and stored on the reservation as the 'portal_doorcode' custom field. You can re-send the code via SMS:
-1. Identify the reservation via 'getReservation'.
-2. Call 'getDoorCode' with the reservationId.
-3. If the tool returns a code, reply warmly with the code formatted clearly. Example: "Hi <name>! Your door code for Room <roomName> is <code>. Enter the code on the keypad and press the unlock button. Let us know if it's still not opening."
-4. ALSO call 'alertFrontDesk' with urgency='high' so staff are aware. Include the room number and the code in issueDescription so they can walk over with a master key if the second attempt fails. Example issueDescription: "Guest <name> in Room <roomName> reported door code issue. Code on file: <code>. Re-sent via SMS; please be ready to assist if it doesn't work."
-5. If 'getDoorCode' returns success:false (no code on file), do NOT make up a code. Tell the guest "Let me get someone from the front desk over to you right away" and call 'alertFrontDesk' with urgency='critical' so staff dispatch immediately.
-6. Never share a door code with someone whose phone number on the conversation doesn't match the reservation's guestPhone/guestCellPhone — if the inbound message phone doesn't match, refuse and escalate.
+When a guest reports trouble entering their room — "code isn't working", "can't get in", "keypad won't open", "didn't get my code", or similar — the door codes are managed by the Portal/Goki lock system and stored on the reservation as the 'portal_doorcode' custom field. The field can hold codes for multiple rooms in a single multi-room booking.
+
+Step 1: Identify the reservation via 'getReservation'.
+
+Step 2: Did the guest already mention a specific room number in their message ("can't get into 215", "code for 218")?
+  - YES → Call 'getDoorCode' with reservationId AND roomNumber.
+  - NO  → Call 'getDoorCode' with reservationId only, then handle the response:
+    - If single-room booking → tool returns one code; proceed to Step 3 confirming the room number explicitly in your reply (guests sometimes forget which room is theirs and that IS the actual problem).
+    - If multi-room booking → tool returns multiRoom:true with the list of rooms. Reply asking the guest which room they're trying to enter (e.g. "I see your booking has rooms 215 and 204 — which one are you trying to get into?"). Once they answer, call 'getDoorCode' again with the roomNumber.
+
+Step 3: With a single code in hand, reply warmly and ALWAYS include the room number alongside the code so the guest can confirm they're at the right door:
+   "Hi <name>! The code for Room <room> is <code>. Enter it on the keypad and press the unlock button. Let us know if it's still not opening."
+
+Step 4: After replying, ALSO call 'alertFrontDesk' with urgency='high'. Put the guest name, room number, and code in issueDescription so staff in the alert console can walk a master key over if the resend doesn't fix it. Example: "Guest <name> in Room <room> reported door code issue. Code on file: <code>. Re-sent via SMS; please assist if needed."
+
+Failure modes:
+- 'getDoorCode' returns success:false with "No door code on file" → Portal hasn't synced. Tell the guest "Let me get someone from the front desk over to you right away" and call 'alertFrontDesk' with urgency='critical'.
+- 'getDoorCode' returns success:false with "No code on file for Room X" → the guest gave a wrong/stale room number. Reply listing the rooms that ARE on file (the tool returns availableRooms): "I have codes for Rooms 215 and 204 on your booking — which one are you trying to enter?"
+- Inbound SMS phone doesn't match the reservation's guestPhone/guestCellPhone (or any sub-guest phone in guestList) → refuse to share the code. Reply "For security I can't text the code without confirming your identity — please call the front desk." and call 'alertFrontDesk' urgency='high'.
 
 CHECKOUT PROTOCOL:
 When a guest indicates they want to check out (texts "checkout", asks to be checked out, confirms a checkout flow, etc.):
@@ -331,19 +344,32 @@ STANDARD WORKFLOW:
         if (!resData || !resData.success || !resData.data) {
           return { success: false, error: 'Could not fetch reservation to look up door code.' };
         }
-        const code = this.api.extractCustomField(resData.data, 'portal_doorcode');
-        if (!code) {
+        const raw = this.api.extractCustomField(resData.data, 'portal_doorcode');
+        if (!raw) {
           return { success: false, error: 'No door code on file for this reservation. Portal may not have synced yet — escalate to the front desk.' };
         }
-        const r = resData.data;
-        const guestName = (r.guestName || '').toString();
-        let roomName = '';
-        if (r.guestList && typeof r.guestList === 'object') {
-          for (const g of Object.values(r.guestList)) {
-            if (g && Array.isArray(g.rooms) && g.rooms[0] && g.rooms[0].roomName) { roomName = g.rooms[0].roomName; break; }
-          }
+        const codes = this.api.parseDoorCodes(raw);
+        if (codes.length === 0) {
+          return { success: false, error: `Door code field present but could not be parsed. Raw value: "${raw.substring(0, 200)}". Escalate to the front desk.` };
         }
-        return { success: true, code, roomName, guestName, reservationId: args.reservationId };
+        const guestName = (resData.data.guestName || '').toString();
+
+        // Caller specified which room they're trying to enter — filter to it.
+        if (args.roomNumber) {
+          const wanted = String(args.roomNumber).trim();
+          const match = codes.find(c => c.room === wanted);
+          if (!match) {
+            return { success: false, error: `No code on file for Room ${wanted}. Available rooms on this reservation: ${codes.map(c => c.room).join(', ')}.`, availableRooms: codes.map(c => c.room) };
+          }
+          return { success: true, room: match.room, code: match.code, guestName, reservationId: args.reservationId };
+        }
+
+        // No room specified.
+        if (codes.length === 1) {
+          return { success: true, room: codes[0].room, code: codes[0].code, guestName, reservationId: args.reservationId, codes };
+        }
+        // Multi-room booking; caller needs to disambiguate.
+        return { success: true, multiRoom: true, codes, guestName, reservationId: args.reservationId, message: `This booking has ${codes.length} rooms (${codes.map(c => c.room).join(', ')}). Ask the guest which room they're trying to enter, then call getDoorCode again with the roomNumber argument.` };
       }
 
       if (name === 'chargePhysicalTerminal') {
