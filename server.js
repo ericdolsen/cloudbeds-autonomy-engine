@@ -737,7 +737,12 @@ app.post('/api/kiosk/checkin', async (req, res) => {
       }
     }
 
-    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely: fetch the reservation, collect any outstanding balance via chargePhysicalTerminal on the kiosk terminal, then call checkInReservation to transition Cloudbeds to checked_in, and communicate success back. If any step fails, surface the exact reason and ask the guest to see the front desk.`;
+    const isCollect = await agent.engine.api.isChannelCollect(reservationId);
+    const paymentInstruction = isCollect 
+      ? "This is a Channel Collect booking. Do NOT use chargePhysicalTerminal. If there is an outstanding balance, it means the virtual card on file failed to auto-charge. In this case, DO NOT check them in. Instead, escalate to the front desk so they can charge the card on file, and tell the guest the front desk will assist them."
+      : "collect any outstanding balance via chargePhysicalTerminal on the kiosk terminal,";
+
+    const promptText = `A guest with last name "${lastName}" is at the kiosk attempting to physically check in to reservation ${reservationId} using terminal ${terminalName}. Please process their check-in completely: fetch the reservation, ${paymentInstruction} then call checkInReservation to transition Cloudbeds to checked_in, and communicate success back. If any step fails, surface the exact reason and ask the guest to see the front desk.`;
 
     const result = await agent.processIncomingMessage({ source: 'kiosk', text: promptText });
 
@@ -773,6 +778,12 @@ app.post('/api/kiosk/print_receipt', async (req, res) => {
 
   logger.info(`[KIOSK] Print Receipt requested for ${reservationId}`);
   try {
+    const isCollect = await agent.engine.api.isChannelCollect(reservationId);
+    if (isCollect) {
+      logger.warn(`[KIOSK] Aborting physical print receipt for ${reservationId} due to Channel Collect policy.`);
+      return res.status(403).json({ success: false, message: "Receipts for this booking must be obtained directly from your booking provider." });
+    }
+
     // 1. Get Reservation Details
     const resData = await agent.engine.api.getReservationById(reservationId);
     if (!resData || !resData.data) {

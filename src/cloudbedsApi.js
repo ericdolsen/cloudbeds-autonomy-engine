@@ -516,6 +516,61 @@ class CloudbedsAPI {
   }
 
   /**
+   * Determines if a reservation is "Channel Collect" (OTA collects payment)
+   * Uses the hidden source.paymentCollect property from getReservationsWithRateDetails.
+   */
+  async isChannelCollect(reservationId) {
+    if (this._isMock()) return false;
+    try {
+      // First fetch the reservation dates
+      const resData = await this.getReservationById(reservationId);
+      if (!resData || !resData.success || !resData.data) return false;
+
+      const r = resData.data;
+      const startDate = r.startDate || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+      const endDate = r.endDate || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+      const paymentType = (r.paymentType || '').toString().toLowerCase();
+
+      // If Cloudbeds explicitly provides the legacy Channel Collect flag
+      if (paymentType === 'channel_collect' || paymentType === 'cc') {
+        return true;
+      }
+
+      // Fetch extended details to access the hidden source.paymentCollect property
+      const extendedData = await this.getReservationsWithRateDetails(startDate, endDate);
+      if (extendedData && extendedData.success && Array.isArray(extendedData.data)) {
+        const extendedRes = extendedData.data.find(res => res.reservationID === reservationId);
+        if (extendedRes && extendedRes.source && extendedRes.source.paymentCollect) {
+          if (extendedRes.source.paymentCollect === 'collect') return true;
+          if (extendedRes.source.paymentCollect === 'hotel') return false;
+        }
+      }
+
+      // Fallback legacy checks
+      const sourceLegacy = (r.source || '').toString().toLowerCase();
+      let guestEmail = r.guestEmail || '';
+      if (r.guestList) {
+        const guests = Object.values(r.guestList);
+        const mg = guests.find(g => g.isMainGuest) || guests[0];
+        if (mg && mg.guestEmail) guestEmail = mg.guestEmail;
+      }
+      guestEmail = guestEmail.toLowerCase();
+      
+      const isMaskedEmail = guestEmail.includes('expediapartnercentral.com') || guestEmail.includes('guest.booking.com') || guestEmail.includes('agoda.com');
+      
+      if (isMaskedEmail || sourceLegacy.includes('collect')) {
+        return true;
+      }
+      
+      return false;
+    } catch (e) {
+      // logger.warn is not guaranteed to be defined in cloudbedsApi.js context directly, use console or assume logger is global
+      console.warn(`[API] isChannelCollect check failed for ${reservationId}: ${e.message}`);
+      return false;
+    }
+  }
+
+  /**
    * GET /getDashboard — aggregate house metrics (occupancy, ADR, RevPAR, revenue)
    * for a specific date. Returns a normalized { occupiedRooms, roomRevenue, adr,
    * revpar } shape so callers don't need to know about the raw Cloudbeds field
