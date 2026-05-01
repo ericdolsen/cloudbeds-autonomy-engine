@@ -757,16 +757,16 @@ app.post('/api/kiosk/checkin', async (req, res) => {
 
 // "Push to Tablet" Chrome Extension Relay Endpoint
 app.post('/api/kiosk/push', (req, res) => {
-  const { reservationId, kioskId } = req.body;
+  const { reservationId, kioskId, alphaId } = req.body;
   
   if (!reservationId) {
     return res.status(400).json({ success: false, error: 'reservationId is required' });
   }
   
-  logger.info(`[KIOSK PUSH] Received Chrome Extension push for Reservation: ${reservationId} targeting Kiosk ${kioskId || 'All'}. Pinging tablet via WebSockets.`);
+  logger.info(`[KIOSK PUSH] Received Chrome Extension push for Reservation: ${reservationId} (Alpha: ${alphaId || 'None'}) targeting Kiosk ${kioskId || 'All'}. Pinging tablet via WebSockets.`);
   
   // Emits the Cloudbeds push event directly to the tablet's browser
-  io.emit('pushToTablet', { reservationId, kioskId });
+  io.emit('pushToTablet', { reservationId, kioskId, alphaId });
   
   res.json({ success: true, message: `Successfully pushed reservation ${reservationId} to tablet.` });
 });

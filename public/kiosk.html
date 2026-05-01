@@ -401,15 +401,16 @@
                 setLoading(true, `Loading Registration Card...`, false);
 
                 try {
+                    const queryParam = data.alphaId || data.reservationId;
                     const res = await fetch('/api/kiosk/identify', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ query: data.reservationId, mode: 'checkin' })
+                        body: JSON.stringify({ query: queryParam, mode: 'checkin' })
                     });
                     const identifyData = await res.json();
                     setLoading(false);
                     if (identifyData.success) {
                         // Bypass PIN step, jump straight to registration
-                        showRegistrationStep(identifyData.guestData || {}, data.reservationId);
+                        showRegistrationStep(identifyData.guestData || {}, data.alphaId || data.reservationId);
                     } else {
                         showToast("Failed to load reservation for check-in.");
                     }

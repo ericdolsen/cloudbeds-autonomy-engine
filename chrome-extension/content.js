@@ -16,9 +16,21 @@ function injectTabletButton() {
 
     const reservationId = resMatch[1];
 
+    let alphaId = null;
+    const titleMatch = document.title.match(/([A-Z0-9]{8,12})/);
+    if (titleMatch && /[A-Z]/.test(titleMatch[1]) && /[0-9]/.test(titleMatch[1])) {
+        alphaId = titleMatch[1];
+    } else {
+        const bodyMatch = document.body.innerText.match(/\b([A-Z0-9]{9,12})\b/);
+        if (bodyMatch && /[A-Z]/.test(bodyMatch[1]) && /[0-9]/.test(bodyMatch[1])) {
+            alphaId = bodyMatch[1];
+        }
+    }
+
     if (document.getElementById('cloudbeds-kiosk-push-container')) {
         // Already injected, just update the dataset ID in case URL changed
         document.getElementById('cloudbeds-kiosk-push-container').dataset.resId = reservationId;
+        if (alphaId) document.getElementById('cloudbeds-kiosk-push-container').dataset.alphaId = alphaId;
         return;
     }
 
@@ -26,6 +38,7 @@ function injectTabletButton() {
     const container = document.createElement("div");
     container.id = "cloudbeds-kiosk-push-container";
     container.dataset.resId = reservationId;
+    if (alphaId) container.dataset.alphaId = alphaId;
 
     Object.assign(container.style, {
         position: 'fixed',
@@ -90,14 +103,17 @@ function injectTabletButton() {
         
         opt.addEventListener('click', () => {
             const id = container.dataset.resId;
+            const aId = container.dataset.alphaId || null;
             const originalText = mainBtn.innerText;
+            if (!id) return;
+
             mainBtn.innerText = `Pushing to Kiosk ${kioskId}...`;
             optionsMenu.style.display = 'none';
             
             fetch('https://kiosk.gatewayparkhotel.com/api/kiosk/push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reservationId: id, kioskId: kioskId })
+                body: JSON.stringify({ reservationId: id, alphaId: aId, kioskId: kioskId })
             })
             .then(res => res.json())
             .then(data => {

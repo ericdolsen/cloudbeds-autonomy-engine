@@ -3,3 +3,9 @@ node_modules/
 .env.*
 logs/
 .DS_Store
+.cloudbeds_payment_session/
+.cloudbeds_session/
+data/
+*.html
+*.txt
+*.js
