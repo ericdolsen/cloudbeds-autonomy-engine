@@ -329,7 +329,7 @@
             </div>
         </div>
 
-        <div class="footer">SYSTEM ONLINE &bull; TERMINAL CONNECTED</div>
+        <div class="footer" id="kioskFooter">SYSTEM ONLINE &bull; TERMINAL CONNECTED</div>
 
         <div class="qr-widget" id="qrWidget">
             <img src="images/qrcode.png" alt="Scan Guest Portal">
@@ -349,12 +349,18 @@
         // Each tablet is assigned a Kiosk ID which is saved to localStorage.
         // It is paired 1:1 with a Stripe WisePOS E reader based on this ID.
         // We support both ?kioskId=2 and the legacy ?terminal=2 URL formats.
-        const urlParams = new URLSearchParams(window.location.search);
-        let kioskIdParam = urlParams.get('kioskId') || urlParams.get('terminal');
+        // Also support parsing from the hash in case of locked-down browser redirects.
+        const fullUrl = window.location.href;
+        let kioskIdParam = null;
+        
+        const idMatch = fullUrl.match(/[?&](?:kioskId|terminal)=([^&#]*)/i);
+        if (idMatch && idMatch[1]) {
+            kioskIdParam = decodeURIComponent(idMatch[1]);
+        }
         
         // If it was passed as "?terminal=Reader 2", strip out the text.
         if (kioskIdParam && kioskIdParam.includes('Reader')) {
-            kioskIdParam = kioskIdParam.replace('Reader', '').trim();
+            kioskIdParam = kioskIdParam.replace(/Reader/i, '').trim();
         }
 
         if (kioskIdParam) {
@@ -362,6 +368,10 @@
         }
         const MY_KIOSK_ID = localStorage.getItem('kioskId') || '1';
         const TERMINAL_NAME = `Reader ${MY_KIOSK_ID}`;
+        
+        // Update footer to visibly confirm the kiosk's assigned identity
+        const footerEl = document.getElementById('kioskFooter');
+        if (footerEl) footerEl.innerHTML = `SYSTEM ONLINE &bull; KIOSK ${MY_KIOSK_ID} &bull; ${TERMINAL_NAME} CONNECTED`;
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
         let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
