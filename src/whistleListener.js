@@ -3,6 +3,41 @@ const path = require('path');
 const fs = require('fs');
 const { logger } = require('./logger');
 
+// Booking.com / Expedia / etc forward guest messages into Whistle but
+// explicitly say "any reply through any other channel will not be
+// recorded". If the model composes an SMS reply to one of these, it
+// goes into Whistle and the guest never sees it (the OTA's extranet
+// is the only channel that's actually delivered). The model can't
+// reliably notice this from inside a 1000+ char raw scrape, so we
+// gate at the ingest layer.
+const OTA_PREFIX_RE = /\bfrom\s+(booking\.?com|expedia|hotels\.com|agoda|airbnb|priceline|orbitz|travelocity|kayak|trivago)\s*[:\-]/i;
+const OTA_MARKER_RE = /(will not be recorded|respond via the extranet|respond.*?in the extranet|via the (?:partner|booking) (?:site|portal|extranet)|via your extranet)/i;
+const OTA_DISPLAY_NAMES = {
+  'booking.com': 'Booking.com',
+  'bookingcom':  'Booking.com',
+  'booking':     'Booking.com',
+  'expedia':     'Expedia',
+  'hotels.com':  'Hotels.com',
+  'agoda':       'Agoda',
+  'airbnb':      'Airbnb',
+  'priceline':   'Priceline',
+  'orbitz':      'Orbitz',
+  'travelocity': 'Travelocity',
+  'kayak':       'Kayak',
+  'trivago':     'Trivago'
+};
+
+function detectOtaExtranetWrapper(text) {
+  if (!text) return null;
+  const otaMatch = text.match(OTA_PREFIX_RE);
+  const hasMarker = OTA_MARKER_RE.test(text);
+  if (!otaMatch && !hasMarker) return null;
+  const rawOta = otaMatch ? otaMatch[1].toLowerCase() : 'ota';
+  const ota = OTA_DISPLAY_NAMES[rawOta] || 'OTA';
+  const snippet = text.replace(/\s+/g, ' ').trim().substring(0, 240);
+  return { ota, snippet };
+}
+
 class WhistleListener {
   constructor(autonomyAgent) {
     this.agent = autonomyAgent;
@@ -37,6 +72,20 @@ class WhistleListener {
     // failure and only reset by restarting the process — by design, so a
     // human investigates before we touch more guest threads.
     this._composeBlocked = false;
+  }
+
+  // Server-side alert publisher. Used for fail-paths where we don't want
+  // to depend on the model remembering to call alertFrontDesk after a
+  // friendly reply (which it sometimes silently skips). Safe-guarded so
+  // a misconfigured agent reference never throws.
+  _alert(urgency, issueDescription) {
+    try {
+      const hub = this.agent && this.agent.engine && this.agent.engine.alertHub;
+      if (!hub || typeof hub.publish !== 'function') return;
+      hub.publish({ urgency, issueDescription });
+    } catch (e) {
+      logger.warn(`[WHISTLE RPA] Could not publish alert: ${e.message}`);
+    }
   }
 
   async start() {
@@ -146,6 +195,7 @@ class WhistleListener {
 
     const currentUrl = this.page.url();
     if (currentUrl.includes('login') || currentUrl.includes('auth')) {
+        const wasLoggedOut = this._loggedOut;
         this._loggedOut = true;
         // Rate-limit to once every 5 minutes — without this, the warning
         // (which includes the full OAuth URL) fires on every poll and
@@ -154,6 +204,12 @@ class WhistleListener {
         if (now - this._lastLoginWarnAt > 5 * 60 * 1000) {
           this._lastLoginWarnAt = now;
           logger.warn(`[WHISTLE RPA] Cloudbeds session expired — browser is on the OAuth login page. Log in manually in the visible Chrome window; cookies will persist in .cloudbeds_session/ for next time. URL: ${currentUrl.substring(0, 120)}`);
+        }
+        // Fire ONE alert on the transition into the logged-out state.
+        // Subsequent polls won't re-alert (alertHub coalesces the same
+        // message anyway, but skipping the call avoids log spam).
+        if (!wasLoggedOut) {
+          this._alert('high', 'Whistle RPA is at the Cloudbeds OAuth login page — guest messages are being read but no replies are going out. Log in manually in the visible Chrome window to restore.');
         }
         return;
     }
@@ -402,7 +458,11 @@ class WhistleListener {
         logger.warn(`[WHISTLE RPA] Compose box did not appear within 8s after opening conversation; skipping cycle. URL: ${this.page.url()}`);
         // Trip the circuit breaker so further cycles don't keep clicking
         // and silently marking unreads as read.
+        const wasBlocked = this._composeBlocked;
         this._composeBlocked = true;
+        if (!wasBlocked) {
+          this._alert('critical', 'Whistle compose box did not appear after opening a conversation. The reply path is blocked — guest messages are being read but no responses can be sent. Restart the engine after confirming the Cloudbeds Whistle UI is healthy.');
+        }
         // Dump everything that could help locate the compose box: all
         // input/textarea/contenteditable/role=textbox elements with their
         // placeholders + body innerText length and the section past the
@@ -540,6 +600,26 @@ class WhistleListener {
         }
         await this.page.waitForTimeout(2000);
         return;
+    }
+
+    // Last-mile guard against OTA-extranet wrappers (Booking.com / Expedia
+    // / etc). These are guest messages forwarded into Whistle that
+    // explicitly say replies sent through any other channel will not be
+    // recorded. The model has no reliable way to detect this from inside
+    // the scrape, and replying via Whistle is worse than not replying —
+    // it implies to the operator that the guest was answered when they
+    // weren't. Detect, alert staff to respond on the extranet, and skip
+    // this cycle so we don't compose anything misleading.
+    const otaWrap = detectOtaExtranetWrapper(textToProcess);
+    if (otaWrap) {
+      logger.warn(`[WHISTLE RPA] Detected ${otaWrap.ota} extranet wrapper — skipping engine reply, alerting staff to respond on the extranet.`);
+      this._alert('high', `${otaWrap.ota} extranet message — staff must respond via the extranet (any reply sent through Whistle will not be delivered to the guest). Snippet: "${otaWrap.snippet}"`);
+      // Stamp the conversation as "replied" so the next polling cycle's
+      // duplicate-reply guard skips it instead of looping back here on
+      // the same unread thread.
+      this._lastReplyAtByUrl.set(convUrl, Date.now());
+      await this.page.waitForTimeout(2000);
+      return;
     }
 
     logger.info(`[WHISTLE RPA] Sending extracted chat to Autonomy Engine...`);

@@ -354,10 +354,27 @@ STANDARD WORKFLOW:
         }
         const raw = this.api.extractCustomField(resData.data, 'portal_doorcode');
         if (!raw) {
+          // Programmatic alert — don't rely on the model to also call
+          // alertFrontDesk. The guest is at the door right now and
+          // someone needs to walk a master key over.
+          if (this.alertHub && typeof this.alertHub.publish === 'function') {
+            const guestName = (resData.data.guestName || 'Guest').toString();
+            this.alertHub.publish({
+              urgency: 'critical',
+              issueDescription: `${guestName} (reservation ${args.reservationId}) reported a door code issue but the reservation has no portal_doorcode on file. Portal hasn't synced — staff must walk a master key over.`
+            });
+          }
           return { success: false, error: 'No door code on file for this reservation. Portal may not have synced yet — escalate to the front desk.' };
         }
         const codes = this.api.parseDoorCodes(raw);
         if (codes.length === 0) {
+          if (this.alertHub && typeof this.alertHub.publish === 'function') {
+            const guestName = (resData.data.guestName || 'Guest').toString();
+            this.alertHub.publish({
+              urgency: 'critical',
+              issueDescription: `${guestName} (reservation ${args.reservationId}) door code field is present but unparseable. Raw value: "${raw.substring(0, 80)}". Staff must verify the code in the Portal app and walk a master key over.`
+            });
+          }
           return { success: false, error: `Door code field present but could not be parsed. Raw value: "${raw.substring(0, 200)}". Escalate to the front desk.` };
         }
         const guestName = (resData.data.guestName || '').toString();
