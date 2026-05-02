@@ -311,16 +311,23 @@
       const list2 = Array.from(alerts.values()).sort((a, b) => b.createdAt - a.createdAt);
       counter.textContent = `${list2.length} active`;
       empty.style.display = list2.length === 0 ? 'block' : 'none';
-      list.innerHTML = list2.map(a => `
-        <div class="alert urgency-${escape(a.urgency === 'critical' ? 'critical' : a.urgency === 'high' ? 'high' : 'other')}" data-id="${escape(a.id)}">
-          <div class="body">
-            <span class="urgency-tag">${escape(a.urgency || 'alert')}</span>
-            <div class="message">${escape(a.message || '')}</div>
-            <div class="ts" data-ts="${a.createdAt}">${formatTimeAgo(a.createdAt)}</div>
+      list.innerHTML = list2.map(a => {
+        const u = a.urgency === 'critical' ? 'critical' : a.urgency === 'high' ? 'high' : 'other';
+        const countSuffix = a.count && a.count > 1 ? ` &times; ${a.count}` : '';
+        // When coalesced, anchor "ago" to the most recent occurrence so
+        // staff can see freshness, not the original first-fire timestamp.
+        const tsAnchor = a.lastSeenAt || a.createdAt;
+        return `
+          <div class="alert urgency-${u}" data-id="${escape(a.id)}">
+            <div class="body">
+              <span class="urgency-tag">${escape(a.urgency || 'alert')}${countSuffix}</span>
+              <div class="message">${escape(a.message || '')}</div>
+              <div class="ts" data-ts="${tsAnchor}">${formatTimeAgo(tsAnchor)}</div>
+            </div>
+            <button class="ack-btn" onclick="ack('${escape(a.id)}')">Acknowledge</button>
           </div>
-          <button class="ack-btn" onclick="ack('${escape(a.id)}')">Acknowledge</button>
-        </div>
-      `).join('');
+        `;
+      }).join('');
     }
 
     function escape(s) {
