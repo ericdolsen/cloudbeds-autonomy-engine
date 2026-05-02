@@ -4,163 +4,375 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gateway Park - Engine Control Panel</title>
-    <!-- Google Fonts -->
+    <!-- Google Fonts: Inter for UI, EB Garamond for the Prairie display serif -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Gateway Park theme tokens + components (see public/handoff/STYLE-GUIDE.md) -->
+    <link rel="stylesheet" href="/handoff/gateway-theme.css">
     <style>
         :root {
-            --primary-bg: #0f172a; 
-            --panel-bg: rgba(30, 41, 59, 0.7);
-            --glass-border: rgba(255, 255, 255, 0.08);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #38bdf8;
-            --success: #22c55e;
-            --warning: #f59e0b;
+            /* Bridge: legacy var names map to Prairie tokens so existing
+               inline styles (in body markup) and JS-rendered HTML continue
+               to pick up the right palette without rewriting every string.
+               These resolve at use-site under the .prairie body class. */
+            --primary-bg: var(--p-deep);
+            --panel-bg:   var(--p-deep-2);
+            --glass-border: var(--p-rule);
+            --text-main:  var(--p-ink);
+            --text-muted: var(--p-ink-2);
+            --accent:     var(--p-accent);
+            --success:    var(--p-accent);
+            --warning:    #d4a256;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Outfit', sans-serif;
-            background-color: var(--primary-bg);
-            color: var(--text-main);
             height: 100vh;
             display: flex;
             overflow: hidden;
-            background-image:
-                radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.08), transparent 25%),
-                radial-gradient(circle at 85% 30%, rgba(147, 51, 234, 0.08), transparent 25%);
         }
 
-        /* Sidebar Navigation */
+        /* ====== Sidebar ====== */
         .sidebar {
-            width: 280px;
-            background: rgba(15, 23, 42, 0.9);
-            border-right: 1px solid var(--glass-border);
-            padding: 30px;
+            width: 248px;
+            background: color-mix(in oklab, var(--p-deep) 92%, black 8%);
+            border-right: 1px solid var(--p-rule);
+            padding: 28px 22px;
             display: flex;
             flex-direction: column;
-            backdrop-filter: blur(10px);
             z-index: 10;
         }
 
         .brand {
-            margin-bottom: 50px;
+            margin-bottom: 32px;
+            padding-bottom: 22px;
+            border-bottom: 1px solid var(--p-rule);
         }
-        .brand h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: 1px; }
-        .brand span { color: var(--accent); font-weight: 300; font-size: 0.9rem; letter-spacing: 2px; text-transform: uppercase; }
-
-        .nav-items { flex: 1; display: flex; flex-direction: column; gap: 10px; }
-        .nav-item {
-            padding: 15px 20px;
-            border-radius: 12px;
-            cursor: pointer;
-            color: var(--text-muted);
+        .brand h1 {
+            font-family: var(--p-serif);
+            font-weight: 600;
+            font-size: 1.5rem;
+            line-height: 1;
+            letter-spacing: -0.005em;
+            color: var(--p-ink);
+        }
+        .brand span {
+            display: block;
+            margin-top: 6px;
+            font-family: var(--p-serif);
+            font-style: italic;
             font-weight: 500;
-            transition: all 0.2s;
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            color: var(--p-accent);
+            text-transform: none;
+        }
+
+        .nav-items { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+        .nav-item {
+            padding: 11px 14px;
+            border-radius: var(--p-radius);
+            cursor: pointer;
+            color: var(--p-ink-2);
+            font-size: 13px;
+            font-weight: 500;
+            transition: color 0.15s, background 0.15s;
             display: flex;
             align-items: center;
             gap: 12px;
+            border-left: 2px solid transparent;
         }
-        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
-        .nav-item.active { background: rgba(56, 189, 248, 0.1); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.2); }
+        .nav-item svg { width: 16px; height: 16px; opacity: 0.7; }
+        .nav-item:hover { color: var(--p-ink); }
+        .nav-item.active {
+            color: var(--p-accent);
+            border-left-color: var(--p-accent);
+            background: color-mix(in oklab, var(--p-accent) 8%, transparent);
+        }
+        .nav-item.active svg { opacity: 1; }
 
         .server-status {
             margin-top: auto;
-            padding: 15px;
-            background: rgba(0,0,0,0.3);
-            border-radius: 12px;
-            border: 1px solid var(--glass-border);
+            padding: 14px;
+            background: color-mix(in oklab, var(--p-deep) 80%, black 20%);
+            border: 1px solid var(--p-rule);
+            border-radius: var(--p-radius);
             display: flex;
             align-items: center;
             gap: 12px;
         }
         .status-dot {
-            width: 10px; height: 10px; border-radius: 50%;
-            background: var(--warning); 
-            box-shadow: 0 0 10px var(--warning);
-            animation: pulse-warn 2s infinite;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #d4a256;
+            box-shadow: 0 0 0 3px rgba(212, 162, 86, 0.22);
+            flex-shrink: 0;
         }
-        .status-dot.online { background: var(--success); box-shadow: 0 0 10px var(--success); animation: pulse-ok 2s infinite; }
-        @keyframes pulse-ok { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
-        
-        .status-text h4 { font-size: 0.9rem; font-weight: 500; }
-        .status-text p { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+        .status-dot.online {
+            background: var(--p-accent);
+            box-shadow: 0 0 0 3px color-mix(in oklab, var(--p-accent) 22%, transparent);
+        }
+        .status-text h4 {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--p-ink);
+        }
+        .status-text p {
+            font-size: 10px;
+            color: var(--p-ink-3);
+            margin-top: 2px;
+            letter-spacing: 0.05em;
+        }
 
-        /* Main Content wrapper */
-        .content { flex: 1; padding: 50px 60px; overflow-y: auto; }
-        
+        /* ====== Main content ====== */
+        .content { flex: 1; padding: 36px 44px; overflow-y: auto; }
+
         .view-section { display: none; animation: fadeIn 0.4s ease forwards; }
         .view-section.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
-        .page-header { margin-bottom: 40px; }
-        .page-header h2 { font-size: 2.2rem; font-weight: 600; margin-bottom: 8px; }
-        .page-header p { color: var(--text-muted); font-size: 1.1rem; font-weight: 300; }
+        .page-header { margin-bottom: 32px; }
+        .page-header h2 {
+            font-family: var(--p-serif);
+            font-weight: 600;
+            font-size: 2.4rem;
+            line-height: 1.05;
+            letter-spacing: -0.005em;
+            color: var(--p-ink);
+            margin-bottom: 6px;
+        }
+        .page-header p {
+            color: var(--p-ink-2);
+            font-size: 14px;
+            line-height: 1.55;
+            max-width: 540px;
+        }
 
-        /* Dashboard Grid */
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 25px; }
-        
+        /* ====== Dashboard grid + cards ====== */
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; }
+
         .card {
-            background: var(--panel-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            padding: 30px;
-            backdrop-filter: blur(12px);
+            background: var(--p-deep-2);
+            border: 1px solid var(--p-rule);
+            border-radius: var(--p-radius);
+            padding: 22px 24px;
         }
-        
-        .card h3 { font-size: 1.1rem; color: var(--text-muted); margin-bottom: 20px; font-weight: 500;}
-        .metric-value { font-size: 2.5rem; font-weight: 700; margin-bottom: 5px; }
-
-        /* Diagnostic List */
-        .diag-list { display: flex; flex-direction: column; gap: 15px; }
-        .diag-item { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .diag-item:last-child { border-bottom: none; padding-bottom: 0; }
-        .diag-label { font-weight: 300; color: var(--text-muted); }
-        .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; }
-        .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
-        .badge.err { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-
-        /* Report Generator */
-        .report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 25px; }
-        .report-card { 
-            background: linear-gradient(145deg, rgba(30,41,59,0.8), rgba(15,23,42,0.9));
-            border: 1px solid var(--glass-border); border-radius: 20px; padding: 35px;
-            display: flex; flex-direction: column; gap: 15px;
+        .card h3 {
+            font-size: 11px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--p-ink-3);
+            font-weight: 500;
+            margin-bottom: 14px;
         }
-        .report-card h3 { font-size: 1.4rem; font-weight: 500; color: white;}
-        .report-card p { color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; flex: 1;}
+        .metric-value {
+            font-family: var(--p-serif);
+            font-weight: 500;
+            font-size: 3.2rem;
+            line-height: 0.95;
+            letter-spacing: -0.015em;
+            color: var(--p-accent);
+            margin-bottom: 6px;
+        }
+
+        /* ====== Live activity feed ====== */
+        .diag-list { display: flex; flex-direction: column; gap: 0; }
+        .diag-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--p-rule);
+            font-size: 13px;
+            gap: 14px;
+        }
+        .diag-item:last-child { border-bottom: none; }
+        .diag-label { color: var(--p-ink-2); font-weight: 400; }
+        .badge {
+            font-size: 9px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: var(--p-radius);
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .badge.ok {
+            color: var(--p-accent);
+            background: color-mix(in oklab, var(--p-accent) 14%, transparent);
+        }
+        .badge.err {
+            color: #d47272;
+            background: rgba(212, 114, 114, 0.14);
+        }
+        .badge.warn {
+            color: #d4a256;
+            background: rgba(212, 162, 86, 0.14);
+        }
+
+        /* ====== Reports ====== */
+        .report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        .report-card {
+            background: var(--p-deep-2);
+            border: 1px solid var(--p-rule);
+            border-radius: var(--p-radius);
+            padding: 24px 26px;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .report-card h3 {
+            font-family: var(--p-serif);
+            font-weight: 600;
+            font-size: 1.4rem;
+            letter-spacing: -0.005em;
+            color: var(--p-ink);
+        }
+        .report-card p {
+            color: var(--p-ink-2);
+            font-size: 13px;
+            line-height: 1.55;
+            flex: 1;
+            margin: 0;
+        }
+
+        /* Primary CTA — solid sage on charcoal. */
         .btn {
-            background: linear-gradient(135deg, rgba(14, 165, 233, 0.8), rgba(56, 189, 248, 0.8));
-            border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
-            color: white; padding: 12px 20px; font-family: 'Outfit'; font-size: 1rem; font-weight: 500;
-            cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+            background: var(--p-accent);
+            color: var(--p-accent-ink);
+            border: 1px solid var(--p-accent);
+            padding: 11px 18px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            border-radius: var(--p-radius);
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            align-self: flex-start;
         }
-        .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn:hover { background: var(--p-accent-2); border-color: var(--p-accent-2); }
         .btn:active { transform: translateY(1px); }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-        /* Toast */
-        .toast {
-            position: fixed; bottom: 30px; right: 40px; background: rgba(15,23,42,0.9); border: 1px solid var(--accent);
-            color: white; padding: 15px 25px; border-radius: 8px; font-size: 1rem; font-weight: 400;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none;
+        /* Ghost variant (used inline by some buttons that override .btn). */
+        .btn-ghost {
+            background: transparent;
+            color: var(--p-ink-2);
+            border: 1px solid var(--p-rule);
+        }
+        .btn-ghost:hover {
+            color: var(--p-ink);
+            border-color: var(--p-ink-3);
+            background: rgba(255, 255, 255, 0.03);
         }
 
-        /* Modal & Tables */
-        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; backdrop-filter: blur(5px); justify-content: center; align-items: center; }
-        .modal-content { background: var(--primary-bg); border: 1px solid var(--glass-border); border-radius: 12px; width: 90%; max-width: 1000px; max-height: 90vh; overflow-y: auto; padding: 30px; position: relative; }
-        .close-btn { position: absolute; top: 15px; right: 20px; cursor: pointer; color: white; border: none; background: transparent; font-size: 1.5rem; }
-        .tax-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 0.9rem;}
-        .tax-table th, .tax-table td { border: 1px solid var(--glass-border); padding: 10px; text-align: left; }
-        .tax-table th { background: rgba(255,255,255,0.05); font-weight: 600; color: var(--accent); }
-        .tax-table td { color: var(--text-main); }
-        .tax-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Number/month input fields used in the tax filter row. */
+        .input {
+            background: var(--p-deep-2);
+            border: 1px solid var(--p-rule);
+            border-radius: var(--p-radius);
+            color: var(--p-ink);
+            padding: 10px 12px;
+            font-family: inherit;
+            font-size: 13px;
+            color-scheme: dark;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .input:focus { border-color: var(--p-accent); box-shadow: 0 0 0 1px var(--p-accent); }
+        .input::placeholder { color: var(--p-ink-3); }
+
+        /* ====== Toast ====== */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 32px;
+            background: var(--p-deep-2);
+            border: 1px solid var(--p-accent);
+            color: var(--p-ink);
+            padding: 14px 22px;
+            border-radius: var(--p-radius);
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 200;
+            pointer-events: none;
+            max-width: 480px;
+        }
+
+        /* ====== Modal ====== */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: var(--p-deep);
+            border: 1px solid var(--p-rule);
+            border-radius: var(--p-radius);
+            width: 90%;
+            max-width: 1000px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 32px 36px;
+            position: relative;
+        }
+        .close-btn {
+            position: absolute;
+            top: 14px;
+            right: 18px;
+            cursor: pointer;
+            color: var(--p-ink-2);
+            border: none;
+            background: transparent;
+            font-size: 1.5rem;
+            line-height: 1;
+            padding: 4px 8px;
+            transition: color 0.15s;
+        }
+        .close-btn:hover { color: var(--p-ink); }
+
+        /* Tax filing table. The HTML is generated server-side so we
+           redefine its classes here rather than tagging it inline. */
+        .tax-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+            font-size: 0.9rem;
+        }
+        .tax-table th, .tax-table td {
+            border: 1px solid var(--p-rule);
+            padding: 10px 12px;
+            text-align: left;
+        }
+        .tax-table th {
+            background: rgba(255, 255, 255, 0.03);
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            font-weight: 600;
+            color: var(--p-accent);
+        }
+        .tax-table td { color: var(--p-ink); }
+        .tax-table tr:nth-child(even) td { background: rgba(255, 255, 255, 0.015); }
     </style>
 </head>
-<body>
+<body class="prairie">
 
     <div class="sidebar">
         <div class="brand">
@@ -203,8 +415,8 @@
             <div class="grid">
                 <div class="card">
                     <h3>Engine Uptime</h3>
-                    <div class="metric-value" style="color: var(--accent)" id="valUptime">--:--</div>
-                    <p style="color: var(--text-muted); font-size: 0.85rem;">Continuous process life</p>
+                    <div class="metric-value" id="valUptime">--:--</div>
+                    <p style="color: var(--p-ink-3); font-size: 12px; letter-spacing: 0.05em;">Continuous process life</p>
                 </div>
                 
                 <div class="card" style="grid-column: span 2;">
@@ -240,8 +452,8 @@
                     <h3>South Dakota Sales Tax Filings</h3>
                     <p>Calculates state, municipal, BBB, and tourism taxes using the raw 28-day retroactive engine. Outputs the formatted State Filing entries.</p>
                     <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                        <input type="month" id="taxMonthFilter" value="2026-03" style="flex:1; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: white; padding: 8px; border-radius: 6px; color-scheme: dark;">
-                        <input type="number" id="taxUseTax" placeholder="Use Tax Base $" style="width: 130px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: white; padding: 8px; border-radius: 6px;">
+                        <input type="month" id="taxMonthFilter" value="2026-03" class="input" style="flex:1;">
+                        <input type="number" id="taxUseTax" placeholder="Use Tax Base $" class="input" style="width: 150px;">
                     </div>
                     <button class="btn" id="btnTax" onclick="generateSalesTax()">
                         Build Filing Report
@@ -257,11 +469,11 @@
                     <h2>AI Agent Training</h2>
                     <p>Teach the Autonomy Engine how to answer guest questions. Click a rule to edit it; remember to save when you're done.</p>
                 </div>
-                <div style="display: flex; gap: 12px; align-items: center;">
-                    <span id="kbDirtyBadge" style="display: none; color: #fbbf24; font-size: 0.95rem; font-weight: 500;">● Unsaved changes</span>
-                    <button class="btn" onclick="addKnowledgeRow()" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent);">+ Add New Rule</button>
-                    <button id="kbDiscardBtn" class="btn" onclick="discardKnowledgeChanges()" style="display: none; background: transparent; border: 1px solid #94a3b8; color: #94a3b8;">Discard</button>
-                    <button id="kbSaveBtn" class="btn" disabled onclick="saveKnowledgeBase()" style="background: rgba(34, 197, 94, 0.4); opacity: 0.5; cursor: not-allowed;">Save Changes to AI</button>
+                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <span id="kbDirtyBadge" style="display: none; color: #d4a256; font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;">&middot; Unsaved changes</span>
+                    <button class="btn btn-ghost" onclick="addKnowledgeRow()">+ Add Rule</button>
+                    <button id="kbDiscardBtn" class="btn btn-ghost" onclick="discardKnowledgeChanges()" style="display: none;">Discard</button>
+                    <button id="kbSaveBtn" class="btn" disabled onclick="saveKnowledgeBase()">Save Changes</button>
                 </div>
             </div>
 
@@ -331,11 +543,11 @@
                 if (data.feed && data.feed.length > 0) {
                     feedBox.innerHTML = data.feed.map(f => `
                         <div class="diag-item">
-                            <div>
-                               <span class="badge ${f.status === 'error' ? 'err' : 'ok'}" style="margin-right:10px;">${f.category}</span>
+                            <div style="display: flex; align-items: center; gap: 14px; min-width: 0;">
+                               <span class="badge ${f.status === 'error' ? 'err' : 'ok'}">${f.category}</span>
                                <span class="diag-label">${f.summary}</span>
                             </div>
-                            <span style="font-size:0.75rem; color: var(--text-muted);">${new Date(f.timestamp).toLocaleTimeString()}</span>
+                            <span style="font-size: 11px; color: var(--p-ink-3); letter-spacing: 0.05em; flex-shrink: 0;">${new Date(f.timestamp).toLocaleTimeString()}</span>
                         </div>
                     `).join('');
                 } else {
@@ -442,13 +654,11 @@
             const saveBtn = document.getElementById('kbSaveBtn');
             const discardBtn = document.getElementById('kbDiscardBtn');
             if (badge) badge.style.display = dirty ? 'inline' : 'none';
-            if (discardBtn) discardBtn.style.display = dirty ? 'inline-block' : 'none';
-            if (saveBtn) {
-                saveBtn.disabled = !dirty;
-                saveBtn.style.opacity = dirty ? '1' : '0.5';
-                saveBtn.style.cursor = dirty ? 'pointer' : 'not-allowed';
-                saveBtn.style.background = dirty ? 'var(--success)' : 'rgba(34, 197, 94, 0.4)';
-            }
+            // Empty string falls back to CSS (.btn is inline-flex).
+            if (discardBtn) discardBtn.style.display = dirty ? '' : 'none';
+            // Just toggle disabled — .btn:disabled in CSS handles the
+            // dim/cursor treatment, no need to touch inline styles.
+            if (saveBtn) saveBtn.disabled = !dirty;
         }
 
         async function loadKnowledgeBase() {
@@ -470,7 +680,7 @@
         function renderKnowledgeBase() {
             const list = document.getElementById('knowledgeList');
             if (kbData.length === 0) {
-                list.innerHTML = '<p style="color: var(--text-muted); padding: 20px; text-align: center;">No rules yet. Click "+ Add New Rule" to teach the AI something.</p>';
+                list.innerHTML = '<p style="color: var(--p-ink-3); padding: 24px; text-align: center; font-size: 13px; line-height: 1.55;">No rules yet. Click <strong style="color: var(--p-ink-2); font-weight: 500;">+ Add Rule</strong> to teach the AI something.</p>';
                 refreshKbToolbar();
                 return;
             }
@@ -479,13 +689,13 @@
                 if (editing) {
                     // Editable card.
                     return `
-                        <div style="background: rgba(56, 189, 248, 0.08); padding: 18px; border-radius: 10px; border: 1px solid var(--accent);">
+                        <div style="background: color-mix(in oklab, var(--p-accent) 8%, transparent); padding: 18px; border-radius: var(--p-radius); border: 1px solid var(--p-accent);">
                             <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px;">
-                                <input type="text" value="${escapeHtml(item.topic)}" oninput="updateKb(${idx}, 'topic', this.value)" placeholder="Topic (e.g. WiFi Password)" style="flex: 1; background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--accent); font-size: 1.05rem; font-family: 'Outfit'; font-weight: 500; padding: 8px 12px; outline: none;">
-                                <button onclick="exitKbEdit(${idx})" style="background: var(--accent); border: none; color: #0f172a; cursor: pointer; padding: 8px 16px; border-radius: 6px; font-family: 'Outfit'; font-weight: 600;">Done</button>
-                                <button onclick="deleteKb(${idx})" title="Delete rule" style="background: transparent; border: 1px solid #ef4444; color: #ef4444; cursor: pointer; padding: 8px 12px; border-radius: 6px; font-family: 'Outfit';">Delete</button>
+                                <input type="text" value="${escapeHtml(item.topic)}" oninput="updateKb(${idx}, 'topic', this.value)" placeholder="Topic (e.g. WiFi Password)" style="flex: 1; background: var(--p-deep); border: 1px solid var(--p-rule); border-radius: var(--p-radius); color: var(--p-ink); font-family: var(--p-serif); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.005em; padding: 9px 12px; outline: none;">
+                                <button onclick="exitKbEdit(${idx})" class="btn" style="padding: 9px 16px;">Done</button>
+                                <button onclick="deleteKb(${idx})" title="Delete rule" style="background: transparent; border: 1px solid rgba(212, 114, 114, 0.5); color: #d47272; cursor: pointer; padding: 9px 14px; border-radius: var(--p-radius); font-family: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; transition: background 0.2s, border-color 0.2s;" onmouseover="this.style.background='rgba(212,114,114,0.08)'" onmouseout="this.style.background='transparent'">Delete</button>
                             </div>
-                            <textarea oninput="updateKb(${idx}, 'info', this.value)" placeholder="Enter the exact answer or policy the AI should give the guest..." style="width: 100%; min-height: 90px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: white; padding: 10px; font-family: 'Outfit'; resize: vertical; box-sizing: border-box;">${escapeHtml(item.info)}</textarea>
+                            <textarea oninput="updateKb(${idx}, 'info', this.value)" placeholder="Enter the exact answer or policy the AI should give the guest..." style="width: 100%; min-height: 96px; background: var(--p-deep); border: 1px solid var(--p-rule); border-radius: var(--p-radius); color: var(--p-ink); padding: 12px; font-family: inherit; font-size: 13px; line-height: 1.55; resize: vertical; box-sizing: border-box; outline: none;">${escapeHtml(item.info)}</textarea>
                         </div>
                     `;
                 }
@@ -493,12 +703,12 @@
                 const preview = (item.info || '').toString();
                 const truncated = preview.length > 200 ? preview.substring(0, 200) + '…' : preview;
                 return `
-                    <div onclick="enterKbEdit(${idx})" style="background: rgba(0,0,0,0.2); padding: 16px 18px; border-radius: 10px; border: 1px solid var(--glass-border); cursor: pointer; transition: border-color 0.15s, background 0.15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--glass-border)'">
+                    <div onclick="enterKbEdit(${idx})" style="background: var(--p-deep); padding: 16px 18px; border-radius: var(--p-radius); border: 1px solid var(--p-rule); cursor: pointer; transition: border-color 0.15s, background 0.15s;" onmouseover="this.style.borderColor='var(--p-accent)'" onmouseout="this.style.borderColor='var(--p-rule)'">
                         <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px;">
-                            <div style="color: var(--accent); font-size: 1.05rem; font-weight: 500;">${escapeHtml(item.topic) || '<em style="color: var(--text-muted)">(no topic)</em>'}</div>
-                            <div style="color: var(--text-muted); font-size: 0.85rem; flex-shrink: 0;">Click to edit</div>
+                            <div style="font-family: var(--p-serif); font-weight: 600; font-size: 1.1rem; letter-spacing: -0.005em; color: var(--p-ink);">${escapeHtml(item.topic) || '<em style="color: var(--p-ink-3); font-weight: 400;">(no topic)</em>'}</div>
+                            <div style="color: var(--p-ink-3); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 500; flex-shrink: 0;">Click to edit</div>
                         </div>
-                        <div style="color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap;">${truncated ? escapeHtml(truncated) : '<em>(no answer set yet)</em>'}</div>
+                        <div style="color: var(--p-ink-2); font-size: 13px; line-height: 1.55; white-space: pre-wrap;">${truncated ? escapeHtml(truncated) : '<em style="color: var(--p-ink-3);">(no answer set yet)</em>'}</div>
                     </div>
                 `;
             }).join('');

@@ -11,18 +11,6 @@
     <!-- Gateway Park theme tokens + components (see public/handoff/STYLE-GUIDE.md) -->
     <link rel="stylesheet" href="/handoff/gateway-theme.css">
     <style>
-        :root {
-            /* Form-only legacy palette. Round 1 restyles only the landing
-               surface; the multi-step forms still use these tokens. Round 2
-               will retheme the forms to the Lobby brass palette. */
-            --primary-bg: #0f172a;
-            --glass-bg: rgba(30, 41, 59, 0.4);
-            --glass-border: rgba(255, 255, 255, 0.1);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --btn-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -57,10 +45,8 @@
             filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4));
         }
 
-        /* When forms are open the action grid is hidden; when restored the
-           grid layout from .kiosk-actions takes over (theme provides it). */
+        /* ====== Forms — Lobby palette (round 2) ====== */
 
-        /* Forms — display rules only; visuals stay on the legacy palette. */
         .checkout-form {
             display: none;
             flex-direction: column;
@@ -68,86 +54,163 @@
             gap: 20px;
             width: 100%;
             margin-top: auto;
-            margin-bottom: 80px;
+            margin-bottom: 60px;
         }
-        
+
         .form-row {
             display: flex;
-            gap: 20px;
+            gap: 18px;
             width: 100%;
             max-width: 800px;
         }
 
+        /* Big tablet-friendly text input. Geometry preserved from the
+           legacy form — this is the same input style used at every step
+           (lookup, PIN, registration fields, pet Yes/No choices). */
         .kiosk-input {
             flex: 1;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            color: white;
-            font-size: 1.8rem;
-            padding: 25px;
-            font-family: 'Outfit';
+            background: var(--p-deep-2);
+            border: 1px solid var(--p-rule);
+            border-radius: 6px;
+            color: var(--p-ink);
+            font-size: 1.6rem;
+            padding: 22px;
+            font-family: inherit;
             outline: none;
             text-align: center;
+            transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
         }
+        .kiosk-input::placeholder { color: var(--p-ink-3); }
         .kiosk-input:focus {
-            border-color: #38bdf8;
-            box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+            border-color: var(--p-accent);
+            box-shadow: 0 0 0 1px var(--p-accent);
         }
 
+        /* Form action buttons (Cancel / Verify / etc). The bare .kiosk-btn
+           is no longer used on the landing — only the .form-btn variant
+           survives, but we keep the base rule for future use. */
         .kiosk-btn {
-            background: var(--btn-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 28px;
-            color: var(--text-main);
-            padding: 40px 50px;
-            font-family: 'Outfit';
-            font-size: 1.8rem;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--p-rule);
+            border-radius: 4px;
+            color: var(--p-ink);
+            padding: 28px 40px;
+            font-family: inherit;
+            font-size: 1.2rem;
             font-weight: 500;
             cursor: pointer;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 20px;
-            width: 320px;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s;
+            gap: 16px;
+            transition: border-color 0.2s, background 0.2s, color 0.2s;
         }
 
         .kiosk-btn.form-btn {
             width: auto;
-            padding: 25px 60px;
+            padding: 18px 36px;
             flex-direction: row;
-            border-radius: 20px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
         }
 
-        .kiosk-btn.primary { background: linear-gradient(135deg, rgba(14, 165, 233, 0.8), rgba(56, 189, 248, 0.8)); border-color: rgba(255,255,255,0.3); }
-        .kiosk-btn.cancel { background: rgba(244, 63, 94, 0.2); }
-        .kiosk-btn:active { transform: scale(0.96); }
+        .kiosk-btn.primary {
+            background: var(--p-accent);
+            border-color: var(--p-accent);
+            color: var(--p-accent-ink);
+        }
+        .kiosk-btn.primary:hover {
+            background: var(--p-accent-2);
+            border-color: var(--p-accent-2);
+        }
 
-        /* Loader Overlay */
+        .kiosk-btn.cancel {
+            background: transparent;
+            color: var(--p-ink-2);
+            border-color: var(--p-rule);
+        }
+        .kiosk-btn.cancel:hover {
+            color: var(--p-ink);
+            border-color: var(--p-ink-3);
+        }
+
+        .kiosk-btn:active { transform: scale(0.98); }
+
+        /* Smaller ghost button used inside the chooser + registration
+           card for Done / Start Over. Renders as a tracked uppercase
+           pill in line with the .kiosk-secondary aesthetic. */
+        .form-back-btn {
+            background: transparent;
+            color: var(--p-ink-2);
+            border: 1px solid var(--p-rule);
+            padding: 9px 16px;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            border-radius: var(--p-radius);
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .form-back-btn:hover {
+            color: var(--p-ink);
+            border-color: var(--p-ink-3);
+        }
+
+        /* ====== Loader Overlay ====== */
         .loader-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(15px);
+            background: rgba(16, 31, 38, 0.92);
+            backdrop-filter: blur(12px);
             z-index: 100;
-            display: none; flex-direction: column; align-items: center; justify-content: center;
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center;
         }
-
         .spinner {
-            width: 70px; height: 70px; border: 4px solid rgba(255,255,255,0.1); border-left-color: #38bdf8;
-            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 25px;
+            width: 64px; height: 64px;
+            border: 3px solid rgba(255, 255, 255, 0.06);
+            border-left-color: var(--p-accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 22px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .loader-text {
+            font-family: var(--p-serif);
+            font-size: 1.6rem;
+            font-weight: 400;
+            color: var(--p-ink);
+            text-align: center;
+            padding: 0 40px;
+            max-width: 720px;
+            line-height: 1.4;
+            letter-spacing: -0.005em;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
 
-        .loader-text { font-size: 2rem; font-weight: 300; color: #e2e8f0; animation: pulse 1.5s infinite; text-align: center; padding: 0 40px;}
-        @keyframes pulse { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
-
-        /* Notification Toast */
+        /* ====== Toast ====== */
         .toast {
-            position: absolute; top: 40px; right: 40px; background: #e11d48; color: white;
-            padding: 20px 40px; border-radius: 12px; font-size: 1.5rem; font-weight: 500;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; z-index: 200; pointer-events: none;
+            position: absolute;
+            top: 32px; right: 32px;
+            background: #b91c1c;
+            color: var(--p-warm);
+            padding: 14px 22px;
+            border-radius: var(--p-radius);
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 200;
+            pointer-events: none;
+            max-width: 480px;
         }
 
     </style>
@@ -218,7 +281,7 @@
         <!-- Dynamic Form -->
         <div class="checkout-form" id="kioskForm">
             <input type="hidden" id="formMode" value="checkout">
-            <p id="verifyPrompt" style="display:none; font-size: 1.4rem; font-weight: 500; text-align: center; color: #38bdf8; letter-spacing: 0.5px;"></p>
+            <p id="verifyPrompt" style="display:none; font-family: var(--p-serif); font-style: italic; font-size: 1.4rem; font-weight: 400; text-align: center; color: var(--p-ink); letter-spacing: -0.005em; max-width: 720px;"></p>
             <div class="form-row" id="step1Row">
                 <input type="text" id="queryInput" class="kiosk-input" placeholder="Last Name OR Reservation #" autocomplete="off" autocorrect="off">
             </div>
@@ -227,58 +290,58 @@
             </div>
 
             <!-- STEP 2.5: MULTI-ROOM CHOOSER (only when the booking has more than one sub-reservation arriving today) -->
-            <div id="chooserRow" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h3 id="chooserTitle" style="color: #38bdf8; margin: 0;"></h3>
-                    <button type="button" onclick="hideForm()" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; font-weight: 500;">Done</button>
+            <div id="chooserRow" style="display:none; flex-direction: column; gap: 18px; width: 100%; max-width: 800px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+                    <h3 id="chooserTitle" style="font-family: var(--p-serif); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.005em; color: var(--p-ink); margin: 0;"></h3>
+                    <button type="button" class="form-back-btn" onclick="hideForm()">Done</button>
                 </div>
-                <p id="chooserSubtitle" style="margin: 0 0 5px; opacity: 0.85; font-size: 1rem;"></p>
+                <p id="chooserSubtitle" style="margin: 0 0 4px; color: var(--p-ink-2); font-size: 0.95rem; line-height: 1.45;"></p>
                 <div id="chooserCards" style="display: flex; flex-direction: column; gap: 12px;"></div>
             </div>
             
             <!-- STEP 3: REGISTRATION CARD -->
-            <div id="step3Row" style="display:none; flex-direction: column; gap: 15px; width: 100%; max-width: 800px; text-align: left; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                    <h3 style="color: #38bdf8; margin: 0;">Guest Registration</h3>
-                    <button type="button" onclick="hideForm()" style="background: rgba(244, 63, 94, 0.2); border: 1px solid rgba(244, 63, 94, 0.4); color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; font-weight: 500;">Start Over</button>
+            <div id="step3Row" style="display:none; flex-direction: column; gap: 18px; width: 100%; max-width: 800px; text-align: left; background: var(--p-deep-2); padding: 28px; border: 1px solid var(--p-rule); border-radius: var(--p-radius);">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+                    <h3 style="font-family: var(--p-serif); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.005em; color: var(--p-ink); margin: 0;">Guest Registration</h3>
+                    <button type="button" class="form-back-btn" onclick="hideForm()">Start Over</button>
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 15px;">
-                    <div style="display: flex; gap: 15px; width: 100%;">
-                        <input type="text" id="regFirstName" class="kiosk-input" placeholder="First Name" style="font-size: 1.2rem; padding: 15px; flex: 1;">
-                        <input type="text" id="regLastName" class="kiosk-input" placeholder="Last Name" style="font-size: 1.2rem; padding: 15px; flex: 1;">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="display: flex; gap: 12px; width: 100%;">
+                        <input type="text" id="regFirstName" class="kiosk-input" placeholder="First Name" style="font-size: 1.05rem; padding: 14px; flex: 1;">
+                        <input type="text" id="regLastName" class="kiosk-input" placeholder="Last Name" style="font-size: 1.05rem; padding: 14px; flex: 1;">
                     </div>
-                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
-                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.2rem; padding: 15px; width: 100%;">
+                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.05rem; padding: 14px; width: 100%;">
+                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.05rem; padding: 14px; width: 100%;">
                 </div>
-                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.2rem; padding: 15px; width: 100%;">
-                
-                <div style="margin-top: 15px;">
-                    <p style="font-size: 1.1rem; margin-bottom: 10px;">Are you traveling with a pet? ($30 pet fee applies, service animals excluded)</p>
-                    <div style="display: flex; gap: 15px;">
-                        <button type="button" id="petYesBtn" onclick="togglePetWaiver(true)" class="kiosk-input" style="flex: 1; font-size: 1.2rem; cursor: pointer; transition: all 0.3s;">Yes</button>
-                        <button type="button" id="petNoBtn" onclick="togglePetWaiver(false)" class="kiosk-input" style="flex: 1; font-size: 1.2rem; cursor: pointer; border-color: #38bdf8; background: rgba(56, 189, 248, 0.2); transition: all 0.3s;">No</button>
+                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.05rem; padding: 14px; width: 100%;">
+
+                <div style="margin-top: 8px;">
+                    <p style="font-size: 0.95rem; color: var(--p-ink-2); margin-bottom: 10px; line-height: 1.5;">Are you traveling with a pet? <span style="color: var(--p-ink-3);">($30 pet fee applies, service animals excluded)</span></p>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" id="petYesBtn" onclick="togglePetWaiver(true)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer;">Yes</button>
+                        <button type="button" id="petNoBtn" onclick="togglePetWaiver(false)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer; border-color: var(--p-accent); background: color-mix(in oklab, var(--p-accent) 14%, transparent);">No</button>
                     </div>
                 </div>
 
-                <div id="petWaiverSection" style="display: none; margin-top: 15px; background: rgba(244, 63, 94, 0.1); padding: 15px; border-radius: 10px; border: 1px solid rgba(244, 63, 94, 0.3);">
-                    <h4 style="color: #f43f5e; margin-bottom: 5px;">Pet Waiver & Fee Agreement</h4>
-                    <p style="font-size: 0.9rem; color: #e2e8f0; line-height: 1.4;">Gateway Park Hotel & Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.</p>
+                <div id="petWaiverSection" style="display: none; margin-top: 4px; background: rgba(212, 114, 114, 0.08); padding: 16px 18px; border-radius: var(--p-radius); border-left: 3px solid #d47272;">
+                    <h4 style="color: #d47272; font-weight: 600; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Pet Waiver &amp; Fee Agreement</h4>
+                    <p style="font-size: 0.85rem; color: var(--p-ink-2); line-height: 1.55;">Gateway Park Hotel &amp; Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.</p>
                 </div>
-                
-                <div style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-size: 0.85rem; color: #cbd5e1; margin-top: 15px; border: 1px solid var(--glass-border); line-height: 1.4;">
-                    <p><strong>Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel & Suites is not responsible for any fees incurred by the guest when using a debit card.</p>
-                    <p style="margin-top: 8px;"><strong>Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel & Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.</p>
+
+                <div style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.18); padding: 14px 16px; border-radius: var(--p-radius); font-size: 0.82rem; color: var(--p-ink-2); margin-top: 4px; border: 1px solid var(--p-rule); line-height: 1.55;">
+                    <p><strong style="color: var(--p-ink);">Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel &amp; Suites is not responsible for any fees incurred by the guest when using a debit card.</p>
+                    <p style="margin-top: 8px;"><strong style="color: var(--p-ink);">Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel &amp; Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.</p>
                 </div>
-                
-                <div style="margin-top: 10px;">
-                    <p style="font-size: 1.1rem; margin-bottom: 10px;">Please sign below:</p>
-                    <canvas id="sigCanvas" width="760" height="150" style="background: white; border-radius: 10px; cursor: crosshair; touch-action: none;"></canvas>
-                    <button type="button" onclick="clearSignature()" style="background: transparent; border: none; color: #f43f5e; margin-top: 5px; cursor: pointer; text-decoration: underline;">Clear Signature</button>
+
+                <div style="margin-top: 4px;">
+                    <p style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--p-ink-3); font-weight: 500; margin-bottom: 8px;">Please sign below</p>
+                    <canvas id="sigCanvas" width="760" height="150" style="background: var(--p-warm); border-radius: var(--p-radius); cursor: crosshair; touch-action: none; display: block; width: 100%; max-width: 760px;"></canvas>
+                    <button type="button" onclick="clearSignature()" style="background: transparent; border: none; color: var(--p-ink-3); margin-top: 6px; cursor: pointer; font-family: inherit; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 4px 0;">Clear Signature</button>
                 </div>
-                
-                <label style="display: flex; align-items: center; gap: 10px; font-size: 1.1rem; margin-top: 10px; cursor: pointer;">
-                    <input type="checkbox" id="regTerms" style="width: 25px; height: 25px;">
-                    I agree to the hotel Terms & Conditions and accept responsibility for the room.
+
+                <label style="display: flex; align-items: center; gap: 12px; font-size: 0.95rem; color: var(--p-ink-2); line-height: 1.5; margin-top: 4px; cursor: pointer;">
+                    <input type="checkbox" id="regTerms" style="width: 22px; height: 22px; accent-color: var(--p-accent); flex-shrink: 0;">
+                    I agree to the hotel Terms &amp; Conditions and accept responsibility for the room.
                 </label>
             </div>
 
@@ -481,7 +544,7 @@
                 const roomCountLabel = g.roomCount > 1 ? `${g.roomCount} rooms` : '1 room';
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
-                        <div style="font-size: 1.4rem; font-weight: 600; color: #f8fafc;">${(g.displayName || 'Guest').toString().replace(/[<>]/g, '')}</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${(g.displayName || 'Guest').toString().replace(/[<>]/g, '')}</div>
                         <div style="opacity: 0.85; font-size: 1rem;">${roomCountLabel}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85;">
@@ -571,7 +634,7 @@
                     ? `Balance $${r.balance.toFixed(2)}` : '';
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
-                        <div style="font-size: 1.4rem; font-weight: 600; color: #f8fafc;">${roomLabel}</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${roomLabel}</div>
                         <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || 'Guest').toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85; white-space: nowrap;">
@@ -801,18 +864,21 @@
             const yesBtn = document.getElementById('petYesBtn');
             const noBtn = document.getElementById('petNoBtn');
             const waiverSection = document.getElementById('petWaiverSection');
-            
+
+            // Yes (a pet → fee + waiver) → warn-red treatment.
+            // No (no pet, default) → brass treatment.
+            // Unselected → fall back to the .kiosk-input default surface.
             if (hasPet) {
-                yesBtn.style.borderColor = '#f43f5e';
-                yesBtn.style.background = 'rgba(244, 63, 94, 0.2)';
-                noBtn.style.borderColor = 'var(--glass-border)';
-                noBtn.style.background = 'rgba(15, 23, 42, 0.6)';
+                yesBtn.style.borderColor = '#d47272';
+                yesBtn.style.background = 'rgba(212, 114, 114, 0.14)';
+                noBtn.style.borderColor = 'var(--p-rule)';
+                noBtn.style.background = 'var(--p-deep-2)';
                 waiverSection.style.display = 'block';
             } else {
-                noBtn.style.borderColor = '#38bdf8';
-                noBtn.style.background = 'rgba(56, 189, 248, 0.2)';
-                yesBtn.style.borderColor = 'var(--glass-border)';
-                yesBtn.style.background = 'rgba(15, 23, 42, 0.6)';
+                noBtn.style.borderColor = 'var(--p-accent)';
+                noBtn.style.background = 'color-mix(in oklab, var(--p-accent) 14%, transparent)';
+                yesBtn.style.borderColor = 'var(--p-rule)';
+                yesBtn.style.background = 'var(--p-deep-2)';
                 waiverSection.style.display = 'none';
             }
         }
