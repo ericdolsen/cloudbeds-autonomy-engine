@@ -560,6 +560,21 @@ app.post('/api/webhooks/sms', async (req, res) => {
   try {
     const guestPhone = payload.guest_phone || payload.phone || payload.from || payload.From || (payload.sms && payload.sms.from);
     const messageText = payload.message || payload.text || payload.body || payload.Body || (payload.sms && payload.sms.body);
+    
+    // LOOP PREVENTION: Ignore messages from the AI or Hotel Staff
+    const sender = String(payload.sender || payload.from || payload.From || payload.sender_name || '').toLowerCase();
+    const isOutbound = payload.direction === 'outbound' || payload.direction === 'out' || payload.is_outbound || payload.isOutbound;
+    const isSystemOrStaff = sender.includes('frontdesk@') || sender.includes('ai') || sender.includes('system') || sender.includes('gateway park');
+    
+    // Fallback: If the RPA scraper dumped the sender name into the message text itself
+    const msgLower = String(messageText).toLowerCase().trim();
+    const isTextFromStaff = msgLower.startsWith('ai -') || msgLower.startsWith('frontdesk@') || msgLower.startsWith('system -');
+
+    if (isOutbound || isSystemOrStaff || isTextFromStaff) {
+      logger.info(`[WEBHOOK] Ignoring outbound/staff message to prevent AI loop. (Sender: ${sender || 'unknown'})`);
+      return;
+    }
+
     if (!guestPhone || !messageText) {
       logger.warn(`[WEBHOOK] SMS payload missing phone or message. Raw: ${JSON.stringify(payload).substring(0, 300)}`);
       return;
