@@ -39,8 +39,23 @@
 
         /* Theme defines .kiosk as overflow:hidden. This kiosk has multi-step
            forms (lookup → PIN → registration card) that can exceed viewport
-           height on the registration screen, so allow vertical scroll. */
-        .kiosk { overflow: auto; }
+           height on the registration screen, so allow vertical scroll.
+           padding-bottom is bumped from the theme's 48px to leave room for
+           the absolute .kiosk-foot (~88px tall) so it doesn't overlap (and
+           intercept clicks on) the .kiosk-secondary row below the tiles. */
+        .kiosk { overflow: auto; padding-bottom: 140px; }
+
+        /* Center the banner logo at the top of the kiosk-head.
+           Theme default is justify-content: space-between (mark left,
+           status right); with one child we want it centered. */
+        .kiosk-head { justify-content: center; }
+        .kiosk-banner {
+            max-width: 450px;
+            width: 100%;
+            height: auto;
+            display: block;
+            filter: drop-shadow(0 4px 10px rgba(0,0,0,0.4));
+        }
 
         /* When forms are open the action grid is hidden; when restored the
            grid layout from .kiosk-actions takes over (theme provides it). */
@@ -143,19 +158,11 @@
 
     <div class="kiosk">
 
-        <!-- TOP BAR: brand mark on left, status on right.
-             .header is kept as an alias class because the form-mode JS
-             does document.querySelector('.header').style.display = ... -->
+        <!-- TOP: centered banner logo. .header alias is kept because the
+             form-mode JS does document.querySelector('.header').style.display
+             when transitioning into / out of the registration card. -->
         <div class="kiosk-head header">
-            <div class="kiosk-mark">
-                <div class="crest">est. South Dakota</div>
-                <div class="name">Gateway Park</div>
-                <div class="sub">Hotel &amp; Suites &middot; Self-Service</div>
-            </div>
-            <div class="kiosk-status">
-                <span class="dot"></span>
-                <span>Front Desk Open</span>
-            </div>
+            <img src="images/logo.png" alt="Gateway Park Hotel" class="kiosk-banner">
         </div>
 
         <!-- CENTER HERO: greeting + clock + date.
