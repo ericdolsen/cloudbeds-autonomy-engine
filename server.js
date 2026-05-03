@@ -561,6 +561,13 @@ app.post('/api/webhooks/sms', async (req, res) => {
     const guestPhone = payload.guest_phone || payload.phone || payload.from || payload.From || (payload.sms && payload.sms.from);
     const messageText = payload.message || payload.text || payload.body || payload.Body || (payload.sms && payload.sms.body);
     
+    if (!guestPhone || !messageText) {
+      logger.warn(`[WEBHOOK] SMS payload missing phone or message. Raw: ${JSON.stringify(payload).substring(0, 300)}`);
+      return;
+    }
+    const digits = String(guestPhone).replace(/[^0-9]/g, '');
+    const sessionKey = `sms:${digits}`;
+    
     // LOOP PREVENTION: Ignore messages from the AI or Hotel Staff
     const sender = String(payload.sender || payload.from || payload.From || payload.sender_name || '').toLowerCase();
     const isOutbound = payload.direction === 'outbound' || payload.direction === 'out' || payload.is_outbound || payload.isOutbound;
@@ -571,49 +578,65 @@ app.post('/api/webhooks/sms', async (req, res) => {
     const isTextFromStaff = msgLower.startsWith('ai -') || msgLower.startsWith('frontdesk@') || msgLower.startsWith('system -');
 
     if (isOutbound || isSystemOrStaff || isTextFromStaff) {
-      logger.info(`[WEBHOOK] Ignoring outbound/staff message to prevent AI loop. (Sender: ${sender || 'unknown'})`);
+      logger.info(`[WEBHOOK] Outbound/staff message detected. Recording context for session ${sessionKey} to prevent AI loop.`);
+      if (agent && agent.engine && agent.engine.markStaffIntervention) {
+        agent.engine.markStaffIntervention(sessionKey, messageText);
+      }
       return;
     }
 
-    if (!guestPhone || !messageText) {
-      logger.warn(`[WEBHOOK] SMS payload missing phone or message. Raw: ${JSON.stringify(payload).substring(0, 300)}`);
-      return;
-    }
-    const digits = String(guestPhone).replace(/[^0-9]/g, '');
+    // GUEST MESSAGE HANDLING
+    // Delay 30 seconds to allow a human staff member to jump in.
+    logger.info(`[WEBHOOK] Guest message received. Waiting 30s before AI response...`);
+    
+    setTimeout(async () => {
+      try {
+        // Check if a human staff member intervened within the last 5 minutes
+        if (agent && agent.engine && agent.engine.sessions.has(sessionKey)) {
+          const s = agent.engine.sessions.get(sessionKey);
+          if (s.staffIntervenedAt && (Date.now() - s.staffIntervenedAt < 5 * 60 * 1000)) {
+            logger.info(`[WEBHOOK] Human staff intervened recently. Canceling AI response for ${sessionKey}.`);
+            return;
+          }
+        }
 
-    // Look up the guest's most-relevant reservation so the agent has context
-    // and doesn't have to guess who the texter is.
-    let context = 'No active reservation was found matching this phone number. Treat as a prospective / general guest inquiry. ';
-    try {
-      const lookup = await agent.engine.api.getReservationsByPhone(digits);
-      if (lookup.success && lookup.data && lookup.data.length > 0) {
-        const r = lookup.data[0];
-        const id = r.reservationID || r.reservationId;
-        context = `Reservation context for this guest: reservationID=${id}, guestName=${r.guestName || ''}, status=${r.status || ''}, checkIn=${r.startDate || ''}, checkOut=${r.endDate || ''}. `;
+        // Look up the guest's most-relevant reservation so the agent has context
+        // and doesn't have to guess who the texter is.
+        let context = 'No active reservation was found matching this phone number. Treat as a prospective / general guest inquiry. ';
+        try {
+          const lookup = await agent.engine.api.getReservationsByPhone(digits);
+          if (lookup.success && lookup.data && lookup.data.length > 0) {
+            const r = lookup.data[0];
+            const id = r.reservationID || r.reservationId;
+            context = `Reservation context for this guest: reservationID=${id}, guestName=${r.guestName || ''}, status=${r.status || ''}, checkIn=${r.startDate || ''}, checkOut=${r.endDate || ''}. `;
+          }
+        } catch (e) {
+          logger.warn(`[WEBHOOK] Phone->reservation lookup failed (non-fatal): ${e.message}`);
+        }
+
+        const promptText = `${context}The guest at ${guestPhone} just texted: "${messageText}". Reply warmly and directly. Your reply will be sent back to them via SMS, so keep it concise and do not include sign-offs like [Hotel Name] placeholders.`;
+
+        const result = await agent.processIncomingMessage({
+          source: 'whistle',
+          sessionKey, // 30-min rolling thread memory per phone
+          text: promptText
+        });
+
+        if (result && result.agent_response) {
+          const send = await messaging.send(guestPhone, result.agent_response);
+          if (send.success) {
+            logger.action('Guest SMS', `Replied to ${guestPhone}: ${messageText.substring(0, 40)}`, 'ok');
+          } else {
+            logger.action('Guest SMS', `Reply to ${guestPhone} failed: ${send.error}`, 'error');
+          }
+        }
+      } catch (err) {
+        logger.error(`Whistle Webhook delayed processing error: ${err.message}`);
       }
-    } catch (e) {
-      logger.warn(`[WEBHOOK] Phone->reservation lookup failed (non-fatal): ${e.message}`);
-    }
-
-    const promptText = `${context}The guest at ${guestPhone} just texted: "${messageText}". Reply warmly and directly. Your reply will be sent back to them via SMS, so keep it concise and do not include sign-offs like [Hotel Name] placeholders.`;
-
-    const result = await agent.processIncomingMessage({
-      source: 'whistle',
-      sessionKey: `sms:${digits}`, // 30-min rolling thread memory per phone
-      text: promptText
-    });
-
-    if (result && result.agent_response) {
-      const send = await messaging.send(guestPhone, result.agent_response);
-      if (send.success) {
-        logger.action('Guest SMS', `Replied to ${guestPhone}: ${messageText.substring(0, 40)}`, 'ok');
-      } else {
-        logger.action('Guest SMS', `Reply to ${guestPhone} failed: ${send.error}`, 'error');
-      }
-    }
+    }, 30000);
 
   } catch (err) {
-    logger.error(`Whistle Webhook processing error: ${err.message}`);
+    logger.error(`Whistle Webhook synchronous processing error: ${err.message}`);
   }
 });
 

@@ -542,11 +542,22 @@ STANDARD WORKFLOW:
 
     try {
       const chat = this._getOrCreateChat(messagePayload.sessionKey);
+      let promptText = messagePayload.text;
+
+      // Inject pending staff messages into the AI's context silently
+      if (messagePayload.sessionKey) {
+        const s = this.sessions.get(messagePayload.sessionKey);
+        if (s && s.pendingStaffContext && s.pendingStaffContext.length > 0) {
+          const staffMsgs = s.pendingStaffContext.join("\n");
+          promptText = `[SYSTEM CONTEXT: A human staff member recently intervened and sent the guest the following message(s). Acknowledge this context if it relates to the guest's current query, but do not apologize for it.]\n\nStaff Message(s):\n${staffMsgs}\n\n---\n\n${promptText}`;
+          s.pendingStaffContext = []; // Clear after injecting
+        }
+      }
 
       // Send the initial user message with an explicit source tag so the model
       // can tell guest-facing chat (kiosk/whistle) from admin batch work (cron/system).
       const sourceTag = messagePayload.source ? `[source=${messagePayload.source}] ` : '';
-      let response = await this._sendMessageWithRetry(chat, { message: `${sourceTag}${messagePayload.text}` });
+      let response = await this._sendMessageWithRetry(chat, { message: `${sourceTag}${promptText}` });
       logger.info(`[AUTONOMY ENGINE] Thinking...${messagePayload.sessionKey ? ` (session=${messagePayload.sessionKey})` : ''}`);
 
       // Handle function calls loop
