@@ -1025,7 +1025,36 @@ app.post('/api/kiosk/identify', async (req, res) => {
     let group = [];
     if (mode === 'checkin') {
       const siblings = reservationCache.findSiblings(reservationId);
-      group = siblings
+      
+      let expandedSiblings = [];
+      siblings.forEach(s => {
+        let unpackedRooms = 0;
+        if (s.guestList) {
+          Object.values(s.guestList).forEach(g => {
+            if (Array.isArray(g.rooms)) {
+              g.rooms.forEach(room => {
+                unpackedRooms++;
+                expandedSiblings.push({
+                  ...s,
+                  reservationID: room.subReservationID || s.reservationID || s.reservationId,
+                  reservationId: room.subReservationID || s.reservationID || s.reservationId,
+                  guestList: {
+                    [g.guestID || 'temp']: {
+                      ...g,
+                      rooms: [room]
+                    }
+                  }
+                });
+              });
+            }
+          });
+        }
+        if (unpackedRooms === 0) {
+          expandedSiblings.push(s);
+        }
+      });
+
+      group = expandedSiblings
         .filter(r => r.startDate === today)
         .filter(r => {
           const status = (r.status || '').toLowerCase();
