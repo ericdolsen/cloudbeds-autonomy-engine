@@ -832,9 +832,10 @@ class CloudbedsAPI {
 
     const reservations = await this._collectStaysInRange(start, end);
     for (const stay of reservations) {
+      const rc = stay.roomCount || 1;
       stay.nights.forEach((ymd, i) => {
         if (buckets[ymd]) {
-          buckets[ymd].occupiedRooms += 1;
+          buckets[ymd].occupiedRooms += rc;
           buckets[ymd].roomRevenue += stay.nightlyRevenue[i] || 0;
         }
       });
@@ -886,9 +887,10 @@ class CloudbedsAPI {
     const endYMD = toYMD(monthEnd);
     let roomNights = 0, roomRevenue = 0;
     for (const stay of reservations) {
+      const rc = stay.roomCount || 1;
       stay.nights.forEach((ymd, i) => {
         if (ymd >= startYMD && ymd <= endYMD) {
-          roomNights += 1;
+          roomNights += rc;
           roomRevenue += stay.nightlyRevenue[i] || 0;
         }
       });
@@ -985,6 +987,15 @@ class CloudbedsAPI {
       if (!(endMs > startMs)) continue;
       const nightsCount = Math.max(1, Math.round((endMs - startMs) / 86400000));
 
+      let roomCount = 1;
+      if (r.guestList) {
+        let subRooms = 0;
+        Object.values(r.guestList).forEach(g => {
+          if (Array.isArray(g.rooms)) subRooms += g.rooms.length;
+        });
+        if (subRooms > 1) roomCount = subRooms;
+      }
+
       let dailyRatesMap = this._normalizeDailyRates(r.dailyRates);
       let perNightFallback = this._estimatePerNightRevenue(r, nightsCount);
 
@@ -1000,6 +1011,9 @@ class CloudbedsAPI {
         const detail = await this._fetchReservationDetail(r.reservationID);
         if (detail) {
           detailFetches++;
+          const detailRooms = (detail.assigned?.length || 0) + (detail.unassigned?.length || 0);
+          if (detailRooms > 0) roomCount = detailRooms;
+          
           // The /getReservation singular payload nests dailyRates/roomTotal
           // inside detail.assigned[] and detail.unassigned[] (one entry per
           // room of the reservation), NOT at the top level. Walk both arrays
@@ -1054,7 +1068,7 @@ class CloudbedsAPI {
         }
       }
 
-      stays.push({ reservationID: r.reservationID, nights, nightlyRevenue, status });
+      stays.push({ reservationID: r.reservationID, nights, nightlyRevenue, status, roomCount });
     }
 
     if (detailFetches > 0) {
