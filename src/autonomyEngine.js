@@ -438,6 +438,15 @@ STANDARD WORKFLOW:
         if (!resData.success || !resData.data) {
           return { success: false, error: 'Could not fetch reservation to process checkout.' };
         }
+        
+        const balance = parseFloat(resData.data.balance || 0);
+        if (balance > 5.00) {
+          return { 
+            success: false, 
+            error: `CRITICAL STOP: Cannot check out reservation ${args.reservationId} because it still has an outstanding balance of $${balance.toFixed(2)}. You MUST collect payment via chargePhysicalTerminal first, or direct the guest to the front desk.` 
+          };
+        }
+
         const updateRes = await this.api.updateReservation(args.reservationId, { status: 'checked_out' });
         if (!updateRes.success) {
           return { success: false, error: `Checkout status update failed: ${updateRes.error || 'unknown error'}` };

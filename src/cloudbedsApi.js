@@ -424,12 +424,22 @@ class CloudbedsAPI {
         return { success: false, error: "Reservation not found." };
       }
       const status = existing.data.status;
+      const balance = parseFloat(existing.data.balance || 0);
+
       if (status === 'checked_in') {
         return { success: true, message: "Reservation is already checked in." };
       }
       if (status !== 'confirmed') {
         return { success: false, error: `Reservation must be 'confirmed' before check-in (current: ${status}).` };
       }
+
+      if (balance > 5.00) {
+        return { 
+          success: false, 
+          error: `CRITICAL STOP: Cannot check in reservation ${reservationId} because it still has an outstanding balance of $${balance.toFixed(2)}. You MUST collect payment via chargePhysicalTerminal first, or escalate to the front desk.` 
+        };
+      }
+
       const body = this._encodeForm({
         reservationID: reservationId,
         status: 'checked_in'
