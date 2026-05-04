@@ -944,7 +944,7 @@ function summarizeReservationForKiosk(r) {
 
 // Identity verification for Kiosk (Search by Last Name or Reservation ID)
 app.post('/api/kiosk/identify', async (req, res) => {
-  const { query, mode } = req.body;
+  const { query, mode, trustedPush } = req.body;
   if (!query) return res.status(400).json({ success: false });
 
   logger.info(`[KIOSK IDENTIFY] Searching for guest: ${query} (Mode: ${mode})`);
@@ -1040,11 +1040,12 @@ app.post('/api/kiosk/identify', async (req, res) => {
     }
     const isMultiRoom = group.length > 1;
 
-    if (query.trim().toUpperCase() === reservationId.toUpperCase()) {
+    if (query.trim().toUpperCase() === reservationId.toUpperCase() || trustedPush) {
       return res.json({
         success: true,
         requiresVerification: false,
         reservationId,
+        guestData: contact,
         ...(isMultiRoom ? { group } : {})
       });
     }

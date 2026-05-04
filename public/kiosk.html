@@ -445,15 +445,21 @@
                     const queryParam = data.alphaId || data.reservationId;
                     const res = await fetch('/api/kiosk/identify', {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ query: queryParam, mode: 'checkin' })
+                        body: JSON.stringify({ query: queryParam, mode: 'checkin', trustedPush: true })
                     });
                     const identifyData = await res.json();
                     setLoading(false);
-                    if (identifyData.success) {
-                        // Bypass PIN step, jump straight to registration
-                        showRegistrationStep(identifyData.guestData || {}, data.alphaId || data.reservationId);
+                    if (identifyData.success && !identifyData.requiresVerification) {
+                        verifiedReservationId = identifyData.reservationId;
+                        kioskGroup = Array.isArray(identifyData.group) ? identifyData.group : [];
+                        kioskCompletedIds = new Set();
+                        if (kioskGroup.length > 1) {
+                            showChooserStep();
+                        } else {
+                            showRegistrationStep(identifyData.guestData || {}, identifyData.reservationId);
+                        }
                     } else {
-                        showToast("Failed to load reservation for check-in.");
+                        showToast(identifyData.message || "Failed to load reservation for check-in.");
                     }
                 } catch (e) {
                     setLoading(false);
