@@ -1,0 +1,57 @@
+There is only one wing but 3 floors.  The room number starts with the corresponding floor.  The rooms are as follows. I have included a PDF of the general floor plan for each floor.  The room numbers are in text in each room to show the map.  
+
+Floor 1
+113
+114
+115
+116
+117
+118
+119
+120
+121
+
+Floor 2
+201
+202
+204
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+216
+217
+218
+219
+220
+221
+
+Floor 3
+301
+302
+303
+304
+305
+306
+307
+308
+309
+310
+311
+312
+313
+314
+315
+316
+317
+318
+319
+320
+321
+
