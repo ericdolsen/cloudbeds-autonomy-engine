@@ -850,8 +850,16 @@
             document.getElementById('regLastName').value = guestData.lastName || '';
             
             let displayEmail = guestData.email || '';
-            if (displayEmail.toLowerCase().endsWith('@m.expediapartnercentral.com') || 
-                displayEmail.toLowerCase().endsWith('@guest.booking.com')) {
+            const emailLower = displayEmail.toLowerCase();
+            const isPlaceholder = emailLower.includes('noemail') || 
+                                  emailLower.includes('none@') || 
+                                  emailLower.includes('@none.') ||
+                                  emailLower.includes('no-email') ||
+                                  emailLower === 'none';
+
+            if (emailLower.endsWith('@m.expediapartnercentral.com') || 
+                emailLower.endsWith('@guest.booking.com') || 
+                isPlaceholder) {
                 displayEmail = ''; // Force guest to enter a real email
             }
             document.getElementById('regEmail').value = displayEmail;
