@@ -876,7 +876,7 @@ function extractGuestContact(data) {
     const guests = Object.values(data.guestList);
     const mg = guests.find(g => g.isMainGuest) || guests[0];
     if (mg) {
-      phone = (mg.guestCellPhone || mg.guestPhone || '').toString().replace(/[^0-9]/g, '');
+      phone = (mg.guestPhone || mg.guestCellPhone || '').toString().replace(/[^0-9]/g, '');
       if (!email) email = mg.guestEmail || '';
       address1 = mg.guestAddress1 || mg.guestAddress || '';
       city = mg.guestCity || '';

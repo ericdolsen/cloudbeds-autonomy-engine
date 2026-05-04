@@ -101,32 +101,42 @@ class CloudbedsAPI {
         logger.info(`[API CALL] Delegating search "${query}" to fast local ReservationCache...`);
         const { reservationCache } = require('./reservationCache');
 
-        // 1. Try the local cache first. It loads from disk on startup and is
-        //    updated by webhook on reservation changes.
+        // 1. Check local cache (we still want this for useful error messages even if we bypass it for success)
         let cacheResult = null;
         if (reservationCache.cache.size > 0) {
           cacheResult = reservationCache.search(query, mode);
-          if (cacheResult && cacheResult.success) {
-            return cacheResult;
-          }
         }
 
-        // 2. Cache miss OR cache thinks the only matches are for other dates
-        //    ("your check-in is 2026-05-01"). The most common reason: a
-        //    reservation was just booked in Cloudbeds and the webhook for it
-        //    hasn't propagated to our cache yet, so the search settles on an
-        //    older same-name booking. Fall back to a fresh live query scoped
-        //    to today so we can pick up brand-new arrivals without waiting
-        //    for the next cache sync.
-        logger.info(`[API CALL] Cache had no current-day match for "${query}" — checking live Cloudbeds for today's arrivals.`);
-        const liveResult = await this._searchLiveForCheckin({ query, mode, isName, isPhone });
-        if (liveResult && liveResult.success && liveResult.data) {
-          const id = liveResult.data.reservationID || liveResult.data.reservationId;
-          if (id) {
-            reservationCache.cache.set(id, liveResult.data);
-            logger.info(`[CACHE] Primed with live result ${id}.`);
+        // For check-ins, ALWAYS pull live data first to ensure we have ALL siblings
+        // of a multi-room group. If we just relied on a partial cache hit, the 
+        // multi-room chooser wouldn't trigger for the missing rooms.
+        if (mode === 'checkin') {
+          logger.info(`[API CALL] Forcing live query for check-in to guarantee multi-room sibling sync.`);
+          const liveResult = await this._searchLiveForCheckin({ query, mode, isName, isPhone });
+          if (liveResult && liveResult.success && liveResult.data) {
+            const id = liveResult.data.reservationID || liveResult.data.reservationId;
+            if (id) {
+              reservationCache.cache.set(id, liveResult.data);
+              logger.info(`[CACHE] Primed with live result ${id}.`);
+            }
+            return liveResult;
           }
-          return liveResult;
+        } else if (cacheResult && cacheResult.success) {
+          return cacheResult;
+        }
+
+        // 2. Cache miss or non-checkin. Fall back to live query if we haven't already.
+        if (mode !== 'checkin') {
+          logger.info(`[API CALL] Cache miss — checking live Cloudbeds.`);
+          const liveResult = await this._searchLiveForCheckin({ query, mode, isName, isPhone });
+          if (liveResult && liveResult.success && liveResult.data) {
+            const id = liveResult.data.reservationID || liveResult.data.reservationId;
+            if (id) {
+              reservationCache.cache.set(id, liveResult.data);
+              logger.info(`[CACHE] Primed with live result ${id}.`);
+            }
+            return liveResult;
+          }
         }
 
         // 3. Both layers missed. Prefer the cache's specific message if it
