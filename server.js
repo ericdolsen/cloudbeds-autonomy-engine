@@ -19,6 +19,7 @@ const { printPdfBuffer } = require('./src/printHandler');
 const { CloudbedsAgent } = require('./src/agent');
 const { NightAuditReport } = require('./src/nightAuditReport');
 const { HousekeepingAssigner } = require('./src/housekeepingAssigner');
+const { runRoomAssignment } = require('./src/roomAssignment');
 const { MessagingClient } = require('./src/messaging');
 const { WhistleListener } = require('./src/whistleListener');
 const { reservationCache } = require('./src/reservationCache');
@@ -1188,18 +1189,31 @@ cron.schedule('5 2 * * *', async () => {
   }
 }, { timezone: "America/Chicago" });
 
-// 1. Room Assignment Optimization at 3:00 AM (After native Night Audit finishes at 2:00 AM)
+// 1. Room Assignment at 3:00 AM (after Cloudbeds Night Audit finishes at 2:00).
+// Deterministic JS — see src/roomAssignment.js for why this isn't the agent.
 cron.schedule('0 3 * * *', async () => {
   const todayStr = getHotelBusinessDate(0);
   const tomorrowStr = getHotelBusinessDate(1);
-  logger.info(`[CRON] 3:00 AM - Triggering Room Assignment Optimization task for arriving date: ${todayStr}...`);
-  if (agent.isRunning) {
-    await agent.processIncomingMessage({
-       source: 'cron',
-       text: `It is 3:00 AM and Night Audit has completed. The new business date is ${todayStr}. Please run the nightly room assignment optimization algorithm. Look for unassigned rooms between ${todayStr} and ${tomorrowStr} and assign them to incoming reservations for today (${todayStr}).`
-    });
-  } else {
+  logger.info(`[CRON] 3:00 AM - Triggering deterministic room assignment for ${todayStr}...`);
+  if (!agent.isRunning) {
     logger.warn('[CRON] Agent is not running. Skipping scheduled room assignment.');
+    return;
+  }
+  try {
+    await runRoomAssignment({
+      api: agent.engine.api,
+      alertHub: agent.engine.alertHub,
+      todayStr,
+      tomorrowStr
+    });
+  } catch (e) {
+    logger.error(`[CRON] Room assignment crashed: ${e.message}`);
+    if (agent.engine.alertHub) {
+      agent.engine.alertHub.publish({
+        urgency: 'critical',
+        issueDescription: `Nightly room assignment crashed at 3:00 AM: ${e.message}. Reassign manually before arrivals start.`
+      });
+    }
   }
 }, { timezone: "America/Chicago" });
 
