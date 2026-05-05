@@ -11,6 +11,7 @@
  *   node scripts/probeTaxLine.js --days 30
  *   node scripts/probeTaxLine.js --reservation 4RP3DK343Q
  */
+require('dotenv').config();
 const { CloudbedsAPI } = require('../src/cloudbedsApi');
 
 function parseArgs(argv) {

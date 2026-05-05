@@ -24,6 +24,7 @@
  * Once we know the State Tax line target shape (from probeTaxLine.js),
  * fill it into TAX_LINE_EXTRAS below.
  */
+require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const ExcelJS = require('exceljs');
