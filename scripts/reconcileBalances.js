@@ -34,10 +34,17 @@ const { CloudbedsAPI } = require('../src/cloudbedsApi');
 const ADJUSTMENT_TAG = 'TAX_RECON_V1';
 const ADJUSTMENT_DESCRIPTION = `South Dakota State Tax — import reconciliation [${ADJUSTMENT_TAG}]`;
 
-// Targeting fields for postAdjustment. Populate from probeTaxLine.js output.
-// Common keys: type='tax', taxID=<id>, itemID=<id>, subReservationID, roomID.
+// Targeting fields for postAdjustment. The probe (scripts/probeTaxLine.js)
+// confirmed this property charges 4 tax types (South Dakota State Tax,
+// Tourism Tax, City 1, City 2), all under internalTransactionCode 8000. So
+// the code alone doesn't disambiguate — we identify the line by name.
+//
+// `taxName` is our best guess at the parameter Cloudbeds uses for tax-line
+// targeting on /postAdjustment. If the pilot run errors, the response body
+// will tell us what to use instead (e.g. `taxID` lookup, `itemID`).
 const TAX_LINE_EXTRAS = {
   type: 'tax',
+  taxName: 'South Dakota State Tax',
   description: ADJUSTMENT_DESCRIPTION,
   reason: ADJUSTMENT_DESCRIPTION,
 };

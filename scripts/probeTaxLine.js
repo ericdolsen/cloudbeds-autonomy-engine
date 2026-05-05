@@ -70,8 +70,15 @@ async function main() {
   }
 
   // Single-reservation deep dive for the field shape postAdjustment needs.
+  // Note: getTransactions returns the long internal ID in `reservationID`
+  // (it's actually `sourceId`); /getReservation wants the short alphanumeric
+  // code. Pass --reservation <code> from the spreadsheet for a real lookup.
   let probeRes = args.reservation;
-  if (!probeRes && taxTxns.length) probeRes = taxTxns[0].reservationID;
+  if (!probeRes && taxTxns.length) {
+    console.log('\nNo --reservation supplied; skipping per-reservation deep dive.');
+    console.log('Re-run with: node scripts/probeTaxLine.js --reservation <SHORT_CODE>');
+    probeRes = null;
+  }
   if (probeRes) {
     console.log(`\n=== getReservation(${probeRes}) — line-item structure ===`);
     const detail = await api.getReservationById(probeRes);
