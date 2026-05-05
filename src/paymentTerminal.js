@@ -322,15 +322,20 @@ class PaymentTerminal {
       // the menuitem.
       logger.info(`[STRIPE TERMINAL] Selecting 'Terminal' as payment method...`);
       try {
-        await page.getByRole('button', { name: /Payment method/i }).first().click({ timeout: 5000 });
+        // Target the form control wrapper specifically to avoid clicking hidden labels
+        await page.locator('.chakra-form-control, label').filter({ hasText: /Payment method/i }).first().click({ timeout: 5000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] Role-based 'Payment method' trigger missed; falling back to class locator. ${e.message.substring(0, 80)}`);
-        await page.locator('button.chakra-menu__menu-button:visible', { hasText: 'Payment method' }).first().click({ timeout: 5000 });
+        logger.warn(`[STRIPE TERMINAL] Wrapper-based 'Payment method' trigger missed; falling back to class locator. ${e.message.substring(0, 80)}`);
+        await page.locator('button.chakra-menu__menu-button:visible').filter({ hasText: /Payment method|Select/i }).first().click({ timeout: 5000 });
       }
+      
+      await page.waitForTimeout(500); // Give menu time to animate open
+
       try {
-        await page.getByRole('menuitem', { name: 'Terminal', exact: true }).click({ timeout: 5000 });
+        // Look for any menu item or button inside the open menu that says Terminal
+        await page.locator('[role="menu"] button, [role="menuitem"], .chakra-menu__menuitem').filter({ hasText: /^Terminal$/i }).first().click({ timeout: 5000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] Role-based 'Terminal' menuitem missed; falling back to class locator. ${e.message.substring(0, 80)}`);
+        logger.warn(`[STRIPE TERMINAL] Robust 'Terminal' menuitem missed; falling back to old class locator. ${e.message.substring(0, 80)}`);
         await page.locator('button.chakra-menu__menuitem:visible', { hasText: 'Terminal' }).first().click({ timeout: 5000 });
       }
       await page.waitForTimeout(1000);
@@ -341,18 +346,18 @@ class PaymentTerminal {
       // page that share the visible text but aren't clickable.
       logger.info(`[STRIPE TERMINAL] Sending $${amount} to ${terminalName}. Waiting for guest to tap/insert card...`);
       try {
-        await page.getByRole('button', { name: 'Process Payment', exact: true }).click({ timeout: 5000 });
+        await page.locator('button').filter({ hasText: /^(Process Payment|Add Payment|Save|Charge)$/i }).last().click({ timeout: 5000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] Role-based 'Process Payment' selector missed; falling back to Chakra class locator. ${e.message.substring(0, 80)}`);
+        logger.warn(`[STRIPE TERMINAL] Regex button selector missed; falling back to Chakra class locator. ${e.message.substring(0, 80)}`);
         try {
-          await page.locator('button.chakra-button:visible', { hasText: 'Process Payment' }).first().click({ timeout: 5000 });
+          await page.locator('button.chakra-button:visible').filter({ hasText: /^(Process Payment|Add Payment|Save|Charge)$/i }).last().click({ timeout: 5000 });
         } catch (e2) {
           logger.warn(`[STRIPE TERMINAL] Chakra class fallback also missed; falling back to vision lane. ${e2.message.substring(0, 80)}`);
-          await vision.click("the 'Process Payment' confirmation button on the side panel");
+          await vision.click("the 'Process Payment' or 'Save' or 'Add Payment' confirmation button on the side panel");
         }
       }
 
-      await page.waitForSelector('text="Choose terminal"', { timeout: 10000 });
+      await page.waitForSelector('text=/Choose terminal|Select terminal|Terminal/i', { timeout: 10000 });
       // Click the Chakra radio's <label> directly — its hidden <input>
       // can't be clicked through. Falls back to the visible label span
       // if the wrapper class ever changes.
