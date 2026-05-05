@@ -505,17 +505,40 @@ class CloudbedsAPI {
   }
 
   /**
+   * GET /getTaxesAndFees — list the property's configured taxes and fees,
+   * including the itemID we need to target a specific line via postAdjustment.
+   */
+  async getTaxesAndFees() {
+    logger.info(`[API CALL] GET /getTaxesAndFees`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, data: [] });
+    }
+    try {
+      const response = await this._getClient().get('/getTaxesAndFees', {
+        params: this.propertyID ? { propertyID: this.propertyID } : {},
+      });
+      return response.data;
+    } catch (error) {
+      logger.error(`getTaxesAndFees failed: ${error.message}`);
+      return { success: false, error: error.response?.data?.message || error.message };
+    }
+  }
+
+  /**
    * POST /postAdjustment — apply a discount or surcharge against an existing
-   * folio line (room rate, tax, fee, or item). Sign convention is INVERTED
+   * folio line (room rate, product, fee, or tax). Sign convention is INVERTED
    * vs. postCustomItem: positive `amount` discounts the line by that much,
    * negative `amount` adds an extra charge. This means a single call handles
    * both balance-due and credit reservations when you pass `amount = balance`.
    *
-   * Required: reservationID, amount.
-   * Targeting (pass via `extras`): subReservationID or roomID for multi-room
-   * bookings, plus whatever ID or category the property uses to identify the
-   * specific line — Cloudbeds varies by version (e.g., taxID, itemID, type).
-   * The probe script (scripts/probeTaxLine.js) discovers these per-property.
+   * Required body params (per the Cloudbeds spec):
+   *   - reservationID  (string)
+   *   - type           (enum: 'rate' | 'product' | 'fee' | 'tax')
+   *   - amount         (number)
+   *   - itemID         (string) — required for product/fee/tax (NOT rate);
+   *                    identifies which specific line to adjust
+   *   - notes          (string, optional) — freeform; we use it as our
+   *                    idempotency marker and audit message
    */
   async postAdjustment(reservationID, amount, extras = {}) {
     logger.info(`[API CALL] POST /postAdjustment [${reservationID}] | Amount: ${amount} | Extras: ${JSON.stringify(extras)}`);
@@ -527,8 +550,16 @@ class CloudbedsAPI {
       const response = await this._getClient().post('/postAdjustment', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
-      logger.error(`postAdjustment failed: ${error.message}`);
-      return { success: false, error: error.response?.data?.message || error.message };
+      // Surface full body so callers can see validation field details, not
+      // just the top-level message. Cloudbeds often includes a per-field
+      // breakdown that's invaluable for figuring out the right param shape.
+      const body = error.response?.data;
+      logger.error(`postAdjustment failed: ${error.message} | body=${JSON.stringify(body)}`);
+      return {
+        success: false,
+        error: body?.message || error.message,
+        responseBody: body,
+      };
     }
   }
 
