@@ -360,10 +360,10 @@ class PaymentTerminal {
       // We don't wait for the modal title because text matches can hit hidden elements
       // and cause timeouts. Just wait directly for the radio button with the terminal name.
       try {
-        await page.locator('label.chakra-radio, label, div[role="radio"]').filter({ hasText: terminalName }).first().click({ timeout: 10000 });
+        await page.locator('label.chakra-radio, label, div[role="radio"]').filter({ hasText: terminalName }).first().click({ timeout: 20000 });
       } catch (e) {
         logger.warn(`[STRIPE TERMINAL] '${terminalName}' robust radio locator missed; falling back to basic label text. ${e.message.substring(0, 80)}`);
-        await page.locator(`text="${terminalName}"`).last().click({ timeout: 5000 });
+        await page.locator(`text="${terminalName}"`).last().click({ timeout: 15000 });
       }
 
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
@@ -378,16 +378,16 @@ class PaymentTerminal {
       // guest in, and a false success leaves them holding an
       // unpaid balance with a check-in already done.
       try {
-        await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 });
+        await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 30000 });
       } catch (e) {
         throw new Error(
-          'Terminal "Now processing with terminal" indicator did not appear within 10s — ' +
+          'Terminal "Now processing with terminal" indicator did not appear within 30s — ' +
           'Cloudbeds may have auto-charged the card on file instead of sending to the reader, ' +
           'or the Add Payment dialog selectors are out of date. Verify the charge in Cloudbeds ' +
           'before checking the guest in.'
         );
       }
-      await page.waitForSelector('text="Now processing with terminal"', { state: 'hidden', timeout: 90000 });
+      await page.waitForSelector('text="Now processing with terminal"', { state: 'hidden', timeout: 180000 });
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
       await page.waitForTimeout(5000);
