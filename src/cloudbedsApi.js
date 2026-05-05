@@ -527,8 +527,16 @@ class CloudbedsAPI {
       const response = await this._getClient().post('/postAdjustment', body, { headers: this._formHeaders() });
       return response.data;
     } catch (error) {
-      logger.error(`postAdjustment failed: ${error.message}`);
-      return { success: false, error: error.response?.data?.message || error.message };
+      // Surface full body so callers can see validation field details, not
+      // just the top-level message. Cloudbeds often includes a per-field
+      // breakdown that's invaluable for figuring out the right param shape.
+      const body = error.response?.data;
+      logger.error(`postAdjustment failed: ${error.message} | body=${JSON.stringify(body)}`);
+      return {
+        success: false,
+        error: body?.message || error.message,
+        responseBody: body,
+      };
     }
   }
 

@@ -164,7 +164,9 @@ async function processRow(api, row, args, auditPath) {
       appendAudit(auditPath, { timestamp: ts, reservationID: row.reservationID, balance: row.balance, action: 'posted', amount: row.balance });
       return { status: 'posted' };
     }
-    appendAudit(auditPath, { timestamp: ts, reservationID: row.reservationID, balance: row.balance, action: 'error', amount: row.balance, error: res?.error || res?.message || 'unknown' });
+    const errMsg = res?.error || res?.message || 'unknown';
+    const fullBody = res?.responseBody ? `${errMsg} | body=${JSON.stringify(res.responseBody)}` : errMsg;
+    appendAudit(auditPath, { timestamp: ts, reservationID: row.reservationID, balance: row.balance, action: 'error', amount: row.balance, error: fullBody });
     return { status: 'error' };
   } catch (e) {
     appendAudit(auditPath, { timestamp: ts, reservationID: row.reservationID, balance: row.balance, action: 'error', amount: row.balance, error: e.message });
