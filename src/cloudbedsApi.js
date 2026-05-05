@@ -505,6 +505,55 @@ class CloudbedsAPI {
   }
 
   /**
+   * POST /postAdjustment — apply a discount or surcharge against an existing
+   * folio line (room rate, tax, fee, or item). Sign convention is INVERTED
+   * vs. postCustomItem: positive `amount` discounts the line by that much,
+   * negative `amount` adds an extra charge. This means a single call handles
+   * both balance-due and credit reservations when you pass `amount = balance`.
+   *
+   * Required: reservationID, amount.
+   * Targeting (pass via `extras`): subReservationID or roomID for multi-room
+   * bookings, plus whatever ID or category the property uses to identify the
+   * specific line — Cloudbeds varies by version (e.g., taxID, itemID, type).
+   * The probe script (scripts/probeTaxLine.js) discovers these per-property.
+   */
+  async postAdjustment(reservationID, amount, extras = {}) {
+    logger.info(`[API CALL] POST /postAdjustment [${reservationID}] | Amount: ${amount} | Extras: ${JSON.stringify(extras)}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: 'Adjustment posted (mock).' });
+    }
+    try {
+      const body = this._encodeForm({ reservationID, amount, ...extras });
+      const response = await this._getClient().post('/postAdjustment', body, { headers: this._formHeaders() });
+      return response.data;
+    } catch (error) {
+      logger.error(`postAdjustment failed: ${error.message}`);
+      return { success: false, error: error.response?.data?.message || error.message };
+    }
+  }
+
+  /**
+   * POST /postCharge — record a charge against a reservation. Kept as a
+   * fallback for cases where postAdjustment cannot be used (e.g., property
+   * configurations that reject negative amounts on adjustments).
+   * Primary path is postAdjustment.
+   */
+  async postCharge(reservationID, amount, extras = {}) {
+    logger.info(`[API CALL] POST /postCharge [${reservationID}] | Amount: ${amount} | Extras: ${JSON.stringify(extras)}`);
+    if (this._isMock()) {
+      return this._mockReturn({ success: true, message: 'Charge posted (mock).' });
+    }
+    try {
+      const body = this._encodeForm({ reservationID, amount, ...extras });
+      const response = await this._getClient().post('/postCharge', body, { headers: this._formHeaders() });
+      return response.data;
+    } catch (error) {
+      logger.error(`postCharge failed: ${error.message}`);
+      return { success: false, error: error.response?.data?.message || error.message };
+    }
+  }
+
+  /**
    * Fetch reservations with highly nested financial details for custom reporting.
    */
   async getReservationsWithRateDetails(startDate, endDate) {
