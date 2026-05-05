@@ -357,15 +357,13 @@ class PaymentTerminal {
         }
       }
 
-      await page.waitForSelector('text=/Choose terminal|Select terminal|Terminal/i', { timeout: 10000 });
-      // Click the Chakra radio's <label> directly — its hidden <input>
-      // can't be clicked through. Falls back to the visible label span
-      // if the wrapper class ever changes.
+      // We don't wait for the modal title because text matches can hit hidden elements
+      // and cause timeouts. Just wait directly for the radio button with the terminal name.
       try {
-        await page.locator('label.chakra-radio', { hasText: terminalName }).first().click({ timeout: 5000 });
+        await page.locator('label.chakra-radio, label, div[role="radio"]').filter({ hasText: terminalName }).first().click({ timeout: 10000 });
       } catch (e) {
-        logger.warn(`[STRIPE TERMINAL] '${terminalName}' radio label missed; falling back to label span. ${e.message.substring(0, 80)}`);
-        await page.locator('span.chakra-radio__label:visible', { hasText: terminalName }).first().click({ timeout: 5000 });
+        logger.warn(`[STRIPE TERMINAL] '${terminalName}' robust radio locator missed; falling back to basic label text. ${e.message.substring(0, 80)}`);
+        await page.locator(`text="${terminalName}"`).last().click({ timeout: 5000 });
       }
 
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
