@@ -34,19 +34,22 @@ const { CloudbedsAPI } = require('../src/cloudbedsApi');
 const ADJUSTMENT_TAG = 'TAX_RECON_V1';
 const ADJUSTMENT_NOTES = `South Dakota State Tax — import reconciliation [${ADJUSTMENT_TAG}]`;
 
-// postAdjustment form params (per Cloudbeds spec):
-//   type   = 'tax'
-//   itemID = ID of the specific tax line to adjust (REQUIRED for type=tax)
-//   notes  = freeform text; doubles as our audit + idempotency marker
-//
-// Set SD_STATE_TAX_ITEM_ID to the value the probe surfaces from
-// getTaxesAndFees. Until it's set, the script refuses to --apply.
-const SD_STATE_TAX_ITEM_ID = process.env.SD_STATE_TAX_ITEM_ID || '';
-const TAX_LINE_EXTRAS = {
-  type: 'tax',
-  itemID: SD_STATE_TAX_ITEM_ID,
-  notes: ADJUSTMENT_NOTES,
-};
+// The script auto-discovers the SD State Tax itemID from getTaxesAndFees on
+// startup. Override with --tax-id <id> or SD_STATE_TAX_ITEM_ID env var if you
+// want to point at a different tax line (or test against a different property).
+const TAX_NAME = 'South Dakota State Tax';
+
+async function resolveTaxItemID(api, args) {
+  if (args.taxID) return args.taxID;
+  if (process.env.SD_STATE_TAX_ITEM_ID) return process.env.SD_STATE_TAX_ITEM_ID;
+  const res = await api.getTaxesAndFees();
+  const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+  const match = list.find(t => t && t.name === TAX_NAME && !t.isDeleted);
+  if (!match) {
+    throw new Error(`Could not find a tax named "${TAX_NAME}" in getTaxesAndFees. Pass --tax-id <id> explicitly.`);
+  }
+  return match.taxID || match.id || match.itemID;
+}
 
 function parseArgs(argv) {
   const args = {
@@ -57,6 +60,7 @@ function parseArgs(argv) {
     limit: Infinity,
     concurrency: 2,
     sleepMs: 250,
+    taxID: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -67,6 +71,7 @@ function parseArgs(argv) {
     else if (a === '--limit') args.limit = parseInt(argv[++i], 10);
     else if (a === '--concurrency') args.concurrency = parseInt(argv[++i], 10);
     else if (a === '--sleep') args.sleepMs = parseInt(argv[++i], 10);
+    else if (a === '--tax-id') args.taxID = argv[++i];
     else if (a === '--help' || a === '-h') {
       console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(0, 28).join('\n'));
       process.exit(0);
@@ -143,7 +148,7 @@ function appendAudit(auditPath, row) {
       .map(csvEscape).join(',') + '\n');
 }
 
-async function processRow(api, row, args, auditPath) {
+async function processRow(api, row, args, auditPath, taxLineExtras) {
   const ts = new Date().toISOString();
   const absBal = Math.abs(row.balance);
 
@@ -158,7 +163,7 @@ async function processRow(api, row, args, auditPath) {
   }
 
   try {
-    const res = await api.postAdjustment(row.reservationID, row.balance, TAX_LINE_EXTRAS);
+    const res = await api.postAdjustment(row.reservationID, row.balance, taxLineExtras);
     if (res && res.success !== false) {
       appendAudit(auditPath, { timestamp: ts, reservationID: row.reservationID, balance: row.balance, action: 'posted', amount: row.balance });
       return { status: 'posted' };
@@ -188,6 +193,18 @@ async function runWithConcurrency(items, concurrency, fn) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  const api = new CloudbedsAPI();
+
+  let taxItemID = null;
+  if (args.apply) {
+    taxItemID = await resolveTaxItemID(api, args);
+  }
+  const taxLineExtras = {
+    type: 'tax',
+    itemID: taxItemID,
+    notes: ADJUSTMENT_NOTES,
+  };
+
   console.log(`Tax balance reconciliation`);
   console.log(`  input:       ${args.input}`);
   console.log(`  audit:       ${args.audit}`);
@@ -195,16 +212,7 @@ async function main() {
   console.log(`  cap:         $${args.cap.toFixed(2)}`);
   console.log(`  limit:       ${args.limit === Infinity ? 'all' : args.limit}`);
   console.log(`  concurrency: ${args.concurrency}`);
-  console.log(`  itemID:      ${SD_STATE_TAX_ITEM_ID || '(not set)'}`);
-
-  if (args.apply && !SD_STATE_TAX_ITEM_ID) {
-    console.error('\nERROR: --apply requires SD_STATE_TAX_ITEM_ID to be set.');
-    console.error('Run scripts/probeTaxLine.js first, find the South Dakota State Tax');
-    console.error('itemID in the "Configured taxes & fees" output, then either:');
-    console.error('  - export SD_STATE_TAX_ITEM_ID=<id> before running, OR');
-    console.error('  - hard-code SD_STATE_TAX_ITEM_ID in scripts/reconcileBalances.js');
-    process.exit(2);
-  }
+  console.log(`  itemID:      ${taxItemID || '(skipped — dry-run)'}`);
 
   const rows = await readBalances(args.input);
   console.log(`\nLoaded ${rows.length} non-zero rows from workbook.`);
@@ -217,12 +225,11 @@ async function main() {
   const todo = Number.isFinite(args.limit) ? remaining.slice(0, args.limit) : remaining;
 
   const counts = { posted: 0, dry_run: 0, skipped_cap: 0, error: 0 };
-  const api = new CloudbedsAPI();
 
   let done = 0;
   const total = todo.length;
   await runWithConcurrency(todo, args.concurrency, async (row) => {
-    const r = await processRow(api, row, args, args.audit);
+    const r = await processRow(api, row, args, args.audit, taxLineExtras);
     counts[r.status] = (counts[r.status] || 0) + 1;
     done += 1;
     if (done % 50 === 0 || done === total) {
