@@ -829,7 +829,15 @@
                     groupsCache = data.data || [];
                     const sel = document.getElementById('groupSelect');
                     sel.innerHTML = '<option value="">Select a Group / Company</option>' + 
-                        groupsCache.map(g => `<option value="${g.groupCode}">${g.name} (${g.type})</option>`).join('');
+                        groupsCache.map(g => {
+                            let numId = '';
+                            if (g.contacts && g.contacts[0] && g.contacts[0].group_profile_id) {
+                                numId = g.contacts[0].group_profile_id;
+                            } else if (g.groupCode && g.groupCode.startsWith('g') && !isNaN(g.groupCode.slice(1))) {
+                                numId = g.groupCode.slice(1);
+                            }
+                            return `<option value="${g.groupCode}" data-numid="${numId}" ${!numId ? 'disabled title="Missing internal ID"' : ''}>${g.name} (${g.type})</option>`;
+                        }).join('');
                 }
             } catch (e) {
                 console.error('Failed to load groups:', e);
@@ -838,8 +846,12 @@
         }
 
         async function generateGroupInvoice() {
-            const groupId = document.getElementById('groupSelect').value;
+            const sel = document.getElementById('groupSelect');
+            const groupId = sel.value;
             if (!groupId) return showToast("Please select a group first.");
+            
+            const numId = sel.options[sel.selectedIndex].getAttribute('data-numid');
+            if (!numId) return showToast("This group lacks an internal ID (no contacts).");
             
             const btn = document.getElementById('btnLoadInvoice');
             const ogText = btn.innerHTML;
@@ -847,7 +859,7 @@
             btn.disabled = true;
             
             try {
-                const res = await fetch(`/api/employee/groups/${groupId}/outstanding-invoice`);
+                const res = await fetch(`/api/employee/groups/${groupId}/outstanding-invoice?numId=${numId}`);
                 const data = await res.json();
                 
                 if (!data.success) throw new Error(data.error);

@@ -268,8 +268,13 @@ app.get('/api/employee/groups', checkLocalNetwork, async (req, res) => {
 app.get('/api/employee/groups/:id/outstanding-invoice', checkLocalNetwork, async (req, res) => {
   if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
   try {
-    const groupId = req.params.id;
-    const transactionsRes = await agent.engine.api.getUnpaidGroupTransactions(groupId);
+    const groupId = req.params.id; // The groupCode, kept for logging
+    const numId = req.query.numId; // The actual numeric ID from the Cloudbeds API contacts
+    if (!numId) {
+        return res.status(400).json({ success: false, error: "Missing numeric group ID" });
+    }
+    
+    const transactionsRes = await agent.engine.api.getUnpaidGroupTransactions(numId);
     if (!transactionsRes.success) {
        return res.status(500).json({ success: false, error: "Failed to fetch transactions" });
     }
