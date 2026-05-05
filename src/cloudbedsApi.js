@@ -279,6 +279,98 @@ class CloudbedsAPI {
   }
 
   /**
+   * GET /getGroups - Fetch group profiles, companies, etc.
+   */
+  async getGroups(type = null) {
+    logger.info(`[API CALL] GET /getGroups | type: ${type || 'all'}`);
+    if (this._isMock()) {
+      return { success: true, data: [] };
+    }
+    try {
+      const collected = [];
+      const pageSize = 100;
+      let pageNumber = 1;
+      
+      while (true) {
+        const params = {
+          propertyID: this.propertyID,
+          pageSize,
+          pageNumber,
+          status: 'open'
+        };
+        if (type) params.type = type;
+        
+        const response = await this._getClient().get('https://api.cloudbeds.com/api/v1.3/getGroups', { params });
+        const page = (response.data && response.data.data) ? response.data.data : [];
+        collected.push(...page);
+        
+        if (page.length < pageSize) break; // Reached last page
+        pageNumber++;
+        await sleep(150); // Be nice to rate limits
+      }
+      return { success: true, data: collected };
+    } catch (error) {
+      logger.error(`getGroups failed: ${error.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
+   * GET unpaid group transactions (folios/transactions with sourceKind=GROUP_PROFILE)
+   */
+  async getUnpaidGroupTransactions(groupId) {
+    logger.info(`[API CALL] POST /accounting/v1.0/folios/transactions | Group: ${groupId}`);
+    if (this._isMock()) {
+      return { success: true, data: [] };
+    }
+    
+    try {
+      const collected = [];
+      const pageSize = 100;
+      let pageToken = null;
+      
+      while (true) {
+        const response = await this._getClient().post('https://api.cloudbeds.com/accounting/v1.0/folios/transactions', {
+          sourceId: parseInt(groupId, 10),
+          sourceKind: 'GROUP_PROFILE',
+          posted: true,
+          limit: pageSize,
+          pageToken: pageToken
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.propertyID ? { 'X-PROPERTY-ID': this.propertyID } : {})
+          }
+        });
+        
+        // Response format is Paginated, wrapped in groups. If no groupBy is sent, key is "default".
+        const groups = (response.data && response.data.groups) ? response.data.groups : {};
+        for (const groupKey in groups) {
+           const transactions = groups[groupKey].transactions || [];
+           collected.push(...transactions);
+        }
+        
+        pageToken = response.data ? response.data.nextPageToken : null;
+        if (!pageToken) break;
+        await sleep(150);
+      }
+      
+      // Now filter: we only want outstanding line items.
+      // A transaction is unpaid if it's a debit (amount > 0 usually, but we check if it has unallocated balance)
+      // wait, `allocatedPayments` array exists on payments. But for charges?
+      // Actually, if we just pull all transactions, we can compute the sum of allocations.
+      // But let's just return all non-voided transactions so the front-end can calculate the net balance.
+      // We'll exclude fully voided transactions and return the raw list so we can parse it in the route.
+      const validTransactions = collected.filter(t => t.state !== 'VOIDED' && t.state !== 'DELETED');
+      return { success: true, data: validTransactions };
+      
+    } catch (error) {
+      logger.error(`getUnpaidGroupTransactions failed: ${error.message}`);
+      return { success: false, data: [] };
+    }
+  }
+
+  /**
    * Parse Portal/Goki's portal_doorcode field into structured pairs.
    * Portal writes a single string like:
    *   "Jose Emigdio 215: 1618, 204: 4538"

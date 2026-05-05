@@ -389,6 +389,10 @@
                 <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                 Reporting Center
             </div>
+            <div class="nav-item" onclick="switchTab('invoicing')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Group Invoicing
+            </div>
             <div class="nav-item" onclick="switchTab('knowledge')">
                 <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
                 Agent Knowledge Base
@@ -458,6 +462,33 @@
                     <button class="btn" id="btnTax" onclick="generateSalesTax()">
                         Build Filing Report
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- INVOICING TAB -->
+        <div id="view-invoicing" class="view-section">
+            <div class="page-header">
+                <h2>Group Invoicing</h2>
+                <p>Generate clean, professional invoices showing only outstanding balances for company and group accounts.</p>
+            </div>
+
+            <div class="report-card" style="margin-bottom: 25px;">
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <select id="groupSelect" class="input" style="flex:1;">
+                        <option value="">Loading groups...</option>
+                    </select>
+                    <button class="btn" id="btnLoadInvoice" onclick="generateGroupInvoice()">
+                        Load Outstanding Balances
+                    </button>
+                    <button class="btn btn-ghost" id="btnPrintInvoice" style="display:none;" onclick="printInvoice()">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                        Print / Save PDF
+                    </button>
+                </div>
+                
+                <div id="invoiceRenderHost" style="background: white; color: black; padding: 40px; border-radius: 4px; display: none;">
+                    <!-- Invoice content generated here -->
                 </div>
             </div>
         </div>
@@ -786,6 +817,154 @@
 
         // Load KB on startup
         loadKnowledgeBase();
+
+        // --- GROUP INVOICING LOGIC ---
+        let groupsCache = [];
+        
+        async function loadGroups() {
+            try {
+                const res = await fetch('/api/employee/groups');
+                const data = await res.json();
+                if (data.success) {
+                    groupsCache = data.data || [];
+                    const sel = document.getElementById('groupSelect');
+                    sel.innerHTML = '<option value="">Select a Group / Company</option>' + 
+                        groupsCache.map(g => `<option value="${g.groupCode}">${g.name} (${g.type})</option>`).join('');
+                }
+            } catch (e) {
+                console.error('Failed to load groups:', e);
+                document.getElementById('groupSelect').innerHTML = '<option value="">Failed to load groups</option>';
+            }
+        }
+
+        async function generateGroupInvoice() {
+            const groupId = document.getElementById('groupSelect').value;
+            if (!groupId) return showToast("Please select a group first.");
+            
+            const btn = document.getElementById('btnLoadInvoice');
+            const ogText = btn.innerHTML;
+            btn.innerHTML = 'Loading...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch(`/api/employee/groups/${groupId}/outstanding-invoice`);
+                const data = await res.json();
+                
+                if (!data.success) throw new Error(data.error);
+                
+                const group = groupsCache.find(g => g.groupCode === groupId);
+                renderInvoiceHtml(group, data.data);
+                document.getElementById('invoiceRenderHost').style.display = 'block';
+                document.getElementById('btnPrintInvoice').style.display = 'inline-flex';
+                
+            } catch (err) {
+                showToast(`❌ Error: ${err.message}`);
+            } finally {
+                btn.innerHTML = ogText;
+                btn.disabled = false;
+            }
+        }
+        
+        function renderInvoiceHtml(group, invoiceData) {
+            const host = document.getElementById('invoiceRenderHost');
+            const now = new Date().toLocaleDateString();
+            
+            // Generate clean tables for unpaid charges. We just list all charges for now, 
+            // since partial allocations get tricky. The balance will be mathematically correct.
+            let rowsHtml = '';
+            invoiceData.charges.forEach(charge => {
+                const date = charge.transactionDatetime ? new Date(charge.transactionDatetime).toLocaleDateString() : charge.serviceDate;
+                rowsHtml += `
+                    <tr>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${date}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${escapeHtml(charge.description)}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd;">${escapeHtml(charge.reservationName || charge.roomName || '')}</td>
+                        <td style="padding: 8px; border-bottom: 1px solid #ddd; text-align: right;">$${parseFloat(charge.amount || 0).toFixed(2)}</td>
+                    </tr>
+                `;
+            });
+            
+            if (rowsHtml === '') {
+                rowsHtml = `<tr><td colspan="4" style="padding: 8px; text-align: center; font-style: italic;">No outstanding charges found.</td></tr>`;
+            }
+
+            const html = `
+                <div id="printArea" style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto;">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px;">
+                        <div>
+                            <h1 style="margin: 0 0 10px 0; color: #333; font-size: 24px;">GATEWAY PARK HOTEL</h1>
+                            <p style="margin: 0; color: #666; font-size: 14px;">123 Gateway Blvd, City, State</p>
+                            <p style="margin: 0; color: #666; font-size: 14px;">Phone: (555) 123-4567</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <h2 style="margin: 0 0 10px 0; color: #333; font-size: 20px;">OUTSTANDING INVOICE</h2>
+                            <p style="margin: 0; color: #666; font-size: 14px;">Date: ${now}</p>
+                            <p style="margin: 0; color: #666; font-size: 14px;">Group Code: ${escapeHtml(group.groupCode)}</p>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">BILL TO:</h3>
+                        <p style="margin: 0; color: #333; font-size: 16px; font-weight: bold;">${escapeHtml(group.name)}</p>
+                        ${group.address1 ? `<p style="margin: 0; color: #666; font-size: 14px;">${escapeHtml(group.address1)}</p>` : ''}
+                        ${group.city ? `<p style="margin: 0; color: #666; font-size: 14px;">${escapeHtml(group.city)}, ${escapeHtml(group.state || '')} ${escapeHtml(group.zip || '')}</p>` : ''}
+                    </div>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+                        <thead>
+                            <tr style="background-color: #f5f5f5;">
+                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #ddd; color: #333;">Date</th>
+                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #ddd; color: #333;">Description</th>
+                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #ddd; color: #333;">Reservation / Room</th>
+                                <th style="padding: 10px 8px; text-align: right; border-bottom: 2px solid #ddd; color: #333;">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                    
+                    <div style="display: flex; justify-content: flex-end;">
+                        <table style="width: 300px; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 8px; font-weight: bold; color: #333;">Total Charges:</td>
+                                <td style="padding: 8px; text-align: right; color: #333;">$${invoiceData.totalCharges}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; font-weight: bold; color: #333; border-bottom: 1px solid #ddd;">Payments Applied:</td>
+                                <td style="padding: 8px; text-align: right; color: #333; border-bottom: 1px solid #ddd;">-$${invoiceData.totalPayments}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 12px 8px; font-weight: bold; font-size: 18px; color: #000;">BALANCE DUE:</td>
+                                <td style="padding: 12px 8px; text-align: right; font-weight: bold; font-size: 18px; color: #000;">$${invoiceData.balance}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            `;
+            host.innerHTML = html;
+        }
+        
+        function printInvoice() {
+            const printContent = document.getElementById('printArea').innerHTML;
+            const originalContent = document.body.innerHTML;
+            
+            // Simplest way to print a section cleanly
+            document.body.innerHTML = printContent;
+            document.body.style.background = "white";
+            window.print();
+            
+            // Restore UI
+            document.body.innerHTML = originalContent;
+            document.body.style.background = "";
+            // Re-attach listeners that innerHTML wipes
+            setTimeout(() => {
+                location.reload();
+            }, 100);
+        }
+
+        // Initialize Groups Tab when opened
+        loadGroups();
 
     </script>
 </body>

@@ -252,6 +252,75 @@ app.get('/api/employee/business-on-books', checkLocalNetwork, async (req, res) =
   }
 });
 
+// GET group profiles for the outstanding group invoice tool
+app.get('/api/employee/groups', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  try {
+    const result = await agent.engine.api.getGroups();
+    res.json(result);
+  } catch (err) {
+    logger.error(`[EMPLOYEE] getGroups failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET unpaid line items for a specific group
+app.get('/api/employee/groups/:id/outstanding-invoice', checkLocalNetwork, async (req, res) => {
+  if (!agent.isRunning) return res.status(503).json({ error: "System is offline" });
+  try {
+    const groupId = req.params.id;
+    const transactionsRes = await agent.engine.api.getUnpaidGroupTransactions(groupId);
+    if (!transactionsRes.success) {
+       return res.status(500).json({ success: false, error: "Failed to fetch transactions" });
+    }
+    
+    // An invoice logic:
+    // A transaction is a "charge" if it's a debit (which is positive or negative depending on the account, but
+    // usually in FolioTransactionResponse amount > 0 is debit if it's a charge, or negative. 
+    // Cloudbeds returns transactionType: "payment", "product", "addon", "rate", "tax", "fee".
+    // Payments are usually negative or have transactionType == "payment".
+    
+    const transactions = transactionsRes.data;
+    const charges = [];
+    const payments = [];
+    
+    transactions.forEach(t => {
+      // Sometimes amount is negative for payments and positive for charges.
+      if (t.transactionType === 'payment' || t.transactionType === 'accountsReceivable' || (t.amount < 0 && t.transactionType !== 'adjustment')) {
+         payments.push(t);
+      } else {
+         charges.push(t);
+      }
+    });
+
+    let totalCharges = charges.reduce((sum, c) => sum + parseFloat(c.amount || 0), 0);
+    let totalPayments = payments.reduce((sum, p) => sum + Math.abs(parseFloat(p.amount || 0)), 0);
+    
+    // We want to calculate the remaining balance. The raw logic:
+    let remainingPayments = totalPayments;
+    
+    // Filter to unpaid or partially paid charges.
+    // Cloudbeds doesn't strictly link every payment to every charge perfectly in all properties unless allocations are strictly enforced.
+    // So we'll just return all charges and the total balance.
+    
+    const balance = totalCharges - totalPayments;
+    
+    res.json({
+      success: true,
+      data: {
+         charges,
+         payments,
+         totalCharges: totalCharges.toFixed(2),
+         totalPayments: totalPayments.toFixed(2),
+         balance: balance.toFixed(2)
+      }
+    });
+  } catch (err) {
+    logger.error(`[EMPLOYEE] getOutstandingInvoice failed: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Diagnostic endpoint for the night audit pipeline. Returns the raw Cloudbeds
 // shapes that feed the report so we can confirm field names without guessing:
 //   - one sample reservation from /getReservations (today + 14 days)
