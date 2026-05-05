@@ -32,21 +32,20 @@ const { CloudbedsAPI } = require('../src/cloudbedsApi');
 
 // Stable marker so we can recognise + skip our own prior adjustments.
 const ADJUSTMENT_TAG = 'TAX_RECON_V1';
-const ADJUSTMENT_DESCRIPTION = `South Dakota State Tax — import reconciliation [${ADJUSTMENT_TAG}]`;
+const ADJUSTMENT_NOTES = `South Dakota State Tax — import reconciliation [${ADJUSTMENT_TAG}]`;
 
-// Targeting fields for postAdjustment. The probe (scripts/probeTaxLine.js)
-// confirmed this property charges 4 tax types (South Dakota State Tax,
-// Tourism Tax, City 1, City 2), all under internalTransactionCode 8000. So
-// the code alone doesn't disambiguate — we identify the line by name.
+// postAdjustment form params (per Cloudbeds spec):
+//   type   = 'tax'
+//   itemID = ID of the specific tax line to adjust (REQUIRED for type=tax)
+//   notes  = freeform text; doubles as our audit + idempotency marker
 //
-// `taxName` is our best guess at the parameter Cloudbeds uses for tax-line
-// targeting on /postAdjustment. If the pilot run errors, the response body
-// will tell us what to use instead (e.g. `taxID` lookup, `itemID`).
+// Set SD_STATE_TAX_ITEM_ID to the value the probe surfaces from
+// getTaxesAndFees. Until it's set, the script refuses to --apply.
+const SD_STATE_TAX_ITEM_ID = process.env.SD_STATE_TAX_ITEM_ID || '';
 const TAX_LINE_EXTRAS = {
   type: 'tax',
-  taxName: 'South Dakota State Tax',
-  description: ADJUSTMENT_DESCRIPTION,
-  reason: ADJUSTMENT_DESCRIPTION,
+  itemID: SD_STATE_TAX_ITEM_ID,
+  notes: ADJUSTMENT_NOTES,
 };
 
 function parseArgs(argv) {
@@ -196,6 +195,16 @@ async function main() {
   console.log(`  cap:         $${args.cap.toFixed(2)}`);
   console.log(`  limit:       ${args.limit === Infinity ? 'all' : args.limit}`);
   console.log(`  concurrency: ${args.concurrency}`);
+  console.log(`  itemID:      ${SD_STATE_TAX_ITEM_ID || '(not set)'}`);
+
+  if (args.apply && !SD_STATE_TAX_ITEM_ID) {
+    console.error('\nERROR: --apply requires SD_STATE_TAX_ITEM_ID to be set.');
+    console.error('Run scripts/probeTaxLine.js first, find the South Dakota State Tax');
+    console.error('itemID in the "Configured taxes & fees" output, then either:');
+    console.error('  - export SD_STATE_TAX_ITEM_ID=<id> before running, OR');
+    console.error('  - hard-code SD_STATE_TAX_ITEM_ID in scripts/reconcileBalances.js');
+    process.exit(2);
+  }
 
   const rows = await readBalances(args.input);
   console.log(`\nLoaded ${rows.length} non-zero rows from workbook.`);

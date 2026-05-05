@@ -29,6 +29,13 @@ async function main() {
   const args = parseArgs(process.argv);
   const api = new CloudbedsAPI();
 
+  // The authoritative source for itemID — the configured taxes/fees on the
+  // property. This is the ID we need for postAdjustment(type='tax').
+  console.log(`\n=== Configured taxes & fees ===`);
+  const tafRes = await api.getTaxesAndFees();
+  const taf = tafRes?.data || tafRes?.taxes || tafRes;
+  console.log(JSON.stringify(taf, null, 2));
+
   const end = new Date();
   const start = new Date(end.getTime() - args.days * 86400_000);
   console.log(`\n=== Transactions ${ymd(start)} → ${ymd(end)} ===`);
