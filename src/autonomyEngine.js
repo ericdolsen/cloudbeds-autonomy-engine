@@ -429,7 +429,19 @@ STANDARD WORKFLOW:
 
       if (name === 'chargePhysicalTerminal') {
         logger.info(`[STRIPE TERMINAL] Pushing $${args.amount} to WisePOS E (${args.terminalName}) for ${args.reservationId}`);
-        return await this.paymentTerminal.chargePhysicalTerminal(args.reservationId, args.amount, args.terminalName);
+        const chargeResult = await this.paymentTerminal.chargePhysicalTerminal(args.reservationId, args.amount, args.terminalName);
+        // Programmatic alert when the terminal charge fails. The agent
+        // is supposed to surface the error and direct the guest to the
+        // front desk, but Gemini sometimes ships the apology text and
+        // forgets the alertFrontDesk tool call. Fire from the dispatch
+        // site so staff get a real-time critical alert regardless.
+        if (chargeResult && chargeResult.success === false && this.alertHub && typeof this.alertHub.publish === 'function') {
+          this.alertHub.publish({
+            urgency: 'critical',
+            issueDescription: `Terminal charge FAILED for reservation ${args.reservationId} ($${args.amount} on ${args.terminalName}): ${chargeResult.error || 'unknown error'}. Guest is at the kiosk waiting — staff intervention needed before they can check in.`
+          });
+        }
+        return chargeResult;
       }
 
       if (name === 'processCheckout') {

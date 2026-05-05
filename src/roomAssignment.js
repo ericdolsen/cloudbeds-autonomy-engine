@@ -94,6 +94,12 @@ const PROPERTY = {
 const W = {
   SPECIFIC_ROOM_REQUEST: 100000,
   CONJOINED_PENALTY:      -2000,
+  // Group keep-together — applied when another reservation already
+  // placed in this batch shares a group key with the current one.
+  // "Adjacent" beats clean+vacant so families/groups cluster.
+  GROUP_NEXT_DOOR:          600,
+  GROUP_SAME_AREA:          400,
+  GROUP_SAME_FLOOR:         250,
   PET_STAIR_ADJACENT:       200,
   PET_FAR_FROM_STAIRS:       50,
   PET_FLOOR_1_OK:           200,
@@ -133,12 +139,17 @@ function _notesText(reservation) {
  * notes. Tags are the more reliable signal (front desk picks from a
  * fixed enum like "1st floor"), notes are free text and only used as
  * a fallback / for specific-room requests like "please put us in 215".
+ *
+ * Also returns the raw notes string + a "next-to" hint so the group
+ * keep-together pass downstream can re-parse without re-fetching.
  */
 function extractPreferences(reservation) {
   const prefs = {
     requestedRoomName: null, // exact room (e.g. "215") guest asked for
     floorPreference:   null, // '1' | '2' | '3' | 'top'
-    hasPet:            false
+    hasPet:            false,
+    nextToName:        null, // free-text name from "please put next to <X>"
+    notesRaw:          ''    // raw notes blob, lowercased — for downstream
   };
 
   for (const t of _normalizedTagStrings(reservation)) {
@@ -154,6 +165,8 @@ function extractPreferences(reservation) {
   }
 
   const notes = _notesText(reservation);
+  prefs.notesRaw = notes;
+
   if (notes) {
     const roomMatch = notes.match(/\broom\s*[#]?\s*(\d{2,4})\b/);
     if (roomMatch) prefs.requestedRoomName = roomMatch[1];
@@ -168,9 +181,114 @@ function extractPreferences(reservation) {
     if (!prefs.hasPet && /\b(pet|dog|cat|service\s*animal)\b/.test(notes)) {
       prefs.hasPet = true;
     }
+
+    // "Please put us next to John Smith's room" / "near the Smiths" /
+    // "near John". We capture a 1-3 word name token; the group pass
+    // resolves it against the rest of today's batch.
+    const nextToMatch = notes.match(/(?:next\s*to|near|by|adjacent\s*to)\s+([a-z][a-z .'-]{1,40}?)(?:'s|\s+room|\s+suite|[.,;!?]|$)/i);
+    if (nextToMatch) {
+      prefs.nextToName = nextToMatch[1].trim().toLowerCase().replace(/\s+/g, ' ');
+    }
   }
 
   return prefs;
+}
+
+/**
+ * Group keep-together: walk the unassigned set and merge entries that
+ * should be placed near each other.
+ *
+ * Signals (any of which puts two reservations in the same group):
+ *   1. Same parent reservation prefix — multi-room booking siblings
+ *      arrive as PARENT-1, PARENT-2, … so we strip the trailing -N.
+ *   2. Same Cloudbeds groupID — set explicitly by the front desk for
+ *      group/wedding/event bookings.
+ *   3. Identical full guest name across different reservation IDs —
+ *      the same person booking multiple rooms separately.
+ *   4. A "next to <name>" / "near <name>" hint in the notes that
+ *      resolves to another reservation in today's batch.
+ *
+ * Implemented as union-find so signals compose: e.g. a reservation
+ * with the same name as another AND a "next to Bob" note ends up in
+ * one merged group covering all three.
+ *
+ * Mutates each entry, adding a `groupKey` field that's stable per
+ * group across the batch. Singleton groups are fine — they just have
+ * no group sibling for proximity scoring to reference.
+ */
+function assignGroupKeys(needs) {
+  const parent = new Map();
+  const find = (k) => {
+    if (!parent.has(k)) { parent.set(k, k); return k; }
+    let p = parent.get(k);
+    while (p !== parent.get(p)) p = parent.get(p);
+    parent.set(k, p);
+    return p;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  // Pass 1: derive prefix / groupID / name signals.
+  // We also build a name → reservationIds index for the next-to pass.
+  const reservationsByName = new Map();
+  for (const need of needs) {
+    const id = need.reservationId;
+    find(id); // ensure registered
+
+    // Parent prefix (multi-room sibling detection).
+    const m = String(id).match(/^(.*?)-\d+$/);
+    if (m && m[1]) union(id, `prefix:${m[1]}`);
+
+    // Cloudbeds groupID (when the front desk used the Group feature).
+    if (need.groupID) union(id, `group:${need.groupID}`);
+
+    // Same-full-name detection. Last-name-only is too noisy at a small
+    // property (two unrelated Smiths in one batch); we require an
+    // exact full-name match.
+    if (need.guestName) {
+      const k = need.guestName.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (k && k !== 'guest') {
+        union(id, `name:${k}`);
+        if (!reservationsByName.has(k)) reservationsByName.set(k, []);
+        reservationsByName.get(k).push(id);
+      }
+    }
+  }
+
+  // Pass 2: resolve "next to <name>" / "near <name>" hints against the
+  // batch. Only matches arrivals being placed today — stayover targets
+  // would need a separate lookup that we punt on for v1.
+  for (const need of needs) {
+    if (!need.nextToName) continue;
+    const target = need.nextToName.toLowerCase().trim();
+    if (!target) continue;
+    let matchedId = null;
+    for (const [name, ids] of reservationsByName.entries()) {
+      // Match if names overlap meaningfully — a guest writing "next to
+      // Smith" likely means any Smith family member in the batch.
+      const tokens = target.split(/\s+/).filter(Boolean);
+      const hit = tokens.some(tok => name.split(/\s+/).includes(tok));
+      if (hit) {
+        for (const candidate of ids) {
+          if (candidate !== need.reservationId) { matchedId = candidate; break; }
+        }
+        if (matchedId) break;
+      }
+    }
+    if (matchedId) {
+      union(need.reservationId, matchedId);
+    } else {
+      logger.warn(`[ROOM ASSIGN] ${need.guestName} (${need.reservationId}) requested "next to ${need.nextToName}" but no matching arrival found in today's batch.`);
+    }
+  }
+
+  // Final: stamp each need with its resolved group key.
+  for (const need of needs) {
+    need.groupKey = find(need.reservationId);
+  }
 }
 
 /**
@@ -198,6 +316,30 @@ function scoreRoom(room, need, ctx) {
   // 3. Conjoined-pair preservation (207).
   if (PROPERTY.conjoinedDeprioritize.has(roomNum)) {
     score += W.CONJOINED_PENALTY;
+  }
+
+  // 3.5. Group keep-together. Once one member of this group has been
+  //      placed in this batch, prefer rooms adjacent to / on the same
+  //      floor as that member. Adjacent beats clean+vacant so families
+  //      and groups cluster ahead of housekeeping convenience.
+  //      Only same-floor candidates earn a bonus — different-floor
+  //      rooms simply get no boost (other rules decide).
+  if (need.groupKey && ctx.placedByGroup) {
+    const placed = ctx.placedByGroup.get(need.groupKey);
+    if (placed && placed.length > 0) {
+      let bestProximity = 0;
+      for (const p of placed) {
+        if (p.floor !== roomFloor) continue;
+        const delta = Math.abs(roomNum - p.roomNum);
+        let prox;
+        if (delta === 0) prox = 0;          // shouldn't happen (room already taken)
+        else if (delta <= 2) prox = W.GROUP_NEXT_DOOR;
+        else if (delta <= 4) prox = W.GROUP_SAME_AREA;
+        else prox = W.GROUP_SAME_FLOOR;
+        if (prox > bestProximity) bestProximity = prox;
+      }
+      score += bestProximity;
+    }
   }
 
   // 4. Pet preference: stair-adjacent on upper floors.
@@ -299,6 +441,9 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
           guestName: (r.guestName || `${g.firstName || ''} ${g.lastName || ''}`.trim() || 'Guest').toString(),
           roomTypeID: wantedTypeId,
           roomTypeName: rm.roomTypeName || rm.roomType || '',
+          // Cloudbeds groupID for the front-desk Group feature (event
+          // bookings, weddings, etc). Optional. Used by assignGroupKeys.
+          groupID: r.groupID || r.groupId || r.groupID0 || null,
           ...prefs
         });
       }
@@ -378,15 +523,23 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
     logger.warn(`[ROOM ASSIGN] Available pool is empty — every arrival will go unplaced.`);
   }
 
-  // 7. Score-and-place. Process in a stable order so the spread rule
-  //    is deterministic within a single batch. We sort by reservationId
-  //    because it's stable across re-runs.
-  needAssignment.sort((a, b) => String(a.reservationId).localeCompare(String(b.reservationId)));
+  // 7. Resolve group keep-together signals (parent prefix, groupID,
+  //    same full name, "next to <name>" notes) and merge into shared
+  //    group keys. Then sort so group siblings process consecutively —
+  //    once one is placed, the rest pull toward it via the proximity
+  //    score.
+  assignGroupKeys(needAssignment);
+  needAssignment.sort((a, b) => {
+    const gk = String(a.groupKey || '').localeCompare(String(b.groupKey || ''));
+    if (gk !== 0) return gk;
+    return String(a.reservationId).localeCompare(String(b.reservationId));
+  });
 
   const ctx = {
     housekeepingByRoomKey,
     tonightOccupiedRoomNumbers,
-    picksByFloor: new Map()
+    picksByFloor: new Map(),
+    placedByGroup: new Map() // groupKey → [{ roomName, roomNum, floor }]
   };
 
   let assigned = 0;
@@ -423,6 +576,9 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
         if (need.floorPreference) reasons.push(`floor:${need.floorPreference}`);
         if (need.hasPet) reasons.push('pet');
         if (PROPERTY.conjoinedDeprioritize.has(parseInt(room.roomName, 10))) reasons.push('conjoined-fallback');
+        // Tag if a group sibling was already placed; helps spot whether
+        // the keep-together rule actually bit on the pick.
+        if (need.groupKey && ctx.placedByGroup.has(need.groupKey)) reasons.push('group');
         const reasonTag = reasons.length ? ` [${reasons.join(',')}]` : '';
         logger.info(`[ROOM ASSIGN] Assigned ${need.guestName} (${need.reservationId}) → Room ${room.roomName} score=${score}${reasonTag}.`);
         assigned++;
@@ -431,6 +587,16 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
         if (f) ctx.picksByFloor.set(f, (ctx.picksByFloor.get(f) || 0) + 1);
         const num = parseInt(room.roomName, 10);
         if (Number.isFinite(num)) tonightOccupiedRoomNumbers.add(num);
+        // Register this placement in the group bucket so the next
+        // sibling in the same group can score against it.
+        if (need.groupKey) {
+          if (!ctx.placedByGroup.has(need.groupKey)) ctx.placedByGroup.set(need.groupKey, []);
+          ctx.placedByGroup.get(need.groupKey).push({
+            roomName: room.roomName,
+            roomNum: Number.isFinite(num) ? num : null,
+            floor: f
+          });
+        }
       } else {
         const msg = (result && (result.message || result.error)) || 'unknown error';
         logger.error(`[ROOM ASSIGN] assignRoom rejected for ${need.guestName} (${need.reservationId}): ${msg}`);
@@ -476,4 +642,4 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
   return { assigned, attempted: needAssignment.length, unplaced, errors };
 }
 
-module.exports = { runRoomAssignment, extractPreferences, scoreRoom, PROPERTY };
+module.exports = { runRoomAssignment, extractPreferences, assignGroupKeys, scoreRoom, PROPERTY };

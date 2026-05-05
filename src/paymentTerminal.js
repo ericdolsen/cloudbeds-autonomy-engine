@@ -364,7 +364,26 @@ class PaymentTerminal {
       }
 
       logger.info(`[STRIPE TERMINAL] Waiting for physical card read on ${terminalName}...`);
-      await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 }).catch(() => {});
+      // Strict: if "Now processing with terminal" never appears, the
+      // Cloudbeds dialog never entered terminal-charging mode. Common
+      // causes are a UI change that put a confirmation in front of
+      // the terminal step, or the dialog defaulting to the card on
+      // file when our selectors didn't fully take. Either way, we
+      // cannot confirm the charge actually went through the reader,
+      // so we MUST fail rather than silently report success — the
+      // agent uses our return value to decide whether to check the
+      // guest in, and a false success leaves them holding an
+      // unpaid balance with a check-in already done.
+      try {
+        await page.waitForSelector('text="Now processing with terminal"', { state: 'visible', timeout: 10000 });
+      } catch (e) {
+        throw new Error(
+          'Terminal "Now processing with terminal" indicator did not appear within 10s — ' +
+          'Cloudbeds may have auto-charged the card on file instead of sending to the reader, ' +
+          'or the Add Payment dialog selectors are out of date. Verify the charge in Cloudbeds ' +
+          'before checking the guest in.'
+        );
+      }
       await page.waitForSelector('text="Now processing with terminal"', { state: 'hidden', timeout: 90000 });
 
       logger.info(`[STRIPE TERMINAL] Transaction successful!`);
