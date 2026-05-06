@@ -655,10 +655,24 @@ app.post('/api/webhooks/cloudbeds', async (req, res) => {
   try {
     let promptText = "";
 
-    if (event === "reservation/created") {
-      const { getHotelBusinessDate } = require('./src/utils');
+    if (event === "reservation/created" || event === "reservation/dates_changed") {
+      // Run deterministic room assignment quietly in background to catch any new same-day arrivals
       const todayStr = getHotelBusinessDate(0);
-      promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Look it up via 'getReservation' and surface a SHORT note for the staff log noting the guest name, dates, room type, and any flags worth a human glance. If their check-in date is TODAY (${todayStr}), you MUST execute the room assignment logic: use 'getUnassignedRooms' to find availability and 'assignRoom' to lock it in. Do NOT call 'postFolioAdjustment' or any other money-moving tool.`;
+      const tomorrowStr = getHotelBusinessDate(1);
+      runRoomAssignment({
+        api: agent.engine.api,
+        alertHub: agent.engine.alertHub,
+        todayStr,
+        tomorrowStr
+      }).then(res => {
+        if (res && res.attempted > 0) {
+          logger.info(`[WEBHOOK] Dynamic Room Assignment processed ${res.attempted} arrivals (${res.assigned} assigned).`);
+        }
+      }).catch(e => logger.error(`[WEBHOOK] Dynamic room assignment failed: ${e.message}`));
+    }
+
+    if (event === "reservation/created") {
+      promptText = `A new reservation (ID: ${reservationID}) was just created on Cloudbeds. Look it up via 'getReservation' and surface a SHORT note for the staff log noting the guest name, dates, room type, and any flags worth a human glance. Deterministic assignment handles room placement. Do NOT call 'postFolioAdjustment' or any other money-moving tool.`;
     } else if (event === "reservation/dates_changed") {
       promptText = `The dates for reservation ${reservationID} just changed. Surface a short note for the staff log with the new dates and any visible balance impact. Do NOT post payments or fee adjustments — date-change billing is reconciled at the desk or via night audit.`;
     } else if (event === "reservation/status_changed" && (payload.status === "checked_out" || payload.new_status === "checked_out")) {
