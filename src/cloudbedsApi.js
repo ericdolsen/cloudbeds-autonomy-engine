@@ -510,6 +510,15 @@ class CloudbedsAPI {
     if (this._isMock()) {
       return this._mockReturn({ success: true, message: "Reservation checked in." });
     }
+    
+    // Cloudbeds internal sync delay: It takes several seconds for a putGuest update 
+    // to correctly propagate to the reservation snapshot that gets sent out in the 
+    // reservation/status_changed webhook. If we check them in immediately, 
+    // third-party systems like Portal/Whistle receive the old phone number and email.
+    // Adding a 15-second artificial delay ensures the updated info is sent.
+    logger.info(`[API CALL] Delaying check-in for 15s to ensure Cloudbeds guest profile sync finishes...`);
+    await new Promise(resolve => setTimeout(resolve, 15000));
+    
     try {
       const existing = await this.getReservationById(reservationId);
       if (!existing.success || !existing.data) {
