@@ -427,8 +427,12 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
     const reservationFallbackTypeId = r.roomTypeID || r.roomTypeId || null;
     const prefs = extractPreferences(r);
     for (const g of Object.values(r.guestList)) {
-      if (!g || !Array.isArray(g.rooms)) continue;
-      for (const rm of g.rooms) {
+      if (!g) continue;
+      const allRooms = [];
+      if (Array.isArray(g.rooms)) allRooms.push(...g.rooms);
+      if (Array.isArray(g.unassignedRooms)) allRooms.push(...g.unassignedRooms);
+      if (allRooms.length === 0) continue;
+      for (const rm of allRooms) {
         if (!rm) continue;
         if (rm.roomID) continue; // already placed
         const wantedTypeId = rm.roomTypeID || rm.roomTypeId || reservationFallbackTypeId;
@@ -436,12 +440,14 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
           logger.warn(`[ROOM ASSIGN] Reservation ${r.reservationID} has an unassigned slot with no roomTypeID — skipping; cannot match.`);
           continue;
         }
-        needAssignment.push({
-          reservationId: r.reservationID,
-          guestName: (r.guestName || `${g.firstName || ''} ${g.lastName || ''}`.trim() || 'Guest').toString(),
-          roomTypeID: wantedTypeId,
-          roomTypeName: rm.roomTypeName || rm.roomType || '',
-          // Cloudbeds groupID for the front-desk Group feature (event
+          needAssignment.push({
+            reservationId: r.reservationID,
+            guestName: (r.guestName || `${g.firstName || ''} ${g.lastName || ''}`.trim() || 'Guest').toString(),
+            roomTypeID: wantedTypeId,
+            roomTypeName: rm.roomTypeName || rm.roomType || '',
+            startDate: r.startDate || todayStr,
+            endDate: r.endDate || tomorrowStr,
+            // Cloudbeds groupID for the front-desk Group feature (event
           // bookings, weddings, etc). Optional. Used by assignGroupKeys.
           groupID: r.groupID || r.groupId || r.groupID0 || null,
           ...prefs
@@ -457,15 +463,27 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
   logger.info(`[ROOM ASSIGN] ${needAssignment.length} unassigned arrival${needAssignment.length === 1 ? '' : 's'} to place.`);
 
   // 3. Available physical rooms.
-  const unassignedResp = await api.getUnassignedRooms(todayStr, tomorrowStr);
-  if (!unassignedResp || !unassignedResp.success) {
-    logger.error(`[ROOM ASSIGN] getUnassignedRooms failed; aborting.`);
-    if (alertHub) alertHub.publish({
-      urgency: 'high',
-      issueDescription: `Nightly room assignment aborted — could not fetch the available-room pool from Cloudbeds. Reassign manually.`
-    });
-    return { assigned: 0, attempted: needAssignment.length, unplaced: needAssignment, errors: ['getUnassignedRooms failed'] };
+  // Because stays have different durations, a room available for 1 night
+  // might not be available for 3 nights. Fetch pools per unique endDate.
+  const uniqueEndDates = new Set();
+  needAssignment.forEach(need => uniqueEndDates.add(need.endDate));
+
+  const poolsByEndDate = new Map();
+  for (const ed of uniqueEndDates) {
+    const unassignedResp = await api.getUnassignedRooms(todayStr, ed);
+    if (!unassignedResp || !unassignedResp.success) {
+      logger.error(`[ROOM ASSIGN] getUnassignedRooms failed for ${todayStr} to ${ed}; aborting.`);
+      if (alertHub) alertHub.publish({
+        urgency: 'high',
+        issueDescription: `Nightly room assignment aborted — could not fetch the available-room pool from Cloudbeds. Reassign manually.`
+      });
+      return { assigned: 0, attempted: needAssignment.length, unplaced: needAssignment, errors: ['getUnassignedRooms failed'] };
+    }
+    poolsByEndDate.set(ed, unassignedResp.data || []);
   }
+
+  // Track globally assigned room IDs to prevent double-booking across different pools
+  const globallyAssignedRoomIDs = new Set();
 
   // 4. Housekeeping snapshot. Used for the clean+vacant tiering and
   //    to know which rooms are occupied tonight (stay_over rooms +
@@ -507,21 +525,9 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
     }
   }
 
-  // 6. Bucket the available pool by roomTypeID for quick lookup.
-  const poolByType = new Map();
-  for (const room of unassignedResp.data || []) {
-    if (!room.roomTypeID) continue;
-    if (!poolByType.has(room.roomTypeID)) poolByType.set(room.roomTypeID, []);
-    poolByType.get(room.roomTypeID).push(room);
-  }
-  if (poolByType.size > 0) {
-    const summary = [...poolByType.entries()]
-      .map(([t, list]) => `${list.length}×${list[0].roomType || t}`)
-      .join(', ');
-    logger.info(`[ROOM ASSIGN] Available pool: ${summary}.`);
-  } else {
-    logger.warn(`[ROOM ASSIGN] Available pool is empty — every arrival will go unplaced.`);
-  }
+  // 6. Available pool summary
+  const totalPools = poolsByEndDate.size;
+  logger.info(`[ROOM ASSIGN] Loaded available room pools for ${totalPools} unique date ranges.`);
 
   // 7. Resolve group keep-together signals (parent prefix, groupID,
   //    same full name, "next to <name>" notes) and merge into shared
@@ -547,7 +553,9 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
   const errors = [];
 
   for (const need of needAssignment) {
-    const candidates = poolByType.get(need.roomTypeID);
+    const myPool = poolsByEndDate.get(need.endDate) || [];
+    const candidates = myPool.filter(rm => rm.roomTypeID === need.roomTypeID && !globallyAssignedRoomIDs.has(rm.roomId || rm.roomID));
+
     if (!candidates || candidates.length === 0) {
       logger.warn(`[ROOM ASSIGN] No available room of type ${need.roomTypeName || need.roomTypeID} for ${need.guestName} (${need.reservationId}).`);
       unplaced.push(need);
@@ -562,6 +570,7 @@ async function runRoomAssignment({ api, alertHub, todayStr, tomorrowStr }) {
       continue;
     }
     const { room, score } = pick;
+    globallyAssignedRoomIDs.add(room.roomId || room.roomID);
 
     // Pop the picked room out of the type pool so two reservations
     // never get the same room.

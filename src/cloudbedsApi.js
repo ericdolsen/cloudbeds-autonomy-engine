@@ -405,13 +405,13 @@ class CloudbedsAPI {
     }
     try {
       // 1. Get all physical rooms
-      const roomsRes = await this._getClient().get('/getRooms', {
-        params: this.propertyID ? { propertyID: this.propertyID } : {}
-      });
+      const params = { pageSize: 100 };
+      if (this.propertyID) params.propertyID = this.propertyID;
+      const roomsRes = await this._getClient().get('/getRooms', { params });
       const allRooms = (roomsRes.data && roomsRes.data.data && roomsRes.data.data[0] && roomsRes.data.data[0].rooms) ? roomsRes.data.data[0].rooms : [];
 
       // 2. Get all reservations intersecting these dates
-      const resData = await this.getReservations(startDate, endDate);
+      const resData = await this.getReservations(startDate, endDate, { intersect: true });
       const activeReservations = resData.success ? resData.data : [];
 
       // 3. Find rooms that are assigned
@@ -892,9 +892,10 @@ class CloudbedsAPI {
 
   /**
    * Fetch reservations within a date range, auto-paginating (limit max 100).
+   * If options.intersect = true, fetches all active reservations crossing the dates.
    */
-  async getReservations(checkInFrom, checkInTo) {
-    logger.info(`[API CALL] GET /getReservations | ${checkInFrom} to ${checkInTo}`);
+  async getReservations(checkInFrom, checkInTo, options = {}) {
+    logger.info(`[API CALL] GET /getReservations | ${checkInFrom} to ${checkInTo}${options.intersect ? ' (intersect)' : ''}`);
     if (this._isMock()) {
       return this._mockReturn({ success: true, data: [] });
     }
@@ -902,23 +903,34 @@ class CloudbedsAPI {
       const collected = [];
       const pageSize = 100;
       let pageIndex = 1;
+      
+      const apiParams = {
+        includeGuestsDetails: 'true',
+        includeAllRates: 'true',
+        includeRoomRates: 'true',
+        includeRateBreakdown: 'true',
+        ...(this.propertyID ? { propertyID: this.propertyID } : {})
+      };
+      
+      if (options.intersect) {
+        const sd = new Date(checkInFrom + 'T12:00:00Z');
+        sd.setDate(sd.getDate() + 1);
+        const ed = new Date(checkInTo + 'T12:00:00Z');
+        ed.setDate(ed.getDate() - 1);
+        
+        apiParams.checkOutFrom = sd.toISOString().split('T')[0];
+        apiParams.checkInTo = ed.toISOString().split('T')[0];
+      } else {
+        apiParams.checkInFrom = checkInFrom;
+        apiParams.checkInTo = checkInTo;
+      }
+
       while (true) {
         const response = await this._getClient().get('/getReservations', {
           params: {
-            checkInFrom,
-            checkInTo,
-            includeGuestsDetails: 'true',
-            // Cloudbeds returns a "lite" reservation by default — no
-            // dailyRates, no roomTotal, no subtotal. These flags pull the
-            // full rate breakdown into each reservation so forecast/BoB
-            // revenue can use real per-night rates instead of falling back
-            // to balance / total guesses.
-            includeAllRates: 'true',
-            includeRoomRates: 'true',
-            includeRateBreakdown: 'true',
+            ...apiParams,
             limit: pageSize,
-            pageNumber: pageIndex,
-            ...(this.propertyID ? { propertyID: this.propertyID } : {})
+            pageNumber: pageIndex
           }
         });
         const page = (response.data && response.data.data) || [];
