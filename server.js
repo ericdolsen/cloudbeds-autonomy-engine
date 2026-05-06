@@ -71,8 +71,59 @@ const alertHub = new AlertHub(io);
 agent.engine.alertHub = alertHub; // exposed so the alertFrontDesk tool can publish
 
 // WebSockets (Tablet & Chat Connectivity)
+//
+// Socket.IO socket.id is a random handshake token, not a stable device
+// identifier — every reconnect produces a new id. Without enrichment a
+// flaky tablet looks like an endless parade of new clients in the log.
+// We pull the page hint from the referer URL, the LAN IP from the
+// handshake address, and a short device hint from the user-agent so a
+// reader of the log can tell at a glance which tablet / kiosk / page
+// is connecting (and which one keeps dropping).
+function _pageHintFromReferer(ref) {
+  if (!ref) return 'unknown';
+  let path = ref;
+  let query = '';
+  try {
+    const u = new URL(ref);
+    path = u.pathname;
+    query = u.search || '';
+  } catch (_) { /* not a URL — fall through with the raw string */ }
+  if (path === '/' || path === '') {
+    // Kiosk landing. Include the kioskId if it's in the URL so we can
+    // tell tablet 1 from tablet 2 in the connection log.
+    const m = query.match(/(?:kioskId|terminal)=([^&#]+)/i);
+    return m ? `kiosk-${decodeURIComponent(m[1]).replace(/^Reader\s*/i, '')}` : 'kiosk';
+  }
+  if (path.startsWith('/alerts'))   return 'alerts';
+  if (path.startsWith('/employee')) return 'employee';
+  if (path.startsWith('/chat'))     return 'chat';
+  return 'other';
+}
+
+function _deviceHintFromUA(ua) {
+  if (!ua) return 'unknown';
+  if (/iPad/i.test(ua))                                    return 'iPad';
+  if (/iPhone|iPod/i.test(ua))                             return 'iPhone';
+  if (/CrOS/i.test(ua))                                    return 'ChromeOS';
+  if (/Android/i.test(ua))                                 return /Tablet/i.test(ua) ? 'Android-tablet' : 'Android';
+  if (/Windows NT/i.test(ua))                              return 'Windows';
+  if (/Mac OS X/i.test(ua))                                return 'Mac';
+  if (/Linux/i.test(ua))                                   return 'Linux';
+  return ua.substring(0, 30);
+}
+
 io.on('connection', (socket) => {
-  logger.info(`[WEBSOCKET] Client Connected: ${socket.id}`);
+  const ref = socket.handshake.headers.referer || socket.handshake.headers.origin || '';
+  const ua  = socket.handshake.headers['user-agent'] || '';
+  const ip  = socket.handshake.address || '';
+  const page = _pageHintFromReferer(ref);
+  const device = _deviceHintFromUA(ua);
+  const shortId = socket.id.substring(0, 6);
+  logger.info(`[WEBSOCKET] Connected: ${shortId} page=${page} ip=${ip} device=${device}`);
+
+  socket.on('disconnect', (reason) => {
+    logger.info(`[WEBSOCKET] Disconnected: ${shortId} page=${page} (${reason})`);
+  });
 
   // /alerts page joins this room so it gets alert:new and alert:ack events.
   socket.on('alerts:subscribe', () => {
