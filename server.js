@@ -1032,9 +1032,9 @@ app.post('/api/kiosk/print_receipt', async (req, res) => {
       const start = r.startDate || new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
       const end = new Date().toISOString().split('T')[0];
       const earliest = new Date(new Date(start).getTime() - 60 * 86400000).toISOString().split('T')[0];
-      const txRes = await agent.engine.api.getTransactions(earliest, end);
+      const txRes = await agent.engine.api.getTransactions(earliest, end, reservationId);
       if (txRes && txRes.success && Array.isArray(txRes.data)) {
-        transactions = txRes.data.filter(t => t && (t.sourceId === reservationId || t.reservationID === reservationId));
+        transactions = txRes.data;
       }
     } catch (txErr) {
       logger.warn(`[KIOSK] Could not fetch transactions for printed receipt: ${txErr.message}`);

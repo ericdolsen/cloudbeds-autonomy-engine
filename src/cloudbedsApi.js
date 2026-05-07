@@ -806,8 +806,8 @@ class CloudbedsAPI {
     }
   }
 
-  async getTransactions(startDate, endDate) {
-    logger.info(`[API CALL] POST /accounting/v1.0/transactions | ${startDate} to ${endDate}`);
+  async getTransactions(startDate, endDate, reservationId = null) {
+    logger.info(`[API CALL] POST /accounting/v1.0/transactions | ${startDate} to ${endDate}${reservationId ? ` | res: ${reservationId}` : ''}`);
     if (this._isMock()) {
       return this._mockReturn({ success: true, data: [] });
     }
@@ -817,15 +817,22 @@ class CloudbedsAPI {
       let pageToken = null;
       let pagesFetched = 0;
       let lastPageToken = null;
+      
+      const filterAnd = [
+        { operator: 'greater_than_or_equal', field: 'service_date', value: startDate },
+        { operator: 'less_than_or_equal', field: 'service_date', value: endDate }
+      ];
+      
+      if (reservationId) {
+        filterAnd.push({ operator: 'equals', field: 'sourceId', value: reservationId });
+      }
+
       while (true) {
         const response = await this._getClient().post('https://api.cloudbeds.com/accounting/v1.0/transactions', {
           limit: pageSize,
           pageToken: pageToken,
           filters: {
-            and: [
-              { operator: 'greater_than_or_equal', field: 'service_date', value: startDate },
-              { operator: 'less_than_or_equal', field: 'service_date', value: endDate }
-            ]
+            and: filterAnd
           }
         }, {
           headers: {
