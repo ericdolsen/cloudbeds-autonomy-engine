@@ -322,13 +322,16 @@
             <img src="images/logo.png" alt="Gateway Park Hotel" class="kiosk-banner">
         </div>
 
-        <!-- CENTER HERO: greeting + clock + date.
-             .clock-widget alias kept for the form-mode hide/show JS. -->
-        <div class="kiosk-clock clock-widget">
-            <div class="kiosk-greeting" data-i18n="welcomeHome">welcome <em>home</em></div>
-            <div class="kiosk-time" id="time">--:--</div>
-            <div class="kiosk-date" id="date">Updating date...</div>
-            <div class="kiosk-rule"></div>
+        <!-- TOP: mini-clock widget -->
+        <div class="kiosk-mini-clock clock-widget">
+            <div class="time" id="time">--:--</div>
+            <div class="date" id="date">Updating date...</div>
+        </div>
+        
+        <!-- NEW CENTER HERO -->
+        <div class="kiosk-hero">
+            <h1 data-i18n="selfServiceKiosk">Self-Service Kiosk</h1>
+            <p data-i18n="tapBelowTo">Tap below to check-in or check-out</p>
         </div>
 
         <!-- PRIMARY ACTIONS + secondary print receipt.
@@ -469,6 +472,7 @@
     <script src="/socket.io/socket.io.js"></script>
 
     <script>
+        let currentLang = 'en';
         // Each tablet is assigned a Kiosk ID which is saved to localStorage.
         // It is paired 1:1 with a Stripe WisePOS E reader based on this ID.
         // We support both ?kioskId=2 and the legacy ?terminal=2 URL formats.
@@ -684,8 +688,6 @@
                 checkoutFailed: "Salida falló. Consulte en recepción."
             }
         };
-
-        let currentLang = 'en';
 
         function t(key, replacements = {}) {
             let str = translations[currentLang][key] || translations['en'][key] || key;
