@@ -815,6 +815,8 @@ class CloudbedsAPI {
       const collected = [];
       const pageSize = 100;
       let pageToken = null;
+      let pagesFetched = 0;
+      let lastPageToken = null;
       while (true) {
         const response = await this._getClient().post('https://api.cloudbeds.com/accounting/v1.0/transactions', {
           limit: pageSize,
@@ -834,7 +836,9 @@ class CloudbedsAPI {
         const page = (response.data && response.data.transactions) ? response.data.transactions : [];
         collected.push(...page);
         pageToken = response.data ? response.data.nextPageToken : null;
-        if (!pageToken) break;
+        if (!pageToken || page.length === 0 || pageToken === lastPageToken || pagesFetched > 50) break;
+        lastPageToken = pageToken;
+        pagesFetched++;
         await sleep(150); // Be nice to rate limits
       }
       

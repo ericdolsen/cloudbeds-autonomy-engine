@@ -17,13 +17,32 @@ async function printPdfBuffer(pdfBuffer, documentId) {
     logger.info(`[PRINTER] PDF temporarily saved to ${filePath}`);
 
     logger.info(`[PRINTER] Sending document ${documentId} to default physical printer...`);
-    // Print using the default Windows printer
-    await print(filePath);
-    logger.info(`[PRINTER] Document sent to printer successfully.`);
+    
+    // Print using the default Windows printer with a timeout
+    // SumatraPDF (used by pdf-to-printer) sometimes spools the document successfully but fails to exit.
+    let isTimeout = false;
+    await Promise.race([
+      print(filePath),
+      new Promise((resolve) => setTimeout(() => {
+        isTimeout = true;
+        resolve();
+      }, 10000))
+    ]);
+
+    if (isTimeout) {
+      logger.warn(`[PRINTER] Document sent to printer, but background process did not exit within 10s. Assuming success.`);
+    } else {
+      logger.info(`[PRINTER] Document sent to printer successfully.`);
+    }
 
     // Clean up
-    fs.unlinkSync(filePath);
-    logger.info(`[PRINTER] Temporary file ${filePath} removed.`);
+    try {
+      fs.unlinkSync(filePath);
+      logger.info(`[PRINTER] Temporary file ${filePath} removed.`);
+    } catch (cleanupErr) {
+      logger.warn(`[PRINTER] Could not remove temp file ${filePath} (may be locked by spooler). Ignored.`);
+    }
+    
     return { success: true };
   } catch (err) {
     logger.error(`[PRINTER] Failed to print document: ${err.message}`);
