@@ -193,6 +193,7 @@
         }
         @keyframes pulse { 0%, 100% { opacity: 0.85; } 50% { opacity: 1; } }
 
+        
         /* ====== Toast ====== */
         .toast {
             position: absolute;
@@ -213,11 +214,104 @@
             max-width: 480px;
         }
 
+        /* ====== Language Toggle ====== */
+        .kiosk-lang-toggle {
+            position: absolute;
+            top: 32px; right: 32px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--p-rule);
+            color: var(--p-ink);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .kiosk-lang-toggle:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+
+    
+        /* ====== Hero Animation ====== */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        @keyframes pulse-glow {
+            0% { opacity: 0.8; text-shadow: 0 0 10px rgba(201, 168, 106, 0.1); transform: scale(1); }
+            50% { opacity: 1; text-shadow: 0 0 25px rgba(201, 168, 106, 0.4); transform: scale(1.02); }
+            100% { opacity: 0.8; text-shadow: 0 0 10px rgba(201, 168, 106, 0.1); transform: scale(1); }
+        }
+
+        .kiosk-hero {
+            flex: 1;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            text-align: center;
+            position: relative; z-index: 1;
+            margin-top: -20px;
+        }
+        .kiosk-hero h1 {
+            font-family: var(--p-serif);
+            font-weight: 500; font-size: 82px;
+            color: var(--p-accent);
+            margin-bottom: 12px;
+            animation: pulse-glow 3s ease-in-out infinite;
+            letter-spacing: -0.02em;
+        }
+        .kiosk-hero p {
+            font-size: 24px;
+            color: var(--p-ink-2);
+            font-weight: 400;
+            letter-spacing: 0.05em;
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .kiosk-mini-clock {
+            position: absolute;
+            top: 32px; left: 32px;
+            display: flex; flex-direction: column;
+            align-items: flex-start;
+            z-index: 50;
+            opacity: 0.8;
+        }
+        .kiosk-mini-clock .time {
+            font-family: var(--p-serif);
+            font-size: 32px; font-weight: 500; color: var(--p-ink);
+            line-height: 1;
+        }
+        .kiosk-mini-clock .time .ampm {
+            font-size: 14px; color: var(--p-ink-2);
+            vertical-align: super; margin-left: 4px;
+        }
+        .kiosk-mini-clock .date {
+            font-size: 11px; letter-spacing: 0.1em;
+            text-transform: uppercase; color: var(--p-ink-3);
+            margin-top: 4px; font-weight: 600;
+        }
+        
+        .kiosk-actions {
+            transform: scale(1.05); /* Slight emphasis */
+        }
+
     </style>
 </head>
 <body class="lobby">
 
+    
     <div class="toast" id="errorToast"></div>
+    <button type="button" class="kiosk-lang-toggle" onclick="toggleLanguage()">
+        🌐 <span id="langLabel">Español</span>
+    </button>
+
 
     <div class="kiosk">
 
@@ -231,7 +325,7 @@
         <!-- CENTER HERO: greeting + clock + date.
              .clock-widget alias kept for the form-mode hide/show JS. -->
         <div class="kiosk-clock clock-widget">
-            <div class="kiosk-greeting">welcome <em>home</em></div>
+            <div class="kiosk-greeting" data-i18n="welcomeHome">welcome <em>home</em></div>
             <div class="kiosk-time" id="time">--:--</div>
             <div class="kiosk-date" id="date">Updating date...</div>
             <div class="kiosk-rule"></div>
@@ -251,8 +345,8 @@
                         </svg>
                     </div>
                     <div class="text">
-                        <div class="label">Guest Check-In</div>
-                        <div class="help">Confirm details, settle any balance, get your room.</div>
+                        <div class="label" data-i18n="guestCheckin">Guest Check-In</div>
+                        <div class="help" data-i18n="checkinDesc">Confirm details, settle any balance, get your room.</div>
                     </div>
                     <div class="arrow">&rarr;</div>
                 </div>
@@ -267,14 +361,14 @@
                         </svg>
                     </div>
                     <div class="text">
-                        <div class="label">Express Check-Out</div>
-                        <div class="help">Settle the balance and have a receipt emailed to you.</div>
+                        <div class="label" data-i18n="expressCheckout">Express Check-Out</div>
+                        <div class="help" data-i18n="checkoutDesc">Settle the balance and have a receipt emailed to you.</div>
                     </div>
                     <div class="arrow">&rarr;</div>
                 </div>
             </div>
             <div class="kiosk-secondary">
-                <button type="button" onclick="showForm('print')">Print Receipt</button>
+                <button type="button" onclick="showForm('print')" data-i18n="printReceiptBtn">Print Receipt</button>
             </div>
         </div>
 
@@ -283,17 +377,17 @@
             <input type="hidden" id="formMode" value="checkout">
             <p id="verifyPrompt" style="display:none; font-family: var(--p-serif); font-style: italic; font-size: 1.4rem; font-weight: 400; text-align: center; color: var(--p-ink); letter-spacing: -0.005em; max-width: 720px;"></p>
             <div class="form-row" id="step1Row">
-                <input type="text" id="queryInput" class="kiosk-input" placeholder="Last Name OR Reservation #" autocomplete="off" autocorrect="off">
+                <input type="text" id="queryInput" class="kiosk-input" placeholder="Last Name OR Reservation #" data-i18n-placeholder="lastNameOrRes" autocomplete="off" autocorrect="off">
             </div>
             <div class="form-row" id="step2Row" style="display:none;">
-                <input type="text" id="pinInput" class="kiosk-input" placeholder="Enter last 4 digits of phone" maxlength="4" autocomplete="off" autocorrect="off">
+                <input type="text" id="pinInput" class="kiosk-input" placeholder="Enter last 4 digits of phone" data-i18n-placeholder="last4Phone" maxlength="4" autocomplete="off" autocorrect="off">
             </div>
 
             <!-- STEP 2.5: MULTI-ROOM CHOOSER (only when the booking has more than one sub-reservation arriving today) -->
             <div id="chooserRow" style="display:none; flex-direction: column; gap: 18px; width: 100%; max-width: 800px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
                     <h3 id="chooserTitle" style="font-family: var(--p-serif); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.005em; color: var(--p-ink); margin: 0;"></h3>
-                    <button type="button" class="form-back-btn" onclick="hideForm()">Done</button>
+                    <button type="button" class="form-back-btn" onclick="hideForm()" data-i18n="doneBtn">Done</button>
                 </div>
                 <p id="chooserSubtitle" style="margin: 0 0 4px; color: var(--p-ink-2); font-size: 0.95rem; line-height: 1.45;"></p>
                 <div id="chooserCards" style="display: flex; flex-direction: column; gap: 12px;"></div>
@@ -302,52 +396,52 @@
             <!-- STEP 3: REGISTRATION CARD -->
             <div id="step3Row" style="display:none; flex-direction: column; gap: 18px; width: 100%; max-width: 800px; text-align: left; background: var(--p-deep-2); padding: 28px; border: 1px solid var(--p-rule); border-radius: var(--p-radius);">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-                    <h3 style="font-family: var(--p-serif); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.005em; color: var(--p-ink); margin: 0;">Guest Registration</h3>
-                    <button type="button" class="form-back-btn" onclick="hideForm()">Start Over</button>
+                    <h3 style="font-family: var(--p-serif); font-weight: 600; font-size: 1.6rem; letter-spacing: -0.005em; color: var(--p-ink); margin: 0;"><span data-i18n="guestRegistration">Guest Registration</span></h3>
+                    <button type="button" class="form-back-btn" onclick="hideForm()" data-i18n="startOverBtn">Start Over</button>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 12px;">
                     <div style="display: flex; gap: 12px; width: 100%;">
-                        <input type="text" id="regFirstName" class="kiosk-input" placeholder="First Name" style="font-size: 1.05rem; padding: 14px; flex: 1;">
-                        <input type="text" id="regLastName" class="kiosk-input" placeholder="Last Name" style="font-size: 1.05rem; padding: 14px; flex: 1;">
+                        <input type="text" id="regFirstName" class="kiosk-input" placeholder="First Name" data-i18n-placeholder="firstName" style="font-size: 1.05rem; padding: 14px; flex: 1;">
+                        <input type="text" id="regLastName" class="kiosk-input" placeholder="Last Name" data-i18n-placeholder="lastName" style="font-size: 1.05rem; padding: 14px; flex: 1;">
                     </div>
-                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" style="font-size: 1.05rem; padding: 14px; width: 100%;">
-                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" style="font-size: 1.05rem; padding: 14px; width: 100%;">
+                    <input type="email" id="regEmail" class="kiosk-input" placeholder="Email Address" data-i18n-placeholder="email" style="font-size: 1.05rem; padding: 14px; width: 100%;">
+                    <input type="tel" id="regPhone" class="kiosk-input" placeholder="Phone Number" data-i18n-placeholder="phone" style="font-size: 1.05rem; padding: 14px; width: 100%;">
                 </div>
-                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" style="font-size: 1.05rem; padding: 14px; width: 100%;">
+                <input type="text" id="regAddress" class="kiosk-input" placeholder="Full Address" data-i18n-placeholder="address" style="font-size: 1.05rem; padding: 14px; width: 100%;">
 
                 <div style="margin-top: 8px;">
-                    <p style="font-size: 0.95rem; color: var(--p-ink-2); margin-bottom: 10px; line-height: 1.5;">Are you traveling with a pet? <span style="color: var(--p-ink-3);">($30 pet fee applies, service animals excluded)</span></p>
+                    <p style="font-size: 0.95rem; color: var(--p-ink-2); margin-bottom: 10px; line-height: 1.5;"><span data-i18n="petQuestion">Are you traveling with a pet?</span> <span style="color: var(--p-ink-3);" data-i18n="petFeeDesc">($30 pet fee applies, service animals excluded)</span></p>
                     <div style="display: flex; gap: 12px;">
-                        <button type="button" id="petYesBtn" onclick="togglePetWaiver(true)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer;">Yes</button>
-                        <button type="button" id="petNoBtn" onclick="togglePetWaiver(false)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer; border-color: var(--p-accent); background: color-mix(in oklab, var(--p-accent) 14%, transparent);">No</button>
+                        <button type="button" id="petYesBtn" onclick="togglePetWaiver(true)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer;" data-i18n="yesBtn">Yes</button>
+                        <button type="button" id="petNoBtn" onclick="togglePetWaiver(false)" class="kiosk-input" style="flex: 1; font-size: 1.05rem; padding: 14px; cursor: pointer; border-color: var(--p-accent); background: color-mix(in oklab, var(--p-accent) 14%, transparent);" data-i18n="noBtn">No</button>
                     </div>
                 </div>
 
                 <div id="petWaiverSection" style="display: none; margin-top: 4px; background: rgba(212, 114, 114, 0.08); padding: 16px 18px; border-radius: var(--p-radius); border-left: 3px solid #d47272;">
-                    <h4 style="color: #d47272; font-weight: 600; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Pet Waiver &amp; Fee Agreement</h4>
-                    <p style="font-size: 0.85rem; color: var(--p-ink-2); line-height: 1.55;">Gateway Park Hotel &amp; Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.</p>
+                    <h4 style="color: #d47272; font-weight: 600; font-size: 0.78rem; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;"><span data-i18n="petWaiverTitle">Pet Waiver &amp; Fee Agreement</span></h4>
+                    <p style="font-size: 0.85rem; color: var(--p-ink-2); line-height: 1.55;" data-i18n="petWaiverDesc">Gateway Park Hotel &amp; Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.</p>
                 </div>
 
                 <div style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.18); padding: 14px 16px; border-radius: var(--p-radius); font-size: 0.82rem; color: var(--p-ink-2); margin-top: 4px; border: 1px solid var(--p-rule); line-height: 1.55;">
-                    <p><strong style="color: var(--p-ink);">Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel &amp; Suites is not responsible for any fees incurred by the guest when using a debit card.</p>
-                    <p style="margin-top: 8px;"><strong style="color: var(--p-ink);">Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel &amp; Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.</p>
+                    <p data-i18n="ccPolicy"><strong style="color: var(--p-ink);">Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel &amp; Suites is not responsible for any fees incurred by the guest when using a debit card.</p>
+                    <p style="margin-top: 8px;" data-i18n="hotelPolicy"><strong style="color: var(--p-ink);">Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel &amp; Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.</p>
                 </div>
 
                 <div style="margin-top: 4px;">
-                    <p style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--p-ink-3); font-weight: 500; margin-bottom: 8px;">Please sign below</p>
+                    <p style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--p-ink-3); font-weight: 500; margin-bottom: 8px;" data-i18n="pleaseSign">Please sign below</p>
                     <canvas id="sigCanvas" width="760" height="150" style="background: var(--p-warm); border-radius: var(--p-radius); cursor: crosshair; touch-action: none; display: block; width: 100%; max-width: 760px;"></canvas>
-                    <button type="button" onclick="clearSignature()" style="background: transparent; border: none; color: var(--p-ink-3); margin-top: 6px; cursor: pointer; font-family: inherit; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 4px 0;">Clear Signature</button>
+                    <button type="button" onclick="clearSignature()" style="background: transparent; border: none; color: var(--p-ink-3); margin-top: 6px; cursor: pointer; font-family: inherit; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 500; padding: 4px 0;" data-i18n="clearSignature">Clear Signature</button>
                 </div>
 
                 <label style="display: flex; align-items: center; gap: 12px; font-size: 0.95rem; color: var(--p-ink-2); line-height: 1.5; margin-top: 4px; cursor: pointer;">
                     <input type="checkbox" id="regTerms" style="width: 22px; height: 22px; accent-color: var(--p-accent); flex-shrink: 0;">
-                    I agree to the hotel Terms &amp; Conditions and accept responsibility for the room.
+                    <span data-i18n="agreeTerms">I agree to the hotel Terms &amp; Conditions and accept responsibility for the room.</span>
                 </label>
             </div>
 
             <div class="form-row" style="justify-content: center; margin-top: 10px;">
-                <button class="kiosk-btn form-btn cancel" onclick="hideForm()">Cancel</button>
-                <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()">Verify Identity</button>
+                <button class="kiosk-btn form-btn cancel" onclick="hideForm()" data-i18n="cancelBtn">Cancel</button>
+                <button class="kiosk-btn form-btn primary" id="submitActionBtn" onclick="submitForm()" data-i18n="verifyIdentityBtn">Verify Identity</button>
             </div>
         </div>
 
@@ -355,11 +449,11 @@
              right. .footer alias and id="qrWidget" preserved so the form-
              toggle JS continues to hide/show the same regions. -->
         <div class="kiosk-foot footer" id="kioskFoot">
-            <div id="kioskFooter">SYSTEM ONLINE &middot; TERMINAL CONNECTED</div>
+            <div id="kioskFooter" data-i18n="systemOnline">SYSTEM ONLINE &middot; TERMINAL CONNECTED</div>
             <div class="qr" id="qrWidget">
                 <div class="qr-text">
-                    <strong>Scan to check-in</strong>
-                    on your phone
+                    <strong><span data-i18n="scanToCheckinText1">Scan to check-in</span></strong>
+                    <span data-i18n="scanToCheckinText2">on your phone</span>
                 </div>
                 <img src="images/qrcode.png" alt="Scan Guest Portal" style="width:64px; height:64px; background: var(--p-warm); padding: 6px; border-radius: var(--p-radius);">
             </div>
@@ -367,7 +461,7 @@
 
         <div class="loader-overlay" id="loader">
             <div class="spinner" id="spinnerIcon"></div>
-            <div class="loader-text" id="loaderText">Processing...</div>
+            <div class="loader-text" id="loaderText" data-i18n="processing">Processing...</div>
         </div>
     </div>
 
@@ -400,7 +494,13 @@
         
         // Update footer to visibly confirm the kiosk's assigned identity
         const footerEl = document.getElementById('kioskFooter');
-        if (footerEl) footerEl.innerHTML = `SYSTEM ONLINE &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONNECTED`;
+        if (footerEl) {
+            if(currentLang === 'en') {
+                footerEl.innerHTML = `SYSTEM ONLINE &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONNECTED`;
+            } else {
+                footerEl.innerHTML = `SISTEMA EN LÍNEA &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONECTADO`;
+            }
+        }
 
         // Kiosk-wide config pulled from server so the property ID isn't hard-coded.
         let kioskConfig = { propertyID: null, guestPortalBase: 'https://hotels.cloudbeds.com/guest_portal' };
@@ -408,6 +508,247 @@
           .then(r => r.json())
           .then(cfg => { kioskConfig = { ...kioskConfig, ...cfg }; })
           .catch(() => {});
+
+        
+        const translations = {
+            en: {
+                welcomeHome: "welcome <em>home</em>",
+                selfServiceKiosk: "Self-Service Kiosk",
+                tapBelowTo: "Tap below to check-in or check-out",
+                guestCheckin: "Guest Check-In",
+                checkinDesc: "Confirm details, settle any balance, get your room.",
+                expressCheckout: "Express Check-Out",
+                checkoutDesc: "Settle the balance and have a receipt emailed to you.",
+                printReceiptBtn: "Print Receipt",
+                lastNameOrRes: "Last Name OR Reservation #",
+                last4Phone: "Enter last 4 digits of phone",
+                doneBtn: "Done",
+                startOverBtn: "Start Over",
+                guestRegistration: "Guest Registration",
+                firstName: "First Name",
+                lastName: "Last Name",
+                email: "Email Address",
+                phone: "Phone Number",
+                address: "Full Address",
+                petQuestion: "Are you traveling with a pet?",
+                petFeeDesc: "($30 pet fee applies, service animals excluded)",
+                yesBtn: "Yes",
+                noBtn: "No",
+                petWaiverTitle: "Pet Waiver & Fee Agreement",
+                petWaiverDesc: "Gateway Park Hotel & Suites is a pet-friendly hotel. There is a $30 pet fee for any room with a pet. Failure to disclose a pet will result in the pet fee being added to your room. All pets must be on a leash or caged while in public areas. Pets are not allowed in the breakfast area or bar unless they are an authorized service animal. You are responsible for cleaning up after your pet. Failure to do so will result in an additional fee. Your signature below signifies agreement to these terms.",
+                ccPolicy: '<strong style="color: var(--p-ink);">Credit Card Policy:</strong> Your card will be authorized for your total stay at check-in. If you use a different form of payment the authorization will be cancelled. Your bank may hold the funds for 3-10 business days. Gateway Park Hotel & Suites is not responsible for any fees incurred by the guest when using a debit card.',
+                hotelPolicy: '<strong style="color: var(--p-ink);">Hotel Policies:</strong> Smoking is prohibited in the hotel. I understand that if evidence of smoking is found there will be a $250 cleaning fee applied to my bill. Any damage to hotel property, missing items out of guest rooms will result in a fee. Gateway Park Hotel & Suites will not be held liable for accidents or injury to a guest, or for loss of property or valuables.',
+                pleaseSign: "Please sign below",
+                clearSignature: "Clear Signature",
+                agreeTerms: "I agree to the hotel Terms & Conditions and accept responsibility for the room.",
+                cancelBtn: "Cancel",
+                verifyIdentityBtn: "Verify Identity",
+                systemOnline: "SYSTEM ONLINE &middot; TERMINAL CONNECTED",
+                scanToCheckinText1: "Scan to check-in",
+                scanToCheckinText2: "on your phone",
+                processing: "Processing...",
+                findReservation: "Find Reservation",
+                findCheckin: "Find Check-In",
+                findCheckout: "Find Check-Out",
+                goToDigitalCheckin: "Go to Digital Check-In",
+                processCheckout: "Process Check-Out",
+                acceptPay: "Accept & Pay",
+                tapToVerify: "Tap to verify →",
+                tapToStart: "Tap to start →",
+                rooms: "rooms",
+                room: "room",
+                balance: "Balance",
+                guest: "Guest",
+                weFound: "We found",
+                bookingsUnderName: "bookings under that name",
+                tapBookingYours: "Tap the booking that’s yours so we can verify your identity.",
+                youHave: "You have",
+                reservationsToCheckin: "reservations to check in",
+                tapRoomToStart: "Tap a room to start. You can come back to do the others when you’re ready.",
+                allCheckedIn: "All checked in!",
+                returnToMainMenu: "You can return to the main menu.",
+                moreToGo: "more to go",
+                pickNextRoom: "Pick the next room — you’ve completed",
+                verifyEmailPrompt: "Please enter your full email address (e.g. {masked}) to verify your identity.",
+                verifyEmailPlaceholder: "Enter your email address",
+                verifyPhonePrompt: "Please enter the last 4 digits of your phone number to verify.",
+                verifyPhonePlaceholder: "Enter last 4 digits of phone",
+                loadingRegCard: "Loading Registration Card...",
+                failedLoadCheckin: "Failed to load reservation for check-in.",
+                networkErrorDesk: "Network Error connecting to the desk.",
+                loadingResDetails: "Loading your reservation details...",
+                failedLoadResSeeDesk: "Could not load that reservation. Please see front desk.",
+                networkError: "Network error.",
+                pleaseEnterIdOrName: "Please enter an ID or Last Name",
+                searchingRes: "Searching for reservation...",
+                noPhoneVerifyEmailPrompt: "We found your reservation, but no phone number is on file! Please enter your full email address (e.g. {masked}) to verify your identity.",
+                foundResVerifyPhonePrompt: "We found your reservation! Please enter the last 4 digits of your phone number to verify.",
+                failedLocateRes: "Failed to locate reservation. Try using your Confirmation ID.",
+                verifyingIdentity: "Verifying identity...",
+                incorrectPin: "Incorrect PIN. Please try again.",
+                mustAgreeTerms: "You must agree to the Terms & Conditions.",
+                emailPhoneRequired: "Email and Phone Number are required.",
+                provideSignature: "Please provide your signature.",
+                confirmDetailsSign: "Please confirm your details and sign below.",
+                fetchingReceipt: "Fetching and printing your receipt...",
+                processingCheckoutWait: "Processing your checkout. Please wait...",
+                processingInsertCard: "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.",
+                checkinCompleteMoreToGo: "Check-in complete! {num} more {roomWord} to go.",
+                checkinFailed: "Check-in failed. Please see front desk.",
+                checkoutFailed: "Checkout failed. Please see front desk."
+            },
+            es: {
+                welcomeHome: "bienvenido a <em>casa</em>",
+                selfServiceKiosk: "Kiosco de Autoservicio",
+                tapBelowTo: "Toque abajo para registrar su llegada o salida",
+                guestCheckin: "Llegada de Huésped",
+                checkinDesc: "Confirma detalles, liquida el saldo y obtén tu habitación.",
+                expressCheckout: "Salida Rápida",
+                checkoutDesc: "Liquida el saldo y recibe un recibo por correo electrónico.",
+                printReceiptBtn: "Imprimir Recibo",
+                lastNameOrRes: "Apellido O Número de Reserva",
+                last4Phone: "Ingrese últimos 4 dígitos del teléfono",
+                doneBtn: "Hecho",
+                startOverBtn: "Comenzar de Nuevo",
+                guestRegistration: "Registro de Huésped",
+                firstName: "Nombre",
+                lastName: "Apellido",
+                email: "Correo Electrónico",
+                phone: "Número de Teléfono",
+                address: "Dirección Completa",
+                petQuestion: "¿Viaja con mascota?",
+                petFeeDesc: "(aplica cargo de $30 por mascota, excepto animales de servicio)",
+                yesBtn: "Sí",
+                noBtn: "No",
+                petWaiverTitle: "Acuerdo de Responsabilidad de Mascotas",
+                petWaiverDesc: "Gateway Park Hotel & Suites acepta mascotas. Hay un cargo de $30 por cualquier habitación con mascota. No declarar una mascota resultará en el cargo a su habitación. Todas las mascotas deben llevar correa o estar en su transportadora en las áreas públicas. No se permiten mascotas en el área de desayuno ni en el bar a menos que sean animales de servicio. Usted es responsable de limpiar lo que ensucie su mascota. De no hacerlo, se aplicará un cargo adicional. Su firma abajo indica acuerdo con estos términos.",
+                ccPolicy: '<strong style="color: var(--p-ink);">Política de Tarjeta de Crédito:</strong> Su tarjeta será autorizada por el total de su estancia al llegar. Si usa otra forma de pago, la autorización será cancelada. Su banco podría retener los fondos de 3 a 10 días hábiles. Gateway Park Hotel & Suites no es responsable por cargos bancarios incurridos por usar tarjeta de débito.',
+                hotelPolicy: '<strong style="color: var(--p-ink);">Políticas del Hotel:</strong> Prohibido fumar en el hotel. Entiendo que si hay evidencia de fumar se aplicará un cargo de $250. Daños o faltantes resultarán en un cargo. Gateway Park Hotel & Suites no es responsable por accidentes, lesiones, o pérdida de valores.',
+                pleaseSign: "Firme Abajo",
+                clearSignature: "Borrar Firma",
+                agreeTerms: "Acepto los Términos y Condiciones del hotel y me hago responsable por la habitación.",
+                cancelBtn: "Cancelar",
+                verifyIdentityBtn: "Verificar Identidad",
+                systemOnline: "SISTEMA EN LÍNEA &middot; TERMINAL CONECTADA",
+                scanToCheckinText1: "Escanee para",
+                scanToCheckinText2: "registrar su llegada",
+                processing: "Procesando...",
+                findReservation: "Buscar Reserva",
+                findCheckin: "Buscar Llegada",
+                findCheckout: "Buscar Salida",
+                goToDigitalCheckin: "Ir al Registro Digital",
+                processCheckout: "Procesar Salida",
+                acceptPay: "Aceptar y Pagar",
+                tapToVerify: "Toque para verificar →",
+                tapToStart: "Toque para comenzar →",
+                rooms: "habitaciones",
+                room: "habitación",
+                balance: "Saldo",
+                guest: "Huésped",
+                weFound: "Encontramos",
+                bookingsUnderName: "reservas bajo ese nombre",
+                tapBookingYours: "Toque su reserva para que podamos verificar su identidad.",
+                youHave: "Tienes",
+                reservationsToCheckin: "reservas para registrar",
+                tapRoomToStart: "Toque una habitación para empezar. Puede regresar a las demás cuando esté listo.",
+                allCheckedIn: "¡Todas registradas!",
+                returnToMainMenu: "Puede regresar al menú principal.",
+                moreToGo: "más por hacer",
+                pickNextRoom: "Elija la siguiente habitación — ha completado",
+                verifyEmailPrompt: "Por favor, ingrese su correo completo (ej. {masked}) para verificar su identidad.",
+                verifyEmailPlaceholder: "Ingrese su correo",
+                verifyPhonePrompt: "Por favor, ingrese los últimos 4 dígitos de su teléfono para verificar.",
+                verifyPhonePlaceholder: "Últimos 4 dígitos del teléfono",
+                loadingRegCard: "Cargando tarjeta de registro...",
+                failedLoadCheckin: "Fallo al cargar reserva para el registro.",
+                networkErrorDesk: "Error de red al conectar con recepción.",
+                loadingResDetails: "Cargando detalles de su reserva...",
+                failedLoadResSeeDesk: "No pudimos cargar esa reserva. Consulte en recepción.",
+                networkError: "Error de red.",
+                pleaseEnterIdOrName: "Ingrese ID o Apellido",
+                searchingRes: "Buscando reserva...",
+                noPhoneVerifyEmailPrompt: "¡Encontramos su reserva, pero no hay teléfono! Ingrese su correo completo (ej. {masked}) para verificar.",
+                foundResVerifyPhonePrompt: "¡Encontramos su reserva! Ingrese los últimos 4 dígitos de su teléfono para verificar.",
+                failedLocateRes: "Fallo al localizar reserva. Intente con su ID de Confirmación.",
+                verifyingIdentity: "Verificando identidad...",
+                incorrectPin: "PIN incorrecto. Intente de nuevo.",
+                mustAgreeTerms: "Debe aceptar los Términos y Condiciones.",
+                emailPhoneRequired: "Se requieren Correo y Número de Teléfono.",
+                provideSignature: "Por favor provea su firma.",
+                confirmDetailsSign: "Confirme sus detalles y firme abajo.",
+                fetchingReceipt: "Obteniendo e imprimiendo su recibo...",
+                processingCheckoutWait: "Procesando su salida. Por favor espere...",
+                processingInsertCard: "Procesando... Si hay saldo a pagar, inserte su tarjeta en la terminal ahora.",
+                checkinCompleteMoreToGo: "¡Registro completo! Faltan {num} {roomWord}.",
+                checkinFailed: "Registro falló. Consulte en recepción.",
+                checkoutFailed: "Salida falló. Consulte en recepción."
+            }
+        };
+
+        let currentLang = 'en';
+
+        function t(key, replacements = {}) {
+            let str = translations[currentLang][key] || translations['en'][key] || key;
+            for (const [k, v] of Object.entries(replacements)) {
+                str = str.replace('{' + k + '}', v);
+            }
+            return str;
+        }
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            document.getElementById('langLabel').innerText = lang === 'es' ? 'English' : 'Español';
+            
+            // Static text update
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (translations[currentLang][key]) {
+                    el.innerHTML = translations[currentLang][key];
+                }
+            });
+
+            // Input placeholders
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                if (translations[currentLang][key]) {
+                    el.placeholder = translations[currentLang][key];
+                }
+            });
+
+            // System online text has dynamic kiosk/terminal ID. Only update if not on login,
+            // or simply update based on current variables
+            const footerEl = document.getElementById('kioskFooter');
+            if (footerEl) {
+                // If TERMINAL_NAME exists, update it dynamically (simulating what happens on load)
+                if (typeof MY_KIOSK_ID !== 'undefined') {
+                    if(currentLang === 'en') {
+                        footerEl.innerHTML = `SYSTEM ONLINE &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONNECTED`;
+                    } else {
+                        footerEl.innerHTML = `SISTEMA EN LÍNEA &middot; KIOSK ${MY_KIOSK_ID} &middot; ${TERMINAL_NAME} CONECTADO`;
+                    }
+                }
+            }
+
+            // Also update any dynamic button texts if they are in standard state
+            const submitBtn = document.getElementById('submitActionBtn');
+            const mode = document.getElementById('formMode') ? document.getElementById('formMode').value : null;
+            if(submitBtn && submitBtn.style.display !== 'none' && currentStep === 1) {
+                if (mode === 'print') submitBtn.innerText = t("findReservation");
+                else submitBtn.innerText = (mode === 'checkin') ? t("findCheckin") : t("findCheckout");
+            } else if(submitBtn && submitBtn.style.display !== 'none' && currentStep === 2) {
+                submitBtn.innerText = t("goToDigitalCheckin");
+            } else if (submitBtn && submitBtn.style.display !== 'none' && currentStep === 3) {
+                submitBtn.innerText = t("acceptPay");
+            }
+        }
+
+        function toggleLanguage() {
+            if (currentLang === 'en') {
+                setLanguage('es');
+            } else {
+                setLanguage('en');
+            }
+        }
 
         // Track the resolved reservation across multi-step identify -> verify -> register flow.
         let verifiedReservationId = null;
@@ -439,7 +780,7 @@
                 if (data.kioskId && data.kioskId !== MY_KIOSK_ID) return;
 
                 showForm('checkin'); // Set UI to Check-in Mode
-                setLoading(true, `Loading Registration Card...`, false);
+                setLoading(true, t('loadingRegCard'), false);
 
                 try {
                     const queryParam = data.alphaId || data.reservationId;
@@ -459,11 +800,11 @@
                             showRegistrationStep(identifyData.guestData || {}, identifyData.reservationId);
                         }
                     } else {
-                        showToast(identifyData.message || "Failed to load reservation for check-in.");
+                        showToast(identifyData.message || t('failedLoadCheckin'));
                     }
                 } catch (e) {
                     setLoading(false);
-                    showToast("Network Error connecting to the desk.");
+                    showToast(t('networkErrorDesk'));
                 }
             }
         });
@@ -494,8 +835,8 @@
             verifiedReservationId = null;
 
             const btn = document.getElementById('submitActionBtn');
-            if (mode === 'print') btn.innerText = 'Find Reservation';
-            else btn.innerText = (mode === 'checkin') ? 'Find Check-In' : 'Find Check-Out';
+            if (mode === 'print') btn.innerText = t('findReservation');
+            else btn.innerText = (mode === 'checkin') ? t('findCheckin') : t('findCheckout');
         }
 
         function hideForm() {
@@ -534,8 +875,8 @@
             document.getElementById('chooserRow').style.display = 'flex';
             document.getElementById('submitActionBtn').style.display = 'none';
 
-            document.getElementById('chooserTitle').innerText = `We found ${kioskTopLevelGroups.length} bookings under that name`;
-            document.getElementById('chooserSubtitle').innerText = 'Tap the booking that’s yours so we can verify your identity.';
+            document.getElementById('chooserTitle').innerText = `${t('weFound')} ${kioskTopLevelGroups.length} ${t('bookingsUnderName')}`;
+            document.getElementById('chooserSubtitle').innerText = t('tapBookingYours');
 
             const container = document.getElementById('chooserCards');
             container.innerHTML = '';
@@ -547,14 +888,14 @@
                 const dateLabel = (g.startDate && g.endDate)
                     ? `${g.startDate.replace(/^(\d{4})-/, '')} → ${g.endDate.replace(/^(\d{4})-/, '')}`
                     : '';
-                const roomCountLabel = g.roomCount > 1 ? `${g.roomCount} rooms` : '1 room';
+                const roomCountLabel = g.roomCount > 1 ? `${g.roomCount} ${t('rooms')}` : `1 ${t('room')}`;
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
-                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${(g.displayName || 'Guest').toString().replace(/[<>]/g, '')}</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${(g.displayName || 't('guest')).toString().replace(/[<>]/g, '')}</div>
                         <div style="opacity: 0.85; font-size: 1rem;">${roomCountLabel}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85;">
-                        <div style="opacity: 0.6; font-size: 0.95rem;">Tap to verify →</div>
+                        <div style="opacity: 0.6; font-size: 0.95rem;">${t("tapToVerify")}</div>
                     </div>
                 `;
                 card.onclick = () => selectTopLevelGroup(idx);
@@ -579,20 +920,20 @@
 
             const pinInput = document.getElementById('pinInput');
             if (g.verifyType === 'email') {
-                document.getElementById('verifyPrompt').innerText = `Please enter your full email address (e.g. ${g.masked}) to verify your identity.`;
-                pinInput.placeholder = "Enter your email address";
+                document.getElementById('verifyPrompt').innerText = t('verifyEmailPrompt', {masked: g.masked});
+                pinInput.placeholder = t('verifyEmailPlaceholder');
                 pinInput.type = "email";
                 pinInput.inputMode = "email";
                 pinInput.maxLength = 100;
             } else {
-                document.getElementById('verifyPrompt').innerText = `Please enter the last 4 digits of your phone number to verify.`;
-                pinInput.placeholder = "Enter last 4 digits of phone";
+                document.getElementById('verifyPrompt').innerText = t('verifyPhonePrompt');
+                pinInput.placeholder = t('verifyPhonePlaceholder');
                 pinInput.type = "tel";
                 pinInput.inputMode = "numeric";
                 pinInput.maxLength = 4;
             }
             pinInput.value = '';
-            document.getElementById('submitActionBtn').innerText = 'Go to Digital Check-In';
+            document.getElementById('submitActionBtn').innerText = t('goToDigitalCheckin');
             setTimeout(() => pinInput.focus(), 50);
         }
 
@@ -615,14 +956,14 @@
             const subtitle = document.getElementById('chooserSubtitle');
             const completed = kioskCompletedIds.size;
             if (completed === 0) {
-                title.innerText = `You have ${remaining.length} reservations to check in`;
-                subtitle.innerText = 'Tap a room to start. You can come back to do the others when you’re ready.';
+                title.innerText = `${t('youHave')} ${remaining.length} ${t('reservationsToCheckin')}`;
+                subtitle.innerText = t('tapRoomToStart');
             } else if (remaining.length === 0) {
-                title.innerText = 'All checked in!';
-                subtitle.innerText = 'You can return to the main menu.';
+                title.innerText = t('allCheckedIn');
+                subtitle.innerText = t('returnToMainMenu');
             } else {
-                title.innerText = `${remaining.length} more to go`;
-                subtitle.innerText = `Pick the next room — you’ve completed ${completed}.`;
+                title.innerText = `${remaining.length} ${t('moreToGo')}`;
+                subtitle.innerText = `${t('pickNextRoom')} ${completed}.`;
             }
 
             const container = document.getElementById('chooserCards');
@@ -632,20 +973,20 @@
                 card.type = 'button';
                 card.className = 'kiosk-input';
                 card.style.cssText = 'text-align: left; padding: 18px 22px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 16px; width: 100%; min-height: 88px; font-family: inherit;';
-                const roomLabel = r.roomName ? `Room ${r.roomName}` : `Reservation ${r.reservationId}`;
+                const roomLabel = r.roomName ? `${t('room')} ${r.roomName}` : `Reservation ${r.reservationId}`;
                 const dateLabel = (r.startDate && r.endDate)
                     ? `${r.startDate.replace(/^(\d{4})-/, '')} → ${r.endDate.replace(/^(\d{4})-/, '')}`
                     : '';
                 const balanceLabel = (typeof r.balance === 'number' && r.balance > 0)
-                    ? `Balance $${r.balance.toFixed(2)}` : '';
+                    ? `${t('balance')} ${r.balance.toFixed(2)}` : '';
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
                         <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${roomLabel}</div>
-                        <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || 'Guest').toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
+                        <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || 't('guest')).toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85; white-space: nowrap;">
                         ${balanceLabel ? `<div style="font-weight: 500;">${balanceLabel}</div>` : ''}
-                        <div style="opacity: 0.6; font-size: 0.95rem;">Tap to start →</div>
+                        <div style="opacity: 0.6; font-size: 0.95rem;">${t("tapToStart")}</div>
                     </div>
                 `;
                 card.onclick = () => selectGroupReservation(r.reservationId);
@@ -659,7 +1000,7 @@
         }
 
         async function selectGroupReservation(reservationId) {
-            setLoading(true, 'Loading your reservation details...', false);
+            setLoading(true, t('loadingResDetails'), false);
             try {
                 const res = await fetch('/api/kiosk/sub-reservation', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -675,11 +1016,11 @@
                     document.getElementById('submitActionBtn').style.display = '';
                     showRegistrationStep(data.guestData || {}, data.reservationId);
                 } else {
-                    showToast(data.message || 'Could not load that reservation. Please see front desk.');
+                    showToast(data.message || t('failedLoadResSeeDesk'));
                 }
             } catch (e) {
                 setLoading(false);
-                showToast('Network error.');
+                showToast(t('networkError'));
             }
         }
 
@@ -702,9 +1043,9 @@
             const query = document.getElementById('queryInput').value.trim();
 
             if (currentStep === 1) {
-                if (!query) { showToast("Please enter an ID or Last Name"); return; }
+                if (!query) { showToast(t('pleaseEnterIdOrName')); return; }
 
-                setLoading(true, "Searching for reservation...", false);
+                setLoading(true, t('searchingRes'), false);
                 try {
                     const res = await fetch('/api/kiosk/identify', {
                        method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -740,20 +1081,20 @@
 
                           const pinInput = document.getElementById('pinInput');
                           if (data.verifyType === 'email') {
-                              document.getElementById('verifyPrompt').innerText = `We found your reservation, but no phone number is on file! Please enter your full email address (e.g. ${data.maskedEmail}) to verify your identity.`;
-                              pinInput.placeholder = "Enter your email address";
+                              document.getElementById('verifyPrompt').innerText = t('noPhoneVerifyEmailPrompt', {masked: data.maskedEmail});
+                              pinInput.placeholder = t('verifyEmailPlaceholder');
                               pinInput.type = "email";
                               pinInput.inputMode = "email";
                               pinInput.maxLength = 100;
                           } else {
-                              document.getElementById('verifyPrompt').innerText = `We found your reservation! Please enter the last 4 digits of your phone number to verify.`;
-                              pinInput.placeholder = "Enter last 4 digits of phone";
+                              document.getElementById('verifyPrompt').innerText = t('foundResVerifyPhonePrompt');
+                              pinInput.placeholder = t('verifyPhonePlaceholder');
                               pinInput.type = "tel";
                               pinInput.inputMode = "numeric";
                               pinInput.maxLength = 4;
                           }
 
-                          document.getElementById('submitActionBtn').innerText = (mode === 'print') ? 'Print Receipt' : ((mode === 'checkin') ? 'Go to Digital Check-In' : 'Process Check-Out');
+                          document.getElementById('submitActionBtn').innerText = (mode === 'print') ? t('printReceiptBtn') : ((mode === 'checkin') ? t('goToDigitalCheckin') : t('processCheckout'));
                       } else if (data.success && !data.requiresVerification) {
                           // Bypassed PIN (typed exact reservation ID). Same routing
                           // logic as post-verify: chooser if multi-room, else jump
@@ -769,15 +1110,15 @@
                               proceedWithValidatedId(data.reservationId, mode);
                           }
                       } else {
-                          showToast(data.message || "Failed to locate reservation. Try using your Confirmation ID.");
+                          showToast(data.message || t('failedLocateRes'));
                       }
                 } catch(e) {
                     setLoading(false);
-                    showToast("Network Error connecting to the desk.");
+                    showToast(t('networkErrorDesk'));
                 }
             } else if (currentStep === 2) {
                 const pin = document.getElementById('pinInput').value.trim();
-                setLoading(true, "Verifying identity...", false);
+                setLoading(true, t('verifyingIdentity'), false);
                 try {
                     const res = await fetch('/api/kiosk/verify', {
                        method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -798,25 +1139,25 @@
                             proceedWithValidatedId(data.reservationId, mode);
                         }
                     } else {
-                        showToast(data.message || "Incorrect PIN. Please try again.");
+                        showToast(data.message || t('incorrectPin'));
                     }
-                } catch(e) { setLoading(false); showToast("Network Error."); }
+                } catch(e) { setLoading(false); showToast(t('networkError')); }
             } else if (currentStep === 3) {
                 // Handle Registration Submit
                 if (!document.getElementById('regTerms').checked) {
-                    showToast("You must agree to the Terms & Conditions.");
+                    showToast(t('mustAgreeTerms'));
                     return;
                 }
                 
                 const emailVal = document.getElementById('regEmail').value.trim();
                 const phoneVal = document.getElementById('regPhone').value.trim();
                 if (!emailVal || !phoneVal) {
-                    showToast("Email and Phone Number are required.");
+                    showToast(t('emailPhoneRequired'));
                     return;
                 }
 
                 if (isCanvasEmpty(document.getElementById('sigCanvas'))) {
-                    showToast("Please provide your signature.");
+                    showToast(t('provideSignature'));
                     return;
                 }
                 
@@ -843,7 +1184,7 @@
             document.querySelector('.header').style.display = 'none';
 
             document.getElementById('step2Row').style.display = 'none';
-            document.getElementById('verifyPrompt').innerText = "Please confirm your details and sign below.";
+            document.getElementById('verifyPrompt').innerText = t('confirmDetailsSign');
             document.getElementById('step3Row').style.display = 'flex';
             
             document.getElementById('regFirstName').value = guestData.firstName || '';
@@ -867,7 +1208,7 @@
             document.getElementById('regPhone').value = guestData.phone || '';
             document.getElementById('regAddress').value = [guestData.address, guestData.city, guestData.state, guestData.zip].filter(Boolean).join(', ') || '';
             
-            document.getElementById('submitActionBtn').innerText = "Accept & Pay";
+            document.getElementById('submitActionBtn').innerText = t('acceptPay');
             togglePetWaiver(false); // default to no pet
             initSignaturePad();
         }
@@ -964,11 +1305,11 @@
 
         async function proceedWithValidatedId(resId, mode, guestUpdates = null) {
             if (mode === 'print') {
-                setLoading(true, "Fetching and printing your receipt...");
+                setLoading(true, t('fetchingReceipt'));
             } else if (mode === 'checkout') {
-                setLoading(true, "Processing your checkout. Please wait...");
+                setLoading(true, t('processingCheckoutWait'));
             } else {
-                setLoading(true, "Processing... If a balance is owed, please insert or tap your card on the payment terminal now.");
+                setLoading(true, t('processingInsertCard'));
             }
 
             try {
@@ -1002,7 +1343,7 @@
                         kioskCompletedIds.add(resId);
                         const remaining = kioskGroup.filter(r => !kioskCompletedIds.has(r.reservationId));
                         if (remaining.length > 0) {
-                            setLoading(true, `Check-in complete! ${remaining.length} more room${remaining.length === 1 ? '' : 's'} to go.`, false);
+                            setLoading(true, t('checkinCompleteMoreToGo', {num: remaining.length, roomWord: remaining.length === 1 ? t('room') : t('rooms')}), false);
                             setTimeout(() => {
                                 setLoading(false);
                                 // Reset registration state for the next room.
@@ -1023,13 +1364,13 @@
                 }
                 else {
                     setLoading(false);
-                    showToast(data.message || ((mode === 'checkin') ? "Check-in failed. Please see front desk." : "Checkout failed. Please see front desk."));
+                    showToast(data.message || ((mode === 'checkin') ? t('checkinFailed') : t('checkoutFailed')));
                 }
 
             } catch (error) {
                 console.error(error);
                 setLoading(false);
-                showToast("Network Error. Cannot reach front desk server.");
+                showToast(t('networkErrorDesk'));
             }
         }
 
