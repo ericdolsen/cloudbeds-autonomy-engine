@@ -312,12 +312,8 @@
         🌐 <span id="langLabel">Español</span>
     </button>
 
-    <div class="kiosk">
 
-        <div class="kiosk-mini-clock clock-widget">
-            <div class="time" id="time">--:--</div>
-            <div class="date" id="date">Updating date...</div>
-        </div>
+    <div class="kiosk">
 
         <!-- TOP: centered banner logo. .header alias is kept because the
              form-mode JS does document.querySelector('.header').style.display
@@ -326,10 +322,13 @@
             <img src="images/logo.png" alt="Gateway Park Hotel" class="kiosk-banner">
         </div>
 
-        <!-- CENTER HERO: new animated CTA -->
-        <div class="kiosk-hero clock-widget">
-            <h1 data-i18n="selfServiceKiosk">Self-Service Kiosk</h1>
-            <p data-i18n="tapBelowTo">Tap below to check-in or check-out</p>
+        <!-- CENTER HERO: greeting + clock + date.
+             .clock-widget alias kept for the form-mode hide/show JS. -->
+        <div class="kiosk-clock clock-widget">
+            <div class="kiosk-greeting" data-i18n="welcomeHome">welcome <em>home</em></div>
+            <div class="kiosk-time" id="time">--:--</div>
+            <div class="kiosk-date" id="date">Updating date...</div>
+            <div class="kiosk-rule"></div>
         </div>
 
         <!-- PRIMARY ACTIONS + secondary print receipt.
