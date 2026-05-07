@@ -204,6 +204,7 @@ class AutonomyEngine {
             },
             required: ["reservationId"]
           }
+        }
       ]
     }, { googleSearch: {} }];
   }
