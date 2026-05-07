@@ -204,32 +204,6 @@ class AutonomyEngine {
             },
             required: ["reservationId"]
           }
-        },
-        {
-          name: "getUnassignedRooms",
-          description: "Returns physical rooms that are not assigned to a reservation for the given date range. Use this to find available rooms to assign. Dates must be YYYY-MM-DD.",
-          parameters: {
-            type: Type.OBJECT,
-            properties: {
-              startDate: { type: Type.STRING },
-              endDate: { type: Type.STRING }
-            },
-            required: ["startDate", "endDate"]
-          }
-        },
-        {
-          name: "assignRoom",
-          description: "Assigns a physical room to a reservation using the underlying Cloudbeds room ID. You MUST provide the complex cloudbeds roomID (e.g. '1234-5') and roomTypeID, which you can find via the getUnassignedRooms tool.",
-          parameters: {
-            type: Type.OBJECT,
-            properties: {
-              reservationId: { type: Type.STRING },
-              roomId: { type: Type.STRING, description: "The complex Cloudbeds room ID, NOT the simple room name." },
-              roomTypeId: { type: Type.STRING }
-            },
-            required: ["reservationId", "roomId", "roomTypeId"]
-          }
-        }
       ]
     }, { googleSearch: {} }];
   }
