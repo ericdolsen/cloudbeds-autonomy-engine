@@ -893,7 +893,7 @@
                 const roomCountLabel = g.roomCount > 1 ? `${g.roomCount} ${t('rooms')}` : `1 ${t('room')}`;
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
-                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${(g.displayName || 't('guest')).toString().replace(/[<>]/g, '')}</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${(g.displayName || t('guest')).toString().replace(/[<>]/g, '')}</div>
                         <div style="opacity: 0.85; font-size: 1rem;">${roomCountLabel}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85;">
@@ -984,7 +984,7 @@
                 card.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
                         <div style="font-size: 1.3rem; font-weight: 600; color: var(--p-ink); font-family: var(--p-serif); letter-spacing: -0.005em;">${roomLabel}</div>
-                        <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || 't('guest')).toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
+                        <div style="opacity: 0.85; font-size: 1rem;">${(r.guestName || t('guest')).toString().replace(/[<>]/g, '')}${dateLabel ? ' · ' + dateLabel : ''}</div>
                     </div>
                     <div style="text-align: right; opacity: 0.85; white-space: nowrap;">
                         ${balanceLabel ? `<div style="font-weight: 500;">${balanceLabel}</div>` : ''}
