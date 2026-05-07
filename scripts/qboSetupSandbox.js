@@ -23,10 +23,10 @@
  *     Account and Settings → Advanced → Categories before classes can
  *     be created via the API. If it's not enabled the script will say
  *     so and skip the class step (accounts still get created).
- *   - Accounts Receivable (1200) is intentionally NOT created here —
- *     QBO sandboxes always come with a default A/R account that the
- *     poster can use. If your sandbox doesn't have one, create it
- *     manually in the QBO UI (it's a special "system" account type).
+ *   - Accounts Receivable (1200) is created here even though the QBO
+ *     sandbox ships with a default A/R — the default has no AcctNum,
+ *     so the integration's AcctNum lookup wouldn't find it. Creating
+ *     a custom 1200 A/R alongside the default is allowed by QBO.
  */
 'use strict';
 
@@ -54,8 +54,12 @@ const ACCOUNT_SPECS = {
   // Payment / clearing (Other Current Asset)
   [ACCT.STRIPE_CLEARING]:    { name: 'Stripe Clearing',                   type: 'Other Current Asset',     subType: 'OtherCurrentAssets' },
   [ACCT.OTA_CLEARING]:       { name: 'OTA Channel-Collect Clearing',      type: 'Other Current Asset',     subType: 'OtherCurrentAssets' },
-  [ACCT.CASH_CLEARING]:      { name: 'Cash Clearing',                     type: 'Other Current Asset',     subType: 'OtherCurrentAssets' }
-  // ACCT.AR (1200) intentionally omitted — QBO provides a default A/R.
+  [ACCT.CASH_CLEARING]:      { name: 'Cash Clearing',                     type: 'Other Current Asset',     subType: 'OtherCurrentAssets' },
+
+  // Accounts Receivable. QBO ships a default A/R but it has no AcctNum
+  // and the integration's lookup is by AcctNum, so we create a custom
+  // 1200 A/R that's reachable from the mapping.
+  [ACCT.AR]:                 { name: 'Accounts Receivable',               type: 'Accounts Receivable',     subType: 'AccountsReceivable' }
 };
 
 // Class specs (just names; QBO assigns IDs).
