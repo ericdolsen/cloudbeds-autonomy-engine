@@ -78,7 +78,7 @@ class PaymentTerminal {
           '--disable-session-crashed-bubble',
           '--hide-crash-restore-bubble'
         ],
-        ignoreDefaultArgs: ['--enable-automation']
+        ignoreDefaultArgs: ['--enable-automation', '--disable-extensions', '--disable-component-extensions-with-background-pages']
       };
       // Retry the launch a few times — Chrome occasionally exits with
       // code 0 on the first attempt ("Opening in existing browser

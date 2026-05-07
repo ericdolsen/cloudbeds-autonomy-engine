@@ -43,6 +43,8 @@ class WhistleListener {
     this.agent = autonomyAgent;
     this.host = process.env.CLOUDBEDS_UI_HOST || 'us2.cloudbeds.com';
     this.whistleUrl = process.env.CLOUDBEDS_WHISTLE_URL || `https://${this.host}/guest_experience/inbox`;
+    this.email = process.env.CLOUDBEDS_EMAIL;
+    this.password = process.env.CLOUDBEDS_PASSWORD;
     this.isRunning = false;
     this.context = null;
     this.page = null;
@@ -124,7 +126,7 @@ class WhistleListener {
               '--disable-session-crashed-bubble',
               '--hide-crash-restore-bubble'
           ],
-          ignoreDefaultArgs: ['--enable-automation']
+          ignoreDefaultArgs: ['--enable-automation', '--disable-extensions', '--disable-component-extensions-with-background-pages']
       };
       let lastErr;
       for (let attempt = 1; attempt <= 4; attempt++) {
@@ -190,6 +192,41 @@ class WhistleListener {
     }
   }
 
+  async _performLogin(page) {
+    // Okta has shipped multiple input names for the email field — accept
+    // every variation we've seen so a UI revision doesn't break us.
+    const emailSelector = 'input[name="email"], input[name="user_email"], input[name="identifier"], input[name="username"], input[type="email"]';
+    await page.waitForSelector(emailSelector, { timeout: 30000 }).catch(() => {});
+    const newEmailInput = await page.$('input[name="email"], input[name="identifier"], input[name="username"], input[type="email"]:not([name="user_email"])');
+
+    if (newEmailInput) {
+      await newEmailInput.fill(this.email);
+      await page.click('button[type="submit"], input[type="submit"]');
+
+      await page.waitForURL('**/authorize**', { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+
+      const idInput = await page.$('input[name="identifier"]');
+      if (idInput) {
+        await page.click('input[type="submit"], button[type="submit"]');
+        await page.waitForTimeout(2000);
+      }
+
+      await page.fill('input[name="credentials.passcode"]', this.password);
+      await page.click('input[type="submit"], button[type="submit"]');
+    } else {
+      // Legacy non-Okta flow
+      const legacyEmailInput = await page.$('input[name="user_email"]');
+      if (legacyEmailInput) {
+        await legacyEmailInput.fill(this.email);
+        await page.fill('input[name="user_password"]', this.password);
+        await page.click('button[type="submit"]');
+      }
+    }
+
+    await page.waitForTimeout(5000); // Give it time to redirect back
+  }
+
   async _pollForMessages() {
     if (!this.page) return;
 
@@ -197,6 +234,13 @@ class WhistleListener {
     if (currentUrl.includes('login') || currentUrl.includes('auth')) {
         const wasLoggedOut = this._loggedOut;
         this._loggedOut = true;
+        
+        if (this.email && this.password) {
+            logger.info(`[WHISTLE RPA] Cloudbeds session expired — attempting auto-login.`);
+            await this._performLogin(this.page);
+            return;
+        }
+
         // Rate-limit to once every 5 minutes — without this, the warning
         // (which includes the full OAuth URL) fires on every poll and
         // dominates the log file.
