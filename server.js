@@ -70,6 +70,26 @@ const messaging = new MessagingClient();
 const alertHub = new AlertHub(io);
 agent.engine.alertHub = alertHub; // exposed so the alertFrontDesk tool can publish
 
+// QuickBooks Online integration. Optional — if QBO_* env vars are missing,
+// the integration is disabled and the post-day endpoint reports the gap.
+const { QuickBooks } = require('./src/quickbooks');
+const { postDayToQbo } = require('./src/qboPoster');
+const qbo = new QuickBooks();
+if (qbo.isConfigured()) {
+  // Probe at boot — confirms creds work and warms the chart-of-accounts
+  // cache so the first post-day call doesn't pay the lookup latency.
+  (async () => {
+    try {
+      await qbo.loadChartLookups();
+      logger.info(`[QBO] Connected to ${qbo.env} realm ${qbo.realmId}.`);
+    } catch (e) {
+      logger.warn(`[QBO] Boot probe failed: ${e.message}`);
+    }
+  })();
+} else {
+  logger.info('[QBO] Integration disabled — QBO_CLIENT_ID / QBO_CLIENT_SECRET / QBO_REFRESH_TOKEN / QBO_REALM_ID not all set. Run scripts/qboConnect.js to enable.');
+}
+
 // WebSockets (Tablet & Chat Connectivity)
 //
 // Socket.IO socket.id is a random handshake token, not a stable device
@@ -810,6 +830,39 @@ app.post('/api/employee/reports/sales-tax', checkLocalNetwork, async (req, res) 
      logger.action('System', `Failed to generate Tax Report: ${err.message}`, 'error');
      logger.error(`[SALES TAX] Failed to process tax generation: ${err.message}`);
      res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// QBO post-one-day endpoint — drives the "Post to QuickBooks" button on
+// the employee panel and is also the surface the future 3:30 AM cron will
+// hit. Idempotent by DocNumber (GP-YYYY-MM-DD); pass force=true in the
+// body to update an already-posted day instead of erroring.
+app.get('/api/qbo/status', checkLocalNetwork, (req, res) => {
+  res.json({
+    success: true,
+    configured: qbo.isConfigured(),
+    environment: qbo.env,
+    realmId: qbo.realmId || null
+  });
+});
+
+app.post('/api/qbo/post-day', checkLocalNetwork, express.json(), async (req, res) => {
+  if (!qbo.isConfigured()) {
+    return res.status(503).json({
+      success: false,
+      error: 'QuickBooks integration not configured. Run scripts/qboConnect.js once on the server box and restart.'
+    });
+  }
+  const { date, force } = req.body || {};
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, error: 'date must be YYYY-MM-DD.' });
+  }
+  try {
+    const result = await postDayToQbo({ qbo, api: agent.engine.api, dateStr: date, force: !!force });
+    return res.json({ success: true, ...result });
+  } catch (e) {
+    logger.error(`[QBO] post-day failed for ${date}: ${e.message}`);
+    return res.status(500).json({ success: false, error: e.message });
   }
 });
 

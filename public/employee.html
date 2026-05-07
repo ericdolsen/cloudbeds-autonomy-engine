@@ -463,6 +463,23 @@
                         Build Filing Report
                     </button>
                 </div>
+
+                <!-- QuickBooks Daily Journal Entry -->
+                <div class="report-card">
+                    <h3>Post Day to QuickBooks</h3>
+                    <p>Builds a single Journal Entry for the selected business date — room revenue, taxes, payment clearings, allowances, A/R — and posts it to QuickBooks Online. Idempotent: re-running for a date that's already posted is a no-op unless you tick "Force update".</p>
+                    <div id="qboStatus" style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--p-ink-3); margin-bottom: 6px;">Checking QBO connection&hellip;</div>
+                    <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center;">
+                        <input type="date" id="qboPostDate" class="input" style="flex:1;">
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--p-ink-2); cursor: pointer; white-space: nowrap;">
+                            <input type="checkbox" id="qboForce" style="width: 16px; height: 16px; accent-color: var(--p-accent);">
+                            Force update
+                        </label>
+                    </div>
+                    <button class="btn" id="btnQbo" onclick="postDayToQbo()">
+                        Post to QuickBooks
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -625,6 +642,60 @@
                 showToast(`❌ Error: ${error.message}`);
             } finally {
                 btn.innerHTML = `Generate PDF Snapshot`;
+                btn.disabled = false;
+            }
+        }
+
+        // QuickBooks daily-JE posting. Default the date input to yesterday
+        // (the night audit just closed it) and probe /api/qbo/status on
+        // load so the UI tells the operator whether the integration is
+        // wired up before they click.
+        (function initQboPanel() {
+            const d = new Date(); d.setDate(d.getDate() - 1);
+            const yyyy = d.getFullYear(), mm = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+            const el = document.getElementById('qboPostDate');
+            if (el) el.value = `${yyyy}-${mm}-${dd}`;
+            fetch('/api/qbo/status').then(r => r.json()).then(s => {
+                const status = document.getElementById('qboStatus');
+                if (!status) return;
+                if (s.configured) {
+                    status.textContent = `${s.environment} · realm ${s.realmId}`;
+                    status.style.color = 'var(--p-accent)';
+                } else {
+                    status.textContent = 'Not configured — run scripts/qboConnect.js';
+                    status.style.color = '#d4a256';
+                }
+            }).catch(() => {
+                const status = document.getElementById('qboStatus');
+                if (status) status.textContent = 'Status probe failed';
+            });
+        })();
+
+        async function postDayToQbo() {
+            const btn = document.getElementById('btnQbo');
+            const date = document.getElementById('qboPostDate').value;
+            const force = document.getElementById('qboForce').checked;
+            if (!date) return showToast("Please pick a business date.");
+            const original = btn.innerHTML;
+            btn.innerHTML = `<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="animation: spin 1s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg> Posting...`;
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/qbo/post-day', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date, force })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                if (data.action === 'noop') {
+                    showToast(`Already posted as ${data.docNumber} (Id ${data.existingId}). Tick "Force update" to overwrite.`);
+                } else {
+                    showToast(`✅ ${data.action === 'updated' ? 'Updated' : 'Posted'} ${data.docNumber} to QBO — ${data.lines} lines, $${data.totalDebit.toFixed(2)} balanced.`);
+                }
+            } catch (e) {
+                showToast(`❌ ${e.message}`);
+            } finally {
+                btn.innerHTML = original;
                 btn.disabled = false;
             }
         }
