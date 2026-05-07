@@ -261,12 +261,23 @@ class QuickBooks {
 function _wrapQboError(e, label) {
   if (e.response && e.response.data && e.response.data.Fault) {
     const fault = e.response.data.Fault;
-    const errs = (fault.Error || []).map(x => `${x.code || ''}:${x.Message || x.Detail || ''}`).join(' | ');
+    // QBO's generic Message ("A business validation error has occurred")
+    // is useless on its own — the actual cause is in Detail. Show both
+    // when they differ, so debugging doesn't require digging through
+    // the raw HTTP response.
+    const errs = (fault.Error || []).map(x => {
+      const parts = [];
+      if (x.code) parts.push(`code=${x.code}`);
+      if (x.element) parts.push(`element=${x.element}`);
+      if (x.Message) parts.push(`msg="${x.Message}"`);
+      if (x.Detail && x.Detail !== x.Message) parts.push(`detail="${x.Detail}"`);
+      return parts.join(' ');
+    }).join(' | ');
     const msg = `[QBO ${label}] ${e.response.status} ${fault.type || ''} ${errs}`.trim();
     return new Error(msg);
   }
   if (e.response) {
-    return new Error(`[QBO ${label}] ${e.response.status} ${JSON.stringify(e.response.data).substring(0, 200)}`);
+    return new Error(`[QBO ${label}] ${e.response.status} ${JSON.stringify(e.response.data).substring(0, 400)}`);
   }
   return new Error(`[QBO ${label}] ${e.message}`);
 }
