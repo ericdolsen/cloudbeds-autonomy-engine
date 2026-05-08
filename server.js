@@ -76,7 +76,7 @@ agent.engine.alertHub = alertHub; // exposed so the alertFrontDesk tool can publ
 // QuickBooks Online integration. Optional — if QBO_* env vars are missing,
 // the integration is disabled and the post-day endpoint reports the gap.
 const { QuickBooks } = require('./src/quickbooks');
-const { postDayToQbo } = require('./src/qboPoster');
+const { postDayToQbo, readReceipt } = require('./src/qboPoster');
 const qbo = new QuickBooks();
 if (qbo.isConfigured()) {
   // Probe at boot — confirms creds work and warms the chart-of-accounts
@@ -847,6 +847,18 @@ app.get('/api/qbo/status', checkLocalNetwork, (req, res) => {
     environment: qbo.env,
     realmId: qbo.realmId || null
   });
+});
+
+app.get('/api/qbo/receipt', checkLocalNetwork, (req, res) => {
+  const { date } = req.query;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, error: 'date query param must be YYYY-MM-DD.' });
+  }
+  const receipt = readReceipt(date);
+  if (!receipt) {
+    return res.status(404).json({ success: false, error: `No QBO receipt on file for ${date}. Either nothing has been posted for that date, or the receipt file was deleted.` });
+  }
+  return res.json({ success: true, receipt });
 });
 
 app.post('/api/qbo/post-day', checkLocalNetwork, express.json(), async (req, res) => {

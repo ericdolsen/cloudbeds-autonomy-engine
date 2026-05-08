@@ -1,7 +1,11 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { logger } = require('./logger');
 const { classifyTransaction, aggregate, ACCT } = require('./qboMapping');
+
+const RECEIPT_DIR = path.join(__dirname, '..', 'data', 'qbo-receipts');
 
 /**
  * Post one day of Cloudbeds activity into QuickBooks Online as a single
@@ -178,6 +182,22 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
     result = await qbo.createJournalEntry(jePayload);
   }
 
+  // Write the offline reconciliation receipt. We do this AFTER the post
+  // succeeds — failing to write the file shouldn't undo a successful
+  // QBO post, so disk errors are warnings, not failures.
+  _writeReceipt({
+    docNumber,
+    businessDate: dateStr,
+    postedAt: new Date().toISOString(),
+    action: existing ? 'updated' : 'created',
+    qboId: (result && result.Id) || null,
+    qboSyncToken: (result && result.SyncToken) || null,
+    txnCount: txns.length,
+    skippedCount: skipped.length,
+    totals: { debit: round2(finalDebit), credit: round2(finalCredit) },
+    aggregated
+  });
+
   return {
     success: true,
     action: existing ? 'updated' : 'created',
@@ -190,10 +210,76 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
   };
 }
 
+/**
+ * Write a JSON receipt to data/qbo-receipts/<docNumber>.json with full
+ * per-line + per-source-txn detail so the bookkeeper can reconcile
+ * offline. Failure to write is logged but does not throw — by the time
+ * we get here, QBO has already accepted the JE.
+ */
+function _writeReceipt(envelope) {
+  try {
+    fs.mkdirSync(RECEIPT_DIR, { recursive: true });
+    const receipt = {
+      docNumber:     envelope.docNumber,
+      businessDate:  envelope.businessDate,
+      postedAt:      envelope.postedAt,
+      action:        envelope.action,
+      qboId:         envelope.qboId,
+      qboSyncToken:  envelope.qboSyncToken,
+      txnCount:      envelope.txnCount,
+      skippedCount:  envelope.skippedCount,
+      totals:        envelope.totals,
+      lines: envelope.aggregated.map((l, idx) => ({
+        lineNumber:  idx + 1,
+        acctNum:     l.acctNum,
+        className:   l.className,
+        side:        l.side,
+        amount:      round2(l.amount),
+        description: l.label,
+        sources:     (l.sources || []).map(s => ({
+          // Only the Cloudbeds fields a bookkeeper actually needs to
+          // cross-reference. Skip raw blobs / internal codes.
+          reservationID:               s.reservationID || null,
+          guestName:                   s.guestName || null,
+          transactionID:               s.transactionID || s.id || null,
+          transactionDate:             s.transactionDate || null,
+          transactionType:             s.transactionType || null,
+          transactionCategory:         s.transactionCategory || null,
+          transactionCodeDescription: s.transactionCodeDescription || null,
+          transactionAmount:           Number(s.transactionAmount) || 0,
+          paymentType:                 s.paymentType || null,
+          sourceName:                  s.sourceName || null
+        }))
+      }))
+    };
+    const filePath = path.join(RECEIPT_DIR, `${envelope.docNumber}.json`);
+    fs.writeFileSync(filePath, JSON.stringify(receipt, null, 2), 'utf8');
+    logger.info(`[QBO POSTER] Wrote receipt ${path.basename(filePath)} (${receipt.lines.length} lines, ${receipt.txnCount} source txns).`);
+  } catch (e) {
+    logger.warn(`[QBO POSTER] Could not write receipt for ${envelope.docNumber}: ${e.message}. The JE posted successfully; this only affects the offline audit trail.`);
+  }
+}
+
+/**
+ * Read a previously-posted receipt by business date. Returns null if
+ * no receipt exists. Used by the /api/qbo/receipt endpoint.
+ */
+function readReceipt(dateStr) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const filePath = path.join(RECEIPT_DIR, `GP-${dateStr}.json`);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    logger.warn(`[QBO POSTER] Could not parse receipt ${path.basename(filePath)}: ${e.message}`);
+    return null;
+  }
+}
+
 function sumSide(lines, side) {
   return lines.reduce((s, l) => s + (l.side === side ? l.amount : 0), 0);
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
-module.exports = { postDayToQbo };
+module.exports = { postDayToQbo, readReceipt };

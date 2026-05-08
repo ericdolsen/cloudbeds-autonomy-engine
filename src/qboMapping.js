@@ -170,6 +170,11 @@ function classifyTransaction(txn) {
  * Side fold: if the same account ends up with both debits and credits
  * for the day (e.g. payments + refunds in the same Stripe Clearing),
  * we net them. The line appears on whichever side has the larger total.
+ *
+ * Each aggregated bucket also carries a `sources` array — the original
+ * Cloudbeds transactions that rolled into that bucket. The poster uses
+ * this for the offline reconciliation receipt; the JE payload itself
+ * doesn't include source detail.
  */
 function aggregate(lines) {
   const byKey = new Map();
@@ -177,12 +182,13 @@ function aggregate(lines) {
     if (!l) continue;
     const key = `${l.acctNum}::${l.className || ''}`;
     if (!byKey.has(key)) {
-      byKey.set(key, { acctNum: l.acctNum, className: l.className, debit: 0, credit: 0, labels: new Set() });
+      byKey.set(key, { acctNum: l.acctNum, className: l.className, debit: 0, credit: 0, labels: new Set(), sources: [] });
     }
     const bucket = byKey.get(key);
     if (l.side === 'debit') bucket.debit += l.amount;
     else bucket.credit += l.amount;
     if (l.label) bucket.labels.add(l.label);
+    if (l.source) bucket.sources.push(l.source);
   }
 
   const out = [];
@@ -194,7 +200,8 @@ function aggregate(lines) {
       className: bucket.className || null,
       side: net > 0 ? 'debit' : 'credit',
       amount: Math.abs(round2(net)),
-      label: [...bucket.labels].join(', ')
+      label: [...bucket.labels].join(', '),
+      sources: bucket.sources
     });
   }
   return out;
