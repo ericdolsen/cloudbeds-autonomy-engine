@@ -100,6 +100,19 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
 
   // 5. Build the QBO JE payload.
   const docNumber = `GP-${dateStr}`;
+
+  // QBO requires every line that references an Accounts Receivable
+  // account to include a Customer in the Name field. Our daily aggregate
+  // doesn't track per-guest balances, so we point all A/R activity at a
+  // single placeholder customer ("Daily Cloudbeds Aggregate"). The
+  // customer is auto-created on first use.
+  let aggregateCustomerId = null;
+  if (aggregated.some(l => l.acctNum === ACCT.AR)) {
+    const customer = await qbo.findOrCreateCustomerByName('Daily Cloudbeds Aggregate');
+    aggregateCustomerId = customer && customer.Id;
+    if (!aggregateCustomerId) throw new Error('Could not resolve placeholder Customer for A/R line.');
+  }
+
   const lines = aggregated.map((l, idx) => {
     const acctId = qbo.accountIdForNum(l.acctNum);
     const classId = l.className ? qbo.classIdForName(l.className) : null;
@@ -108,6 +121,14 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
       AccountRef: { value: acctId }
     };
     if (classId) detail.ClassRef = { value: classId };
+    // Attach the placeholder customer to A/R lines per QBO's
+    // mandatory-Name-field requirement.
+    if (l.acctNum === ACCT.AR && aggregateCustomerId) {
+      detail.Entity = {
+        Type: 'Customer',
+        EntityRef: { value: aggregateCustomerId }
+      };
+    }
     return {
       Id: String(idx),
       Description: l.label || '',
@@ -120,6 +141,13 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
   const txnDate = dateStr;
   const memo = `Daily Cloudbeds summary for ${dateStr}. ${txns.length} txns.${skipped.length ? ` (${skipped.length} skipped)` : ''}`;
   const jePayload = { TxnDate: txnDate, DocNumber: docNumber, PrivateNote: memo, Line: lines };
+
+  // Recompute totals AFTER the plug so the log line reflects what's
+  // actually being sent to QBO (pre-plug totals were what made the
+  // last operator look at a JE log line that read "DR != CR" even
+  // though the posted JE was balanced).
+  const finalDebit  = sumSide(aggregated, 'debit');
+  const finalCredit = sumSide(aggregated, 'credit');
 
   // 6. Idempotency: look for an existing JE with this DocNumber.
   const existing = await qbo.findJournalEntryByDocNumber(docNumber);
@@ -139,14 +167,14 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
 
   let result;
   if (existing && force) {
-    logger.info(`[QBO POSTER] Updating existing JE for ${dateStr} (Id=${existing.Id}, SyncToken=${existing.SyncToken}).`);
+    logger.info(`[QBO POSTER] Updating existing JE for ${dateStr} (Id=${existing.Id}, SyncToken=${existing.SyncToken}). ${lines.length} lines, DR/CR $${finalDebit.toFixed(2)}.`);
     result = await qbo.updateJournalEntry({
       ...jePayload,
       Id: existing.Id,
       SyncToken: existing.SyncToken
     });
   } else {
-    logger.info(`[QBO POSTER] Creating new JE for ${dateStr} with ${lines.length} lines (DR $${totalDebit.toFixed(2)} / CR $${totalCredit.toFixed(2)}).`);
+    logger.info(`[QBO POSTER] Creating new JE for ${dateStr} with ${lines.length} lines, DR/CR $${finalDebit.toFixed(2)}.`);
     result = await qbo.createJournalEntry(jePayload);
   }
 
@@ -156,8 +184,8 @@ async function postDayToQbo({ qbo, api, dateStr, force = false }) {
     docNumber,
     qboId: result && result.Id,
     lines: lines.length,
-    totalDebit: round2(totalDebit),
-    totalCredit: round2(totalCredit),
+    totalDebit: round2(finalDebit),
+    totalCredit: round2(finalCredit),
     skipped: skipped.length
   };
 }

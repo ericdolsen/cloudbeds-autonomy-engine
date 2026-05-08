@@ -215,6 +215,23 @@ class QuickBooks {
   }
 
   /**
+   * Find a Customer by DisplayName, creating it if missing. Used by
+   * the daily JE poster to attach a placeholder customer to its A/R
+   * plug line — QBO rejects journal entries that reference an
+   * Accounts Receivable account without a Customer in the Name field.
+   * Returns { Id, DisplayName }.
+   */
+  async findOrCreateCustomerByName(displayName) {
+    const safe = String(displayName).replace(/'/g, "\\'");
+    const r = await this.query(`SELECT Id, DisplayName FROM Customer WHERE DisplayName = '${safe}' MAXRESULTS 1`);
+    const list = r.Customer || [];
+    if (list.length > 0) return list[0];
+    logger.info(`[QBO] Creating placeholder Customer "${displayName}".`);
+    const data = await this._post('/customer', { DisplayName: displayName });
+    return data.Customer;
+  }
+
+  /**
    * Find an existing JournalEntry by DocNumber. We use DocNumber as our
    * idempotency key — typically "GP-YYYY-MM-DD". Returns the JE record
    * if found, null otherwise.
