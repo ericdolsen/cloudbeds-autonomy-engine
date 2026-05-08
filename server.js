@@ -1,3 +1,6 @@
+// Force the Node environment to use Central Time
+process.env.TZ = 'America/Chicago';
+
 // Must come before ANY other require: a few of the modules below
 // (notably modelRouter.js, which instantiates a singleton at module
 // load time) read process.env.TEXT_MODEL / GEMINI_API_KEY / etc.

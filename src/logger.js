@@ -26,7 +26,9 @@ class Logger {
   }
 
   _timestamp() {
-    return new Date().toISOString();
+    const d = new Date();
+    const pad = (n, len=2) => String(n).padStart(len, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
   }
 
   _write(level, ...args) {
